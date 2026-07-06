@@ -1,5 +1,5 @@
 [project]
-name = "my_project"
+name = "classical_diffusion"
 version = "0.0.1"
 description = "An example Python Package"
 readme = "README.md"

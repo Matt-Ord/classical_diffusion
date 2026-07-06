@@ -1,5 +1,5 @@
 
-My Project Documentation
+Classical Diffusion Documentation
 ===============================
 
 This is a Python package.

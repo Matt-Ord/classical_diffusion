@@ -1,6 +1,6 @@
 # Project Template
 
-View the `phonon_lifetime` package documentation [here](https://matt-ord.github.io/phonon_lifetime/).
+View the `classical_diffusion` package documentation [here](https://matt-ord.github.io/classical_diffusion/).
 
 ## Setup
 
