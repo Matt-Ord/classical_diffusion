@@ -1,34 +1,49 @@
-import diffrax as dfx
+from dataclasses import dataclass
+
 import jax.numpy as jnp
 import jax.random as jrandom
-import matplotlib.pyplot as plt
+
+from classical_diffusion.Langevin import (
+    plot_p_evolution,
+    plot_x_evolution,
+    solve_langevin,
+)
 
 
-def drift(t, y, args):
-    """Drift function for the harmonic Langevin equation."""
-    x, v = y
-    omega, gamma, _sigma = args
-    return jnp.array([v, -(omega**2) * x - gamma * v])
+@dataclass(frozen=True, kw_only=True)
+class SHOSimulationResult:
+    """Results of a simulation of the harmonic Langevin equation."""
+
+    times: jnp.ndarray
+    xs: jnp.ndarray
+    ps: jnp.ndarray
+    omega: float
+    gamma: float
+    sigma: float
+    m: float
 
 
-def diffusion(t, y, args):
-    """Diffusion function for the harmonic Langevin equation."""
-    _x, _v = y
-    _omega, _gamma, sigma = args
-    return jnp.array([0.0, sigma])
+def sho_potential(x, pot_args):
+    omega = pot_args[0]
+    return 0.5 * omega**2 * x**2
 
 
-def solve_single_trajectory(key):
+def solve_single_trajectory_sho(key) -> SHOSimulationResult:
     """Solve a single trajectory of the harmonic Langevin equation."""
     # Parameters
-    omega, gamma, sigma = 1.0, 0, 1.0
-    args = (omega, gamma, sigma)
-    y0 = jnp.array([0])
+    m = 1.0
+    gamma = 0.5
+    sigma = 1.0
+
+    omega = 1.0
+    pot_args = (omega,)
+
+    args = (m, gamma, sigma, pot_args, sho_potential)
 
     # Initial conditions
-    x0 = 5.0
-    v0 = 2.0
-    y0 = jnp.array([x0, v0])
+    x0 = 1.0
+    p0 = 0.0
+    y0 = jnp.array([x0, p0])
 
     # Time span
     t0 = 0.0
@@ -36,34 +51,28 @@ def solve_single_trajectory(key):
     dt0 = 0.01
     n = int((t1 - t0) / dt0)
 
-    # Brownian noise
-    bm = dfx.VirtualBrownianTree(t0, t1, tol=1e-4, shape=(), key=key)
+    sol = solve_langevin(t0, t1, dt0, y0, args, n, key=key)
 
-    # Solver using Euler-Maruyama
-    terms = dfx.MultiTerm(dfx.ODETerm(drift), dfx.ControlTerm(diffusion, bm))
-    solver = dfx.EulerHeun()
-    saveat = dfx.SaveAt(ts=jnp.linspace(t0, t1, n))
-
-    sol = dfx.diffeqsolve(
-        terms, solver, t0=t0, t1=t1, dt0=dt0, y0=y0, args=args, saveat=saveat
+    return SHOSimulationResult(
+        times=sol.ts,
+        xs=sol.ys[:, 0],
+        ps=sol.ys[:, 1],
+        omega=omega,
+        gamma=gamma,
+        sigma=sigma,
+        m=m,
     )
-    return sol.ts, sol.ys
 
 
-# Solve a single trajectory
-master_key = jrandom.PRNGKey(42)
-ts, ys = solve_single_trajectory(master_key)
-fig, axs = plt.subplots(2, 1, figsize=(10, 6))
-axs[0].plot(ts, ys[:, 0], label="1D Position (x)", color="royalblue", lw=1.5)
-axs[0].set_xlabel("Time")
-axs[0].set_ylabel("Position")
-axs[0].set_title("1D Langevin Harmonic Oscillator Trajectory")
-axs[0].legend()
-axs[1].plot(ts, ys[:, 1], label="1D Velocity (v)", color="darkgreen", lw=1.5)
-axs[1].set_xlabel("Time")
-axs[1].set_ylabel("Velocity")
-axs[1].set_title("1D Langevin Harmonic Oscillator Trajectory")
-axs[1].legend()
-plt.tight_layout()
-plt.savefig("/workspaces/classical_diffusion/examples/langevin_plot.png")
-print("Plot successfully saved to file")
+# Solve a single trajectory and plot the results
+key = jrandom.PRNGKey(42)  # Change seed to generate new result
+result = solve_single_trajectory_sho(key=key)
+fig_x, ax, line = plot_x_evolution(result)
+fig_p, ax, line = plot_p_evolution(result)
+
+fig_x.savefig("position_evolution.png", dpi=300, bbox_inches="tight")
+fig_p.savefig("momentum_evolution.png", dpi=300, bbox_inches="tight")
+
+print(
+    "Figures successfully saved as 'position_evolution.png' and 'momentum_evolution.png'!"
+)
