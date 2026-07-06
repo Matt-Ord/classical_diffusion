@@ -4,7 +4,11 @@ version = "0.0.1"
 description = "An example Python Package"
 readme = "README.md"
 requires-python = ">=3.14,<3.15"
-dependencies = []
+dependencies = [
+    "diffrax>=0.7.2",
+    "jax>=0.10.2",
+    "matplotlib>=3.11.0",
+]
 
 [dependency-groups]
 dev = [
