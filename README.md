@@ -51,10 +51,6 @@ uv sync --all-extras
 uv sync
 ```
 
-# Add package
-
-uv add
-
 ### Spell checker, Linter, Type Checker and Test Runner
 
 This project sets up tools for spell checking, linting, type checking, and testing,
