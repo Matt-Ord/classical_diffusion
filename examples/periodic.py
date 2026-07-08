@@ -6,7 +6,7 @@ import numpy as np
 import sympy as sp
 
 from classical_diffusion.analysis import plot_isf, plot_p_evolution, plot_x_evolution
-from classical_diffusion.Langevin import (
+from classical_diffusion.scripts import (
     SimulationParams,
     TimeSpan,
     solve_langevin,
@@ -22,7 +22,7 @@ class PerParameters(SimulationParams):
     potential: sp.Expr = field(init=False)
 
     def __post_init__(self) -> None:
-        self.potential = self.Amp * sp.cos(sp.symbols("x") * self.k)
+        self.potential = self.Amp * sp.cos(sp.symbols("x0") * self.k)
 
 
 # Parameters
@@ -31,7 +31,7 @@ gamma = 0.5
 sigma = 1.0
 
 Amp = 2.0
-k = 1.0
+k = 10
 
 # Initial conditions
 x0 = 1.0
@@ -40,7 +40,7 @@ y0 = np.array([x0, p0])
 
 # Time span
 t0 = 0.0
-t1 = 100.0
+t1 = 20.0
 dt0 = 0.01
 
 # Burn in?
@@ -59,6 +59,7 @@ params = PerParameters(
     time=TimeSpan(t0=t0, t1=t1, dt0=dt0),
     y0=y0,
     delta_x=delta_x,
+    n_dims=1,
 )
 
 key = jrandom.PRNGKey(100)  # Change seed to generate new result
@@ -80,10 +81,18 @@ _, ax_p, line_p = plot_p_evolution(result=result, ax=ax_p)
 ax_x.set_xlabel("")  # top plot doesn't need its own x-label, shares with bottom
 fig.suptitle("Position and Momentum Evolution")
 fig.tight_layout()
-fig.savefig("trajectory_x_p_periodic.png", dpi=300, bbox_inches="tight")
+fig.savefig(
+    "/workspaces/classical_diffusion/examples/trajectory_x_p_periodic.png",
+    dpi=300,
+    bbox_inches="tight",
+)
 
 fig, ax = None, None
 
 fig, _, _ = plot_isf(result=result, delta_k=delta_k, ax=ax)
 
-fig.savefig("isf_periodic", dpi=300, bbox_inches="tight")
+fig.savefig(
+    "/workspaces/classical_diffusion/examples/isf_periodic.png",
+    dpi=300,
+    bbox_inches="tight",
+)
