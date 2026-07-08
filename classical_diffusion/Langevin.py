@@ -6,50 +6,61 @@ import diffrax as dfx
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+import numpy as np
 import sympy as sp
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    import numpy as np
     from matplotlib.axes import Axes
     from matplotlib.figure import Figure
-    from matplotlib.lines import Line2D
+
+# ???
+from typing import (
+    TYPE_CHECKING,
+    Never,
+    cast,
+)
+
+from matplotlib.animation import ArtistAnimation
+
+try:
+    from matplotlib import pyplot as plt
+    from matplotlib.animation import ArtistAnimation
+    from matplotlib.colors import LogNorm, SymLogNorm
+    from matplotlib.colors import Normalize as BaseNorm
+    from matplotlib.scale import LinearScale, LogScale, SymmetricalLogScale
+except ImportError:
+    plt = cast("Never", None)
+    LogNorm, BaseNorm, SymLogNorm = cast("Never", (None, None, None))
+    LinearScale, LogScale, SymmetricalLogScale = cast("Never", (None, None, None))
+    SquaredScale = cast("Never", None)
+    ArtistAnimation = cast("Never", None)
 
 
-# Plotting functions
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+    from matplotlib.axes import Axes as MPLAxesBase
+    from matplotlib.figure import Figure
 
 
-def _plot_x_evolution(
-    result: Any, *, ax: Axes | None = None
-) -> tuple[Figure, Axes, Line2D]:
-    fig, ax = plt.subplots(figsize=(10, 6))
+def get_figure(ax: MPLAxesBase | None = None) -> tuple[Figure, Axes]:
+    """Get the figure of the given axis.
 
-    times = result.times - result.times[0]
-    (line,) = ax.plot(times, result.xs)
-    line.set_label("$x$")
+    If no figure exists, a new figure is created
+    """  # noqa: DOC501
+    if plt is None:
+        msg = "Matplotlib is not installed. Please install it with the 'plot' extra."
+        raise ImportError(msg)  # noqa: RUF100
 
-    ax.set_xlabel("Time")
-    ax.set_ylabel("Position ($x$)")
+    if ax is None:
+        return cast("tuple[Figure, Axes]", plt.subplots())  # type: ignore plt.subplots Unknown type
 
-    return fig, ax, line
-
-
-def _plot_p_evolution(
-    result: Any,
-    *,
-    ax: Axes | None = None,
-) -> tuple[Figure, Axes, Line2D]:
-    fig, ax = plt.subplots(figsize=(10, 6))
-
-    times = result.times - result.times[0]
-    (line,) = ax.plot(times, result.ps)
-    line.set_label("$p$")
-
-    ax.set_xlabel("Time")
-    ax.set_ylabel("Momentum ($p$)")
-
-    return fig, ax, line
+    fig = cast("Figure|None", ax.get_figure())
+    if fig is None:
+        fig = cast("Figure", plt.figure())  # type: ignore plt.figure Unknown type
+        ax.set_figure(fig)
+    return fig, ax
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -75,6 +86,7 @@ class SimulationParams:
     potential: sp.Expr
     time: TimeSpan
     y0: np.ndarray
+    delta_x: np.ndarray[Any, np.dtype[np.float64]]
 
     @cached_property
     def symbolic_gradient(self) -> sp.Expr:
@@ -84,11 +96,22 @@ class SimulationParams:
     @cached_property
     def gradient_fn(self) -> Callable[[float], float]:
         """Compute the symbolic gradient of the potential."""
-        return sp.lambdify(sp.symbols("x"), self.symbolic_gradient, "numpy")
+        return sp.lambdify(sp.symbols("x"), self.symbolic_gradient, "jax")
 
     def force(self, x: float) -> float:
         """Compute the force at position x."""
         return -self.gradient_fn(x)
+
+
+@dataclass(frozen=True, kw_only=True)
+class SimulationResult:
+    """Results of a simulation of the periodic Langevin equation."""
+
+    times: np.ndarray
+    xs: np.ndarray[Any, np.dtype[np.floating]]
+    ps: np.ndarray[Any, np.dtype[np.floating]]
+
+    params: SimulationParams
 
 
 def make_solver(params: SimulationParams) -> tuple:
@@ -114,7 +137,7 @@ def make_solver(params: SimulationParams) -> tuple:
     return drift, diffusion
 
 
-def solve_langevin(params: SimulationParams, key: jax.Array) -> dfx.Solution:
+def solve_langevin(params: SimulationParams, key: jax.Array) -> SimulationResult:
     """Solve the Langevin equation using diffrax."""
     t0, t1, dt0, n_sav = astuple(params.time)
     y0 = jnp.array(params.y0)
@@ -131,6 +154,21 @@ def solve_langevin(params: SimulationParams, key: jax.Array) -> dfx.Solution:
     solver = dfx.EulerHeun()
     saveat = dfx.SaveAt(ts=jnp.linspace(t0, t1, n_sav))
 
-    return dfx.diffeqsolve(
-        terms, solver, t0=t0, t1=t1, dt0=dt0, y0=y0, args=args, saveat=saveat
+    sol = dfx.diffeqsolve(
+        terms,
+        solver,
+        t0=t0,
+        t1=t1,
+        dt0=dt0,
+        y0=y0,
+        args=args,
+        saveat=saveat,
+        max_steps=100_000,
+    )
+
+    return SimulationResult(
+        times=np.array(sol.ts),
+        xs=np.array(sol.ys[:, 0]).reshape(1, -1),
+        ps=np.array(sol.ys[:, 1]).reshape(1, -1),
+        params=params,
     )
