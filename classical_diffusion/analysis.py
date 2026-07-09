@@ -1,20 +1,51 @@
-import contextlib
-import warnings
 from typing import TYPE_CHECKING, Any
 
+import matplotlib.pyplot as plt
 import numpy as np
+
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
+
+    from .solve import SimulationResult
+
+from typing import (
+    TYPE_CHECKING,
+    cast,
+)
+
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+    from matplotlib.axes import Axes as MPLAxesBase
+    from matplotlib.figure import Figure
+
+from typing import TYPE_CHECKING
+
 import scipy
-
-with contextlib.suppress(ImportError):
-    pass
-
-
-from .solve import SimulationResult, get_figure
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
+
+
+def get_figure(ax: MPLAxesBase | None = None) -> tuple[Figure, Axes]:
+    """Get the figure of the given axis.
+
+    If no figure exists, a new figure is created
+    """  # noqa: DOC501
+    if plt is None:
+        msg = "Matplotlib is not installed. Please install it with the 'plot' extra."
+        raise ImportError(msg)  # noqa: RUF100
+
+    if ax is None:
+        return cast("tuple[Figure, Axes]", plt.subplots())  # type: ignore plt.subplots Unknown type
+
+    fig = cast("Figure|None", ax.get_figure())
+    if fig is None:
+        fig = cast("Figure", plt.figure())  # type: ignore plt.figure Unknown type
+        ax.set_figure(fig)
+    return fig, ax
 
 
 def _calculate_total_offsset_multiplications_complex(
@@ -38,18 +69,10 @@ def get_isf(
     positions: np.ndarray[Any, np.dtype[np.floating]],
     delta_k: tuple[float, ...],
     *,
-    delta_x: np.ndarray[Any, np.dtype[np.float64]],
     pairwise: bool = True,
 ) -> np.ndarray[Any, np.dtype[np.complex128]]:
     """Get the restored displacement of a wavepacket."""
     if not pairwise:
-        if np.count_nonzero(delta_x) > 0:
-            warnings.warn(
-                "the width of the wavepacket is ignored for non-pairwise ISF calculation",
-                stacklevel=2,
-            )
-        # If not pairwise, we just calculate the ISF from the initial
-        # time
         phase = np.einsum(
             "i,...ij->...j",
             delta_k,
@@ -58,7 +81,6 @@ def get_isf(
         return np.exp(1j * phase)
 
     scatter = np.exp(-1j * np.einsum("i,...ij->...j", delta_k, positions))
-    scatter *= np.exp(-0.5 * np.einsum("i,...ij->...j", delta_k, delta_x) ** 2)
 
     # convolution_j = \sum_i^N-j e^(ik.x_i+j) e^(-ik.x_i)
     convolution = np.apply_along_axis(
@@ -78,7 +100,7 @@ def plot_isf(
     """Plot the state occupations of a quantum simulation result."""
     fig, ax = get_figure(ax)
 
-    isf = get_isf(result.xs, delta_k, delta_x=result.params.delta_x)
+    isf = get_isf(result.xs, delta_k=delta_k)
     (line,) = ax.plot(result.times, isf)
     line.set_label("ISF")
 

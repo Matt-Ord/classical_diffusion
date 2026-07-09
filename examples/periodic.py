@@ -1,5 +1,3 @@
-from dataclasses import dataclass, field
-
 import jax.random as jrandom
 import matplotlib.pyplot as plt
 import numpy as np
@@ -7,101 +5,62 @@ import sympy as sp
 
 from classical_diffusion.analysis import plot_isf, plot_p_evolution, plot_x_evolution
 from classical_diffusion.solve import (
+    InitialConditions,
     SimulationParams,
     TimeSpan,
     solve_langevin,
 )
 
 
-@dataclass(kw_only=True)  # TODO: frozen=True? # TODO: what does Per mean?
-class PerParameters(SimulationParams):
+class PeriodicParameters(SimulationParams):
     """Parameters for the periodic Langevin equation."""
 
-    # TODO: Amp is not a class, and why is current relevant to langevin simulations?
-    Amp: float
-    # TODO: delta_x?
-    k: float
-    potential: sp.Expr = field(init=False)
+    def __init__(self, amplitude: float, lattice_spacing: int, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.amplitude = amplitude
+        self.lattice_spacing = lattice_spacing
+        self.delta_x = 2 * np.pi / lattice_spacing
 
-    def __post_init__(self) -> None:
-        # TODO:  Dont post __post_init__ here
-        self.potential = self.Amp * sp.cos(sp.symbols("x0") * self.k)
-
-
-# TODO: main function
-# TODO: lots and lots of variables, hard to spot what is important!
-# Parameters
-m = 1.0
-gamma = 0.5
-sigma = 1.0
-
-Amp = 2.0
-# TODO: would be nice to scale this to have lattice sites
-# at integer multiples, and to plot that alongside the trajectory.
-k = 10
-
-# Initial conditions
-x0 = 1.0
-p0 = 0.5
-y0 = np.array([x0, p0])
-
-# Time span
-t0 = 0.0
-t1 = 20.0
-dt0 = 0.01
-
-# Burn in?
-burn_in_time = 0
-burn_in_steps = int(burn_in_time / dt0)
-
-n_times = round((t1 - t0) / dt0)
-delta_x = np.zeros((1, n_times))
-
-params = PerParameters(
-    gamma=gamma,
-    sigma=sigma,
-    m=m,
-    Amp=Amp,
-    k=k,
-    time=TimeSpan(t0=t0, t1=t1, dt0=dt0),
-    y0=y0,
-    delta_x=delta_x,
-    n_dims=1,
-)
-
-key = jrandom.PRNGKey(100)  # Change seed to generate new result
-
-result = solve_langevin(params=params, key=key)
+    @property
+    def potential(self) -> sp.Expr:
+        """Return symbolic function for sho potential."""
+        return self.amplitude * sp.cos(sp.symbols("x0") * self.delta_x)
 
 
-x_equilibriated = result.xs[:, burn_in_steps:]
+if __name__ == "__main__":
+    params = PeriodicParameters(
+        gamma=1.0,
+        temp=1.0,
+        m=1.0,
+        lattice_spacing=1,
+        amplitude=2.0,
+        time_span=TimeSpan(t0=0, t1=20, dt=0.01, n_save=2000),
+        initial_conditions=InitialConditions(x0=np.array([1.0]), p0=np.array([0.0])),
+    )
 
-x_std = float(np.std(x_equilibriated))
-delta_k = (1.0 / x_std,)
+    key = jrandom.PRNGKey(100)  # Change seed to generate new result
+    result = solve_langevin(params=params, key=key)
 
+    fig, (ax_x, ax_p) = plt.subplots(2, 1, sharex=True, figsize=(8, 6))
 
-fig, (ax_x, ax_p) = plt.subplots(2, 1, sharex=True, figsize=(8, 6))
+    _, ax_x, line_x = plot_x_evolution(result=result, ax=ax_x)
+    _, ax_p, line_p = plot_p_evolution(result=result, ax=ax_p)
 
-_, ax_x, line_x = plot_x_evolution(result=result, ax=ax_x)
-_, ax_p, line_p = plot_p_evolution(result=result, ax=ax_p)
+    ax_x.set_xlabel("")
+    fig.suptitle("Position and Momentum Evolution")
+    fig.tight_layout()
+    fig.savefig(
+        "./examples/periodic.trajectory.pdf",
+        dpi=300,
+        bbox_inches="tight",
+    )
 
-# TODO: I would save these as periodic.trajectory and periodic.isf so they are
-# not mixed in with harmonic
-ax_x.set_xlabel("")  # top plot doesn't need its own x-label, shares with bottom
-fig.suptitle("Position and Momentum Evolution")
-fig.tight_layout()
-fig.savefig(
-    "/workspaces/classical_diffusion/examples/trajectory_x_p_periodic.png",
-    dpi=300,
-    bbox_inches="tight",
-)
+    delta_k = 1 / lattice_spacing
 
-fig, ax = None, None
+    fig, _, _ = plot_isf(result=result, delta_k=delta_k)
 
-fig, _, _ = plot_isf(result=result, delta_k=delta_k, ax=ax)
-
-fig.savefig(
-    "/workspaces/classical_diffusion/examples/isf_periodic.png",
-    dpi=300,
-    bbox_inches="tight",
-)
+    fig.savefig(
+        "./examples/periodic.isf.pdf",
+        dpi=300,
+        bbox_inches="tight",
+    )

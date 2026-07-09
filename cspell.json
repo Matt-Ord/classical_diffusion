@@ -4,9 +4,11 @@
     "language": "en",
     "words": [
         "diffrax",
+        "Heun",
         "lambdify",
         "Langevin",
         "PRNG",
+        "saveat",
         "sympy"
     ],
     "ignoreWords": [
