@@ -9,7 +9,7 @@ with contextlib.suppress(ImportError):
     pass
 
 
-from classical_diffusion.scripts import SimulationResult, get_figure
+from .solve import SimulationResult, get_figure
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes

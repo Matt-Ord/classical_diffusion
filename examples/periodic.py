@@ -6,7 +6,7 @@ import numpy as np
 import sympy as sp
 
 from classical_diffusion.analysis import plot_isf, plot_p_evolution, plot_x_evolution
-from classical_diffusion.scripts import (
+from classical_diffusion.solve import (
     SimulationParams,
     TimeSpan,
     solve_langevin,
@@ -28,6 +28,7 @@ class PerParameters(SimulationParams):
         self.potential = self.Amp * sp.cos(sp.symbols("x0") * self.k)
 
 
+# TODO: main function
 # TODO: lots and lots of variables, hard to spot what is important!
 # Parameters
 m = 1.0

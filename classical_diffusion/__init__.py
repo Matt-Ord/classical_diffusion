@@ -1,6 +1,5 @@
 """An Example project."""
 
-SURFACE_PHYSICS_IS_COOL = True
-"""A statement about surface physics."""
+from .solve import solve_langevin
 
-__all__ = ["SURFACE_PHYSICS_IS_COOL"]
+__all__ = ["solve_langevin"]
