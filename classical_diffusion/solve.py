@@ -24,6 +24,7 @@ from typing import (
 
 from matplotlib.animation import ArtistAnimation
 
+# TODO: matplotlib is not an optional dependency, so no need to use a try block here
 try:
     from matplotlib import pyplot as plt
     from matplotlib.animation import ArtistAnimation
@@ -77,21 +78,28 @@ class SimulationParams:
     """Parameters for the Langevin equation."""
 
     gamma: float
+    # What the sigma?
     sigma: float
     m: float
     potential: sp.Expr
     time: TimeSpan
     y0: np.ndarray
+    # TODO: what is delta x? maybe it is needed but might be good to add a doc comment
     delta_x: np.ndarray[Any, np.dtype[np.float64]]
+    # TODO: cant you tell this from the shape of y0?
+    # If you can - then this opens up the possibility of a bug that
+    # @property would remove
     n_dims: int
 
     @cached_property
+    # TODO: coordinates is clearer than coords here
     def symbolic_coords(self) -> tuple:
-        """Return the symoblic coodinates of the system."""
+        """Return the symbolic coordinates of the system."""
         return sp.symbols(f"x0:{self.n_dims}")
 
     @cached_property
-    def symbolic_gradient(self) -> list:
+    # TODO: maybe forces is clearer in it's intent
+    def symbolic_gradient(self) -> list[sp.Expr]:
         """Compute the symbolic gradient of the potential."""
         return [sp.diff(self.potential, c) for c in self.symbolic_coords]
 
@@ -99,7 +107,7 @@ class SimulationParams:
     def gradient_fn(self) -> Callable[[jnp.ndarray], jnp.ndarray]:
         """Compute a callable gradient function, taking and returning an array."""
         raw_fn = sp.lambdify(self.symbolic_coords, self.symbolic_gradient, "jax")
-        # converts inputed array into N seperate scalars to feed into raw_fn
+        # converts inputted array into N separate scalars to feed into raw_fn
         return lambda x_array: jnp.array(raw_fn(*x_array))
 
 
@@ -108,6 +116,7 @@ class SimulationResult:
     """Results of a simulation of the periodic Langevin equation."""
 
     times: np.ndarray
+    # Maybe x_points, p_points is clearer?
     xs: np.ndarray[Any, np.dtype[np.floating]]
     ps: np.ndarray[Any, np.dtype[np.floating]]
 
@@ -118,14 +127,14 @@ def make_solver(params: SimulationParams) -> tuple:
     """Generate drift and diffusion functions tailored to a specific potential."""
     n_dims = params.n_dims
 
-    def drift(y: jnp.ndarray, args: tuple) -> jnp.ndarray:
+    def drift(_t: float, y: jnp.ndarray, args: tuple) -> jnp.ndarray:
         """Drift function for the Langevin equation."""
         x, p = y[:n_dims], y[n_dims:]
         m, gamma, _sigma = args
         force = -params.gradient_fn(x)
         return jnp.concatenate([p / m, force - gamma * p])
 
-    def diffusion(args: tuple) -> jnp.ndarray:
+    def diffusion(_t: float, _y: jnp.ndarray, args: tuple) -> jnp.ndarray:
         _m, _gamma, sigma = args
         # creates 2*n_dims by n_dims matrix matching diffrax requirements
         sigma_arr = jnp.broadcast_to(sigma, (n_dims,))
@@ -151,18 +160,20 @@ def solve_langevin(params: SimulationParams, key: jax.Array) -> SimulationResult
         dfx.ODETerm(drift),
         dfx.ControlTerm(diffusion, bm),
     )
-    solver = dfx.EulerHeun()
-    saveat = dfx.SaveAt(ts=jnp.linspace(t0, t1, n_sav))
+    solver = dfx.EulerHeun()  # cspell: disable-line
+    # TODO: why not delcare inline?
+    save_at = dfx.SaveAt(ts=jnp.linspace(t0, t1, n_sav))
 
-    sol = dfx.diffeqsolve(
+    sol = dfx.diffeqsolve(  # cspell: disable-line
         terms,
         solver,
         t0=t0,
         t1=t1,
         dt0=dt0,
         y0=y0,
+        # TODO: hmm what are args here? oh they are defined all of the way at the top!
         args=args,
-        saveat=saveat,
+        saveat=save_at,  # cspell: disable-line
         max_steps=100_000,
     )
 

@@ -1,6 +1,5 @@
 """An Example project."""
 
-PYTHON_IS_COOL = True
-"""A statement about Python."""
+from .solve import solve_langevin
 
-__all__ = ["PYTHON_IS_COOL"]
+__all__ = ["solve_langevin"]

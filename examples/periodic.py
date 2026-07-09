@@ -6,31 +6,38 @@ import numpy as np
 import sympy as sp
 
 from classical_diffusion.analysis import plot_isf, plot_p_evolution, plot_x_evolution
-from classical_diffusion.scripts import (
+from classical_diffusion.solve import (
     SimulationParams,
     TimeSpan,
     solve_langevin,
 )
 
 
-@dataclass(kw_only=True)
+@dataclass(kw_only=True)  # TODO: frozen=True? # TODO: what does Per mean?
 class PerParameters(SimulationParams):
     """Parameters for the periodic Langevin equation."""
 
+    # TODO: Amp is not a class, and why is current relevant to langevin simulations?
     Amp: float
+    # TODO: delta_x?
     k: float
     potential: sp.Expr = field(init=False)
 
     def __post_init__(self) -> None:
+        # TODO:  Dont post __post_init__ here
         self.potential = self.Amp * sp.cos(sp.symbols("x0") * self.k)
 
 
+# TODO: main function
+# TODO: lots and lots of variables, hard to spot what is important!
 # Parameters
 m = 1.0
 gamma = 0.5
 sigma = 1.0
 
 Amp = 2.0
+# TODO: would be nice to scale this to have lattice sites
+# at integer multiples, and to plot that alongside the trajectory.
 k = 10
 
 # Initial conditions
@@ -78,6 +85,8 @@ fig, (ax_x, ax_p) = plt.subplots(2, 1, sharex=True, figsize=(8, 6))
 _, ax_x, line_x = plot_x_evolution(result=result, ax=ax_x)
 _, ax_p, line_p = plot_p_evolution(result=result, ax=ax_p)
 
+# TODO: I would save these as periodic.trajectory and periodic.isf so they are
+# not mixed in with harmonic
 ax_x.set_xlabel("")  # top plot doesn't need its own x-label, shares with bottom
 fig.suptitle("Position and Momentum Evolution")
 fig.tight_layout()

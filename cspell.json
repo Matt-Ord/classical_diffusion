@@ -2,7 +2,13 @@
     "$schema": "https://raw.githubusercontent.com/streetsidesoftware/cspell/main/cspell.schema.json",
     "version": "0.2",
     "language": "en",
-    "words": [],
+    "words": [
+        "diffrax",
+        "lambdify",
+        "Langevin",
+        "PRNG",
+        "sympy"
+    ],
     "ignoreWords": [
         "Phonopy",
         "Wannier",
@@ -18,7 +24,8 @@
         "pyproject",
         "scipy",
         "trange",
-        "tqdm"
+        "tqdm",
+        "jrandom"
     ],
     "flagWords": [
         "hte",
