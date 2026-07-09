@@ -1,6 +1,6 @@
 """An Example project."""
 
-PYTHON_IS_COOL = True
-"""A statement about Python."""
+SURFACE_PHYSICS_IS_COOL = True
+"""A statement about surface physics."""
 
-__all__ = ["PYTHON_IS_COOL"]
+__all__ = ["SURFACE_PHYSICS_IS_COOL"]
