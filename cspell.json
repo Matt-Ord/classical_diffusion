@@ -3,13 +3,19 @@
     "version": "0.2",
     "language": "en",
     "words": [
+        "axhline",
         "diffrax",
+        "frameon",
         "Heun",
         "lambdify",
         "Langevin",
         "PRNG",
         "saveat",
-        "sympy"
+        "sympy",
+        "ttflist",
+        "xlim",
+        "ylim",
+        "yscale"
     ],
     "ignoreWords": [
         "Phonopy",
