@@ -194,7 +194,7 @@ def _get_sampled_kinetic_energies[T: SimulationResult](
     result: T,
 ) -> np.ndarray[Any, np.dtype[np.float64]]:
     return (np.sum(result.ps**2, axis=1)) / (
-        2 * result.params.physical_parameters.m * result.params.physical_parameters.kbt
+        2 * result.params.system.m * result.params.system.kbt
     )
 
 
@@ -279,7 +279,7 @@ def x_exact_pdf(result: SimulationResult, *, n_grid: int = 10_000) -> tuple:
     x_grid = np.linspace(result.xs.min(), result.xs.max(), n_grid)
     v_grid = np.broadcast_to(potential(x_grid), x_grid.shape)
 
-    kbt = result.params.physical_parameters.kbt
+    kbt = result.params.system.kbt
 
     v_shifted = v_grid - v_grid.min()
     unnormalised = np.exp(-v_shifted / kbt)
@@ -323,7 +323,7 @@ def plot_x_histogram(
 def p_exact_pdf(result: SimulationResult, *, n_grid: int = 10_000) -> tuple:
     """Return p boltzman pdf."""
     p_grid = np.linspace(result.ps.min(), result.ps.max(), n_grid)
-    m, kbt = result.params.physical_parameters.m, result.params.physical_parameters.kbt
+    m, kbt = result.params.system.m, result.params.system.kbt
     pdf_theory = np.sqrt(1 / (2 * np.pi * m * kbt)) * np.exp(
         -(p_grid**2) / (2 * m * kbt)
     )
@@ -393,7 +393,7 @@ def get_elastic_p(
     x0 = result.params.initial_conditions.x0[:, :, None]
     safe_times = np.where(result.times == 0, np.nan, result.times)
     v_elastic = (result.xs - x0) / safe_times
-    return v_elastic * result.params.physical_parameters.m
+    return v_elastic * result.params.system.m
 
 
 def plot_elastic_p(
