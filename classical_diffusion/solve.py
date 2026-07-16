@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any
 
 import diffrax as dfx
 import jax
@@ -21,6 +21,7 @@ from typing import (
 from .util import cached
 
 
+# TODO: split into "physical system" code, and "simulation" code.
 @dataclass(frozen=True, kw_only=True)
 class TimeSpan:
     """Time-stepping parameters, bundled together."""
@@ -61,57 +62,38 @@ class CharacteristicValues:
     time: float
 
 
+# TODO: should include V(x)??
 @dataclass(frozen=True, kw_only=True)
-class PhysicalParams:
+class PhysicalParameters:
     """physical parameters, bundled together."""
 
     gamma: float
-    temp: float
+    temperature: float
     m: float
 
     @cached_property
     def kbt(self) -> float:
         """Return the kbt of system."""
-        return 1.0 * self.temp  # k_B set to 1 for now
+        return 1.0 * self.temperature  # k_B set to 1 for now
 
 
-class SimulationParams:
+class SimulationParameters:
     """Parameters for the Langevin equation."""
-
-    # Maps __init__ keyword name -> attribute name it's stored under.
-    # Subclasses override this to match their own __init__ signature.
-    _pickle_param_map: ClassVar[dict[str, str]] = {
-        "physical_parameters": "physical",
-        "time_span": "time_span",
-        "initial_conditions": "initial_conditions",
-        "potential": "potential",
-        "characteristic_values": "characteristic_values",
-    }
 
     def __init__(
         self,
         *,
-        physical_parameters: PhysicalParams,
+        physical_parameters: PhysicalParameters,
         time_span: TimeSpan,
         initial_conditions: InitialConditions,
-        potential: sp.Expr,
+        potential: sp.Expr,  # TODO: what are characteristic values
         characteristic_values: CharacteristicValues,
     ) -> None:
-        self.physical = physical_parameters
+        self.physical_parameters = physical_parameters
         self.time_span = time_span
         self.initial_conditions = initial_conditions
         self.potential = potential
         self.characteristic_values = characteristic_values
-
-    def __getstate__(self) -> dict:
-        """Pickle only the plain constructor inputs declared in `_pickle_param_map`."""
-        return {
-            kwarg: getattr(self, attr) for kwarg, attr in self._pickle_param_map.items()
-        }
-
-    def __setstate__(self, state: dict) -> None:
-        """Rebuild the instance by re-calling its own __init__ with the saved kwargs."""
-        self.__init__(**state)
 
     @cached_property
     def n_trajectories(self) -> int:
@@ -156,7 +138,7 @@ class SimulationParams:
 
 
 @dataclass(frozen=True, kw_only=True)
-class SimulationResult[P: SimulationParams]:
+class SimulationResult[P: SimulationParameters = SimulationParameters]:
     """Results of a simulation of the periodic Langevin equation."""
 
     times: np.ndarray
@@ -165,13 +147,14 @@ class SimulationResult[P: SimulationParams]:
     params: P
 
 
-def _my_path(params: SimulationParams, _key: jax.Array) -> Path:
-    pp = params.physical
+# TODO: discuss __hash__ as a nice way to do this
+def _my_path(params: SimulationParameters, _key: jax.Array) -> Path:
+    pp = params.physical_parameters
     ts = params.time_span
 
     parts = [
         f"g{pp.gamma:.4g}",
-        f"T{pp.temp:.4g}",
+        f"T{pp.temperature:.4g}",
         f"m{pp.m:.4g}",
         f"t0-{ts.t0:.4g}",
         f"t1-{ts.t1:.4g}",
@@ -180,26 +163,31 @@ def _my_path(params: SimulationParams, _key: jax.Array) -> Path:
         f"n_dims{params.n_dimensions}",
     ]
 
-    if isinstance(params, SHOParams):
+    # TODO: discuss hash
+    if isinstance(params, SHOParameters):
         parts.append(f"omega{params.omega:.4g}")
-    elif isinstance(params, PeriodicParams):
+    elif isinstance(params, PeriodicParameters):
         parts.extend(
             (f"lattice{params.lattice_spacing:.4g}", f"amp{params.amplitude:.4g}")
         )
 
     filename = "_".join(parts) + ".npz"
-    return Path("/workspaces/classical_diffusion/examples/data") / filename
+    return Path("examples/data") / filename
 
 
 @cached(_my_path, default_call="load_or_call_uncached")
-def solve_ensemble(params: SimulationParams, _key: jax.Array) -> SimulationResult:
+def solve_ensemble[P: SimulationParameters](
+    params: P, _key: jax.Array
+) -> SimulationResult[P]:
     """Solve the ULD Langevin equation for an ensemble of trajectories via vmap."""
     n_dims = params.n_dimensions
-    gamma = jnp.broadcast_to(params.physical.gamma, (n_dims,))
-    u = jnp.broadcast_to(params.physical.kbt / params.physical.m, (n_dims,))
+    gamma = jnp.broadcast_to(params.physical_parameters.gamma, (n_dims,))
+    u = jnp.broadcast_to(
+        params.physical_parameters.kbt / params.physical_parameters.m, (n_dims,)
+    )
 
     def grad_f(x: jnp.ndarray, _args: jnp.ndarray) -> jnp.ndarray:
-        return -params.force_fn(x) / params.physical.kbt
+        return -params.force_fn(x) / params.physical_parameters.kbt
 
     def solve_single(
         key: jax.Array, x0: jnp.ndarray, p0: jnp.ndarray
@@ -237,6 +225,7 @@ def solve_ensemble(params: SimulationParams, _key: jax.Array) -> SimulationResul
     )
 
     return SimulationResult(
+        # TODO: discuss duplicating data
         times=np.array(ts_batch[0]),
         xs=np.array(xs_batch).transpose(0, 2, 1),  # -> (n_trajectories, n_dims, n_save)
         ps=np.array(ps_batch).transpose(0, 2, 1),
@@ -244,28 +233,21 @@ def solve_ensemble(params: SimulationParams, _key: jax.Array) -> SimulationResul
     )
 
 
-class SHOParams(SimulationParams):
+class SHOParameters(SimulationParameters):
     """Parameters for the harmonic Langevin equation."""
-
-    _pickle_param_map: ClassVar[dict[str, str]] = {
-        "omega": "omega",
-        "physical_parameters": "physical",
-        "time_span": "time_span",
-        "initial_conditions": "initial_conditions",
-    }
 
     def __init__(
         self,
         *,
         omega: float,
-        physical_parameters: PhysicalParams,
+        physical_parameters: PhysicalParameters,
         time_span: TimeSpan,
         initial_conditions: InitialConditions,
     ) -> None:
         potential = 0.5 * omega**2 * sp.symbols("x0") ** 2
 
         characteristic_length = np.sqrt(
-            1.0 * physical_parameters.temp / (physical_parameters.m * omega**2)
+            1.0 * physical_parameters.temperature / (physical_parameters.m * omega**2)
         )  # k_B set to 1 for now
 
         characteristic_time = 1 / omega
@@ -284,23 +266,15 @@ class SHOParams(SimulationParams):
         self.delta_k: tuple[float, ...] = (1 / self.characteristic_values.length,)
 
 
-class PeriodicParams(SimulationParams):
+class PeriodicParameters(SimulationParameters):
     """Parameters for the harmonic Langevin equation."""
-
-    _pickle_param_map: ClassVar[dict[str, str]] = {
-        "lattice_spacing": "lattice_spacing",
-        "amplitude": "amplitude",
-        "physical_parameters": "physical",
-        "time_span": "time_span",
-        "initial_conditions": "initial_conditions",
-    }
 
     def __init__(
         self,
         *,
         lattice_spacing: float,
         amplitude: float,
-        physical_parameters: PhysicalParams,
+        physical_parameters: PhysicalParameters,
         time_span: TimeSpan,
         initial_conditions: InitialConditions,
     ) -> None:
@@ -331,24 +305,18 @@ class PeriodicParams(SimulationParams):
         )
 
 
-class FlatParams(SimulationParams):
+class FlatParameters(SimulationParameters):
     """Parameters for the harmonic Langevin equation."""
-
-    _pickle_param_map: ClassVar[dict[str, str]] = {
-        "physical_parameters": "physical",
-        "time_span": "time_span",
-        "initial_conditions": "initial_conditions",
-    }
 
     def __init__(
         self,
         *,
-        physical_parameters: PhysicalParams,
+        physical_parameters: PhysicalParameters,
         time_span: TimeSpan,
         initial_conditions: InitialConditions,
     ) -> None:
         potential = 0 * sp.symbols("x0")
-
+        # TODO: why the maths here?
         if physical_parameters.gamma == 0:
             characteristic_time = 1.0
             characteristic_length = 1.0
@@ -376,7 +344,11 @@ class FlatParams(SimulationParams):
         )
 
 
-class PeriodicParams2D(SimulationParams):
+# TODO: can you have a generic "periodic" class?
+# TODO: discuss what goes in __init__
+
+
+class PeriodicParameters2D(SimulationParameters):
     """Parameters for the 2d periodic."""
 
     def __init__(
@@ -384,7 +356,7 @@ class PeriodicParams2D(SimulationParams):
         *,
         delta_x: float,
         height: float,
-        physical_parameters: PhysicalParams,
+        physical_parameters: PhysicalParameters,
         time_span: TimeSpan,
         initial_conditions: InitialConditions,
     ) -> None:

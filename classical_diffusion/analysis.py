@@ -16,119 +16,13 @@ if TYPE_CHECKING:
 
 from dataclasses import astuple, dataclass
 
-import matplotlib.font_manager as fm
-
-from .solve import FlatParams, SHOParams, SimulationParams, SimulationResult
-
-
-@dataclass(frozen=True, kw_only=True)
-class CamColor:
-    """A class to hold CAM color palettes."""
-
-    light: str
-    warm: str
-    base: str
-    dark: str
-
-
-CAM_BLUE = CamColor(
-    light="#D1F9F1",
-    warm="#00BDB6",
-    base="#8EE8D8",
-    dark="#133844",
+from .solve import (
+    FlatParameters,
+    PeriodicParameters,
+    SHOParameters,
+    SimulationParameters,
+    SimulationResult,
 )
-CAM_CHERRY = CamColor(
-    light="#F2CAD8",
-    warm="#E18AAC",
-    base="#CD3572",
-    dark="#911449",
-)
-CAM_CREST = CamColor(
-    light="#FFE2C8",
-    warm="#FFC392",
-    base="#FD8153",
-    dark="#DD3025",
-)
-CAM_PURPLE = CamColor(
-    light="#F2ECF8",
-    warm="#D1B7EB",
-    base="#A368DF",
-    dark="#681FB1",
-)
-CAM_INDIGO = CamColor(
-    light="#EBEDFB",
-    warm="#B0B9F1",
-    base="#5366E0",
-    dark="#29347A",
-)
-CAM_GREEN = CamColor(
-    light="#DFF2EA",
-    warm="#AFDFCB",
-    base="#4DB78C",
-    dark="#13553A",
-)
-
-
-CAM_SLATE_1 = "#ECEEF1"
-CAM_SLATE_2 = "#B5BDC8"
-CAM_SLATE_3 = "#546072"
-CAM_SLATE_4 = "#232830"
-
-
-def setup_rc_params(*, use_tex: bool = False) -> None:
-    """Set up matplotlib rcParams for consistent figure styling."""
-    if use_tex:
-        fe = fm.FontEntry(
-            fname="/workspaces/thesis_calculations/fonts/OpenSans-Regular.ttf",
-            name="Open Sans",
-        )
-        fm.fontManager.ttflist.insert(0, fe)
-        plt.rcParams.update(
-            {
-                "text.usetex": True,
-                "font.family": "sans-serif",
-                "font.sans-serif": ["Open Sans"],
-                "text.latex.preamble": r"\usepackage{fourier}"
-                "\n"
-                r"\usepackage{amsmath}",  # cspell: disable-line
-            },
-        )
-
-
-def get_fig_size() -> tuple[float, float]:
-    """Get default figure size in inches based on document text width."""
-    total_textwidth_pt = 437.5
-    pt_to_inch = 1 / 72.27
-
-    # We want half width
-    plot_width_in = (total_textwidth_pt / 2) * pt_to_inch
-
-    # Height using Golden Ratio (Height = Width * 0.618)
-    plot_height_in = plot_width_in * 0.85
-    return plot_width_in, plot_height_in
-
-
-def get_fancy_figure(
-    *,
-    fig_size: tuple[float, float] | None = None,
-    use_tex: bool = False,
-) -> tuple[Figure, Axes]:
-    """Create a figure and axis with fancy styling."""
-    setup_rc_params(use_tex=use_tex)
-    fig, ax = plt.subplots(
-        figsize=fig_size or get_fig_size(),
-        layout="constrained",
-    )
-    ax.set_facecolor(CAM_SLATE_1)
-    fig.set_facecolor((0, 0, 0, 0))
-
-    ax.tick_params(
-        axis="both", direction="in", top=True, right=True, labelsize=8, which="both"
-    )
-
-    ax.xaxis.label.set_fontsize(11)
-    ax.yaxis.label.set_fontsize(11)
-    return fig, ax
 
 
 def get_figure(ax: MPLAxesBase | None = None) -> tuple[Figure, Axes]:
@@ -242,7 +136,6 @@ def plot_isf(
     config: IsfConfig,
     *,
     ax: Axes | None = None,
-    color: str,
     time_scale: float | None = None,
 ) -> tuple[Figure, Axes, Line2D]:
     """Plot the ensemble-averaged ISF over time, with a shaded ±1 SEM band.
@@ -270,14 +163,12 @@ def plot_isf(
     scaled_times = result.times / scale
     (line,) = ax.plot(scaled_times, avg_data)
     line.set_label("ISF")
-    line.set_color(color)
 
     ax.fill_between(
         scaled_times,
         avg_data - sem_data,
         avg_data + sem_data,
         alpha=0.3,
-        color=color,
         label="SEM",
     )
 
@@ -289,7 +180,9 @@ def plot_isf(
 
 
 def plot_exact_isf_sho(
-    result: SimulationResult, *, ax: Axes | None = None, color: str
+    result: SimulationResult[SHOParameters],
+    *,
+    ax: Axes | None = None,
 ) -> tuple[Figure, Axes, Line2D]:
     """Plot the state occupations of a quantum simulation result."""
     fig, ax = get_figure(ax)
@@ -297,7 +190,6 @@ def plot_exact_isf_sho(
     isf_exact, times = get_exact_isf_sho(result.params)
     (line,) = ax.plot(times, isf_exact)
     line.set_label("ISF")
-    line.set_color(color)
 
     ax.set_title("Intermediate Scattering Function Over Time")
     ax.set_xlabel("Time / characteristic time")
@@ -379,7 +271,7 @@ def _get_sampled_kinetic_energies[T: SimulationResult](
     result: T,
 ) -> np.ndarray[Any, np.dtype[np.float64]]:
     return (np.sum(result.ps**2, axis=1)) / (
-        2 * result.params.physical.m * result.params.physical.kbt
+        2 * result.params.physical_parameters.m * result.params.physical_parameters.kbt
     )
 
 
@@ -392,20 +284,20 @@ def _get_all_kinetic_energies[T: SimulationResult](
     return np.concatenate([_get_sampled_kinetic_energies(r) for r in result]).ravel()
 
 
-def plot_kinetic_probability[T: SimulationResult](  # noqa: PLR0914
+def plot_kinetic_probability[T: SimulationResult](
     result: T | list[T],
     *,
     ax: Axes | None = None,
     bins: int = 100,
     max_energy: float = 4.0,
-) -> tuple[Figure, Axes, tuple[Line2D, Line2D, Line2D, BarContainer]]:
+) -> tuple[Figure, Axes, tuple[Line2D, BarContainer]]:
     """Plot the kinetic probabilities for the sample."""
     fig, ax = get_figure(ax)
 
     kinetic_energy = _get_all_kinetic_energies(result)
 
     energy_range = (np.min(kinetic_energy), max_energy + np.min(kinetic_energy))
-    bin_counts, bin_edges, bars = ax.hist(
+    _bin_counts, bin_edges, bars = ax.hist(
         kinetic_energy,
         bins=bins,
         density=True,
@@ -414,7 +306,7 @@ def plot_kinetic_probability[T: SimulationResult](  # noqa: PLR0914
         label="Simulation Data",
         range=energy_range,
     )
-    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    (bin_edges[:-1] + bin_edges[1:]) / 2
 
     def classical_pdf(
         energies: np.ndarray[tuple[int], np.dtype[np.float64]], mu: float
@@ -424,47 +316,10 @@ def plot_kinetic_probability[T: SimulationResult](  # noqa: PLR0914
     energies = np.linspace(0.001, bin_edges[-1], 500)
 
     (line0,) = ax.plot(energies, classical_pdf(energies, mu=0.5))
-    line0.set_color("C3")
+    line0.set_color("C1")
     line0.set_linestyle("-")
     line0.set_linewidth(2)
     line0.set_label("Theoretical PDF (Mean = 0.5)")
-
-    optimal_params, _ = scipy.optimize.curve_fit(
-        classical_pdf,
-        bin_centers,
-        bin_counts,
-        p0=[0.5],
-        bounds=(0, 2),
-        sigma=np.asarray(bin_counts) + 1e-5,
-    )
-    fitted_mean = optimal_params[0]
-    (line1,) = ax.plot(energies, classical_pdf(energies, mu=fitted_mean))
-    line1.set_color("C4")
-    line1.set_linestyle("-.")
-    line1.set_linewidth(2)
-    line1.set_label(f"Theoretical PDF (Fitted Mean = {fitted_mean:.3f})")
-
-    def general_pdf(
-        energies: np.ndarray[tuple[int], np.dtype[np.float64]], mu: float, a: float
-    ) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
-        return (
-            a
-            * (1.0 / np.sqrt(2 * np.pi * energies * mu))
-            * np.exp(-energies / (2 * mu))
-        )
-
-    optimal_params, _ = scipy.optimize.curve_fit(
-        general_pdf,
-        bin_centers,
-        bin_counts,
-        p0=[0.5, 1.0],
-        bounds=(0, np.inf),
-        sigma=np.asarray(bin_counts) + 1e-6,
-    )
-    (line2,) = ax.plot(energies, general_pdf(energies, *optimal_params))
-    line2.set_linestyle("-.")
-    line2.set_linewidth(2)
-    line2.set_label(f"Scaled PDF (Fitted Mean = {optimal_params[0]:.3f})")
 
     ax.set_xlim(0, max_energy)
 
@@ -475,13 +330,13 @@ def plot_kinetic_probability[T: SimulationResult](  # noqa: PLR0914
     ax.legend()
     ax.set_yscale("log")
 
-    return fig, ax, (line0, line1, line2, cast("BarContainer", bars))
+    return fig, ax, (line0, cast("BarContainer", bars))
 
 
-def get_exact_isf_sho(params: SHOParams) -> tuple[np.ndarray, np.ndarray]:
+def get_exact_isf_sho(params: SHOParameters) -> tuple[np.ndarray, np.ndarray]:
     """Return the exact ISF for simulation."""
     times = np.arange(params.time_span.t0, params.time_span.t1, params.time_span.dt)
-    gamma, temp, m = astuple(params.physical)
+    gamma, temp, m = astuple(params.physical_parameters)
     f = np.sqrt(params.omega**2 - gamma**2 / 4)
     delta_k = params.delta_k[0]  # unpack from tuple
 
@@ -518,7 +373,7 @@ def x_exact_pdf(result: SimulationResult, *, n_grid: int = 10_000) -> tuple:
     x_grid = np.linspace(result.xs.min(), result.xs.max(), n_grid)
     v_grid = np.broadcast_to(potential(x_grid), x_grid.shape)
 
-    kbt = result.params.physical.kbt
+    kbt = result.params.physical_parameters.kbt
 
     v_shifted = v_grid - v_grid.min()
     unnormalised = np.exp(-v_shifted / kbt)
@@ -528,7 +383,9 @@ def x_exact_pdf(result: SimulationResult, *, n_grid: int = 10_000) -> tuple:
     return x_grid, unnormalised / z
 
 
-def sample_result(result: SimulationResult) -> SimulationResult:
+def sample_result[P: SimulationParameters](
+    result: SimulationResult[P],
+) -> SimulationResult[P]:
     """Subsample all trajectories at the parameters' stride, along the saved-time axis."""
     stride = result.params.stride
     return SimulationResult(
@@ -539,7 +396,9 @@ def sample_result(result: SimulationResult) -> SimulationResult:
     )
 
 
-def fold_result(result: SimulationResult) -> SimulationResult:
+def fold_result[P: PeriodicParameters](
+    result: SimulationResult[P],
+) -> SimulationResult[P]:
     """Fold x into first BZ zone."""
     return SimulationResult(
         times=result.times,
@@ -567,15 +426,14 @@ def plot_x_histogram(
         bins=bins,
         density=True,
         alpha=1.0,
-        color=CAM_BLUE.warm,
     )
 
     x_grid, x_pdf = x_exact_pdf(result)
-    ax.plot(x_grid, x_pdf, color=CAM_BLUE.dark, lw=1.5)
+    ax.plot(x_grid, x_pdf, lw=1.5)
 
     ax.set_xlabel("x")
     ax.set_ylabel("Probability Density")
-    ax.legend(frameon=False, fontsize=9, labelcolor=CAM_SLATE_4)
+    ax.legend()
 
     return fig, ax, cast("BarContainer", bars)
 
@@ -583,7 +441,7 @@ def plot_x_histogram(
 def p_exact_pdf(result: SimulationResult, *, n_grid: int = 10_000) -> tuple:
     """Return p boltzman pdf."""
     p_grid = np.linspace(result.ps.min(), result.ps.max(), n_grid)
-    m, kbt = result.params.physical.m, result.params.physical.kbt
+    m, kbt = result.params.physical_parameters.m, result.params.physical_parameters.kbt
     pdf_theory = np.sqrt(1 / (2 * np.pi * m * kbt)) * np.exp(
         -(p_grid**2) / (2 * m * kbt)
     )
@@ -609,15 +467,14 @@ def plot_p_histogram(
         bins=bins,
         density=True,
         alpha=1.0,
-        color=CAM_BLUE.warm,
     )
 
     p_grid, p_pdf = p_exact_pdf(result=result)
-    ax.plot(p_grid, p_pdf, color=CAM_BLUE.dark, lw=1.5)
+    ax.plot(p_grid, p_pdf, lw=1.5)
 
     ax.set_xlabel("p")
     ax.set_ylabel("Probability Density")
-    ax.legend(frameon=False, fontsize=9, labelcolor=CAM_SLATE_4)
+    ax.legend()
 
     return fig, ax, cast("BarContainer", bars)
 
@@ -654,7 +511,7 @@ def get_elastic_p(
     x0 = result.params.initial_conditions.x0[:, :, None]
     safe_times = np.where(result.times == 0, np.nan, result.times)
     v_elastic = (result.xs - x0) / safe_times
-    return v_elastic * result.params.physical.m
+    return v_elastic * result.params.physical_parameters.m
 
 
 def plot_elastic_p(
@@ -685,8 +542,9 @@ def plot_elastic_p(
     return fig, ax
 
 
+# TODO: should take in times
 def get_exact_isf_flat(
-    params: FlatParams,
+    params: FlatParameters,
     *,
     delta_k: tuple[float, ...],
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -696,7 +554,7 @@ def get_exact_isf_flat(
     free-streaming thermal velocities with no confining potential.
     """
     times = np.arange(params.time_span.t0, params.time_span.t1, params.time_span.dt)
-    kbt, m = params.physical.kbt, params.physical.m
+    kbt, m = params.physical_parameters.kbt, params.physical_parameters.m
     k_squared = sum(k_i**2 for k_i in delta_k)
 
     isf_exact = np.exp(-(k_squared) * kbt / (2 * m) * times**2)
@@ -705,11 +563,11 @@ def get_exact_isf_flat(
 
 
 def plot_exact_isf_flat(
-    params: FlatParams,
+    params: FlatParameters,
     *,
     delta_k: tuple[float, ...],
     ax: Axes | None = None,
-    color: str,
+    # TODO: just ndarray of times?
     time_scale: float | None = None,
 ) -> tuple[Figure, Axes, Line2D]:
     """Plot the exact ISF for a 1D flat (potential-free) surface."""
@@ -722,7 +580,6 @@ def plot_exact_isf_flat(
 
     (line,) = ax.plot(times, isf_exact)
     line.set_label("Exact Flat ISF")
-    line.set_color(color)
 
     ax.set_title("Intermediate Scattering Function Over Time")
     ax.set_xlabel("Time / characteristic time")
@@ -732,6 +589,7 @@ def plot_exact_isf_flat(
     return fig, ax, line
 
 
+# TODO: encode in type system
 _EXPECTED_NDIM = 2
 
 
@@ -759,67 +617,83 @@ def plot_2d_trajectory(
     return fig, ax, line
 
 
-DEFAULT_EXTENT_MULTIPLIER = 5.0
-
-
-def plot_potential(
-    params: SimulationParams,
+def plot_potential_1d(
+    params: SimulationParameters,
+    start: tuple[float, ...],
+    end: tuple[float, ...],
     *,
+    n_points: int = 1000,
     ax: Axes | None = None,
-    n_grid: int = 200,
-    extent: tuple[float, float] | None = None,
-) -> tuple[Figure, Axes, Line2D | QuadMesh]:
+) -> tuple[Figure, Axes, Line2D]:
     """Plot the potential energy surface for a 1D or 2D system.
 
     For 1D systems, plots V(x) as a line. For 2D systems, plots V(x, y)
     as a filled heatmap.
 
-    Raises
-    ------
-    NotImplementedError
-        If the system has more than 2 spatial dimensions, since a
-        potential surface in >2D isn't directly visualizable without
-        slicing or projecting onto a lower-dimensional subspace.
     """
     fig, ax = get_figure(ax)
 
-    n_dims = params.n_dimensions
+    delta = np.array(start) - np.array(end)
+
+    t = np.linspace(0, 1, n_points)
+    points = np.array(start) + t[:, np.newaxis] * delta
+
     potential_func = sp.lambdify(params.symbolic_coordinates, params.potential, "numpy")
+    potential = np.broadcast_to(potential_func(*points.T), (n_points,))
 
-    lo, hi = (
-        extent
-        if extent is not None
-        else (
-            -DEFAULT_EXTENT_MULTIPLIER * params.characteristic_values.length,
-            DEFAULT_EXTENT_MULTIPLIER * params.characteristic_values.length,
-        )
-    )
+    distances = np.linalg.norm(start) + t * np.linalg.norm(delta)
 
-    if n_dims == 1:
-        x_grid = np.linspace(lo, hi, n_grid)
-        v_grid = np.broadcast_to(potential_func(x_grid), x_grid.shape)
+    (line,) = ax.plot(distances, potential)
 
-        (line,) = ax.plot(x_grid, v_grid, color=CAM_BLUE.dark, lw=1.5)
-        ax.set_xlabel("$x$")
-        ax.set_ylabel("$V(x)$")
-        return fig, ax, line
+    ax.set_xlabel(r"x")
+    ax.set_ylabel(r"$V(x)$")
+    ax.set_xlim(distances[0], distances[-1])
 
-    if n_dims == 2:  # noqa: PLR2004
-        x_grid = np.linspace(lo, hi, n_grid)
-        y_grid = np.linspace(lo, hi, n_grid)
-        x_mesh, y_mesh = np.meshgrid(x_grid, y_grid)
-        v_mesh = np.broadcast_to(potential_func(x_mesh, y_mesh), x_mesh.shape)
+    return fig, ax, line
 
-        mesh = ax.pcolormesh(x_mesh, y_mesh, v_mesh, cmap="viridis", shading="auto")
-        fig.colorbar(mesh, ax=ax, label="$V(x, y)$")
-        ax.set_xlabel("$x$")
-        ax.set_ylabel("$y$")
-        ax.set_title("Potential Energy Surface")
-        return fig, ax, mesh
 
-    msg = (
-        f"plot_potential only supports 1D and 2D systems; got "
-        f"n_dimensions={n_dims}. Slice the potential along a subset of "
-        f"coordinates before plotting."
-    )
-    raise NotImplementedError(msg)
+def plot_potential_2d(
+    params: SimulationParameters,
+    start: tuple[float, ...],
+    end: tuple[float, ...],
+    *,
+    n_points: tuple[int, int] = (100, 100),
+    ax: Axes | None = None,
+) -> tuple[Figure, Axes, QuadMesh]:
+    """Plot the potential energy surface for a 2D system as a filled heatmap.
+
+    Parameters
+    ----------
+    params : SimulationParameters
+        The simulation parameters containing the symbolic potential and coordinates.
+    start : tuple[float, ...]
+        The lower-bound coordinates (x_min, y_min).
+    end : tuple[float, ...]
+        The upper-bound coordinates (x_max, y_max).
+    n_points : tuple[int, int], optional
+        The number of grid points in the x and y directions, by default (100, 100).
+    ax : Axes | None, optional
+        The matplotlib Axes to plot on, by default None.
+
+    Returns
+    -------
+    tuple[Figure, Axes, QuadMesh]
+        The figure, axes, and the generated QuadMesh.
+    """
+    fig, ax = get_figure(ax)
+
+    x = np.linspace(start[0], end[0], n_points[0])
+    y = np.linspace(start[1], end[1], n_points[1])
+    x_grid, y_grid = np.meshgrid(x, y)
+
+    potential_func = sp.lambdify(params.symbolic_coordinates, params.potential, "numpy")
+    potential = np.broadcast_to(potential_func(x_grid, y_grid), x_grid.shape)
+
+    mesh = ax.pcolormesh(x_grid, y_grid, potential)
+
+    ax.set_xlabel(r"x")
+    ax.set_ylabel(r"y")
+    ax.set_xlim(start[0], end[0])
+    ax.set_ylim(start[1], end[1])
+
+    return fig, ax, mesh
