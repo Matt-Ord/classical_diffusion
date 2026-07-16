@@ -1,82 +1,25 @@
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, cast
 
-import matplotlib.pyplot as plt
 import numpy as np
 import scipy
 import sympy as sp
 
+from classical_diffusion.langevin import sample_result
+from classical_diffusion.plot import get_figure, get_measured_data
+
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
-    from matplotlib.axes import Axes as MPLAxesBase
     from matplotlib.collections import QuadMesh
     from matplotlib.container import BarContainer
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
 
-
-from dataclasses import astuple, dataclass
-
-from .solve import (
-    FlatParameters,
-    PeriodicParameters,
-    SHOParameters,
-    SimulationParameters,
-    SimulationResult,
-)
+    from classical_diffusion.plot import Measure
 
 
-def get_figure(ax: MPLAxesBase | None = None) -> tuple[Figure, Axes]:
-    """Get the figure of the given axis.
+from dataclasses import dataclass
 
-    If no figure exists, a new figure is created
-    """  # noqa: DOC501
-    if plt is None:
-        msg = "Matplotlib is not installed. Please install it with the 'plot' extra."
-        raise ImportError(msg)  # noqa: RUF100
-
-    if ax is None:
-        return cast("tuple[Figure, Axes]", plt.subplots())  # type: ignore plt.subplots Unknown type
-
-    fig = cast("Figure|None", ax.get_figure())
-    if fig is None:
-        fig = cast("Figure", plt.figure())  # type: ignore plt.figure Unknown type
-        ax.set_figure(fig)
-    return fig, ax
-
-
-Measure = Literal["real", "imag", "abs", "angle"]
-
-
-def _measure_data[DT: np.dtype[np.number]](
-    data: np.ndarray[Any, DT],
-    measure: Measure,
-) -> np.ndarray[Any, np.dtype[np.floating]]:
-    match measure:
-        case "real":
-            return np.real(data)  # type: ignore[no-any-return]
-        case "imag":
-            return np.imag(data)  # type: ignore[no-any-return]
-        case "abs":
-            return np.abs(data)  # type: ignore[no-any-return]
-        case "angle":
-            return np.unwrap(np.angle(data))  # type: ignore[no-any-return]
-
-
-def get_measured_data[DT: np.dtype[np.number[Any]]](
-    data: np.ndarray[Any, DT],
-    measure: Measure,
-) -> np.ndarray[Any, np.dtype[np.floating]]:
-    """Transform data with the given measure.
-
-    Raises
-    ------
-        ValueError: If the data contains NaN values.
-    """  # noqa: DOC501
-    measured = _measure_data(data, measure)
-    if np.any(np.isnan(measured)):
-        msg = "The data contains NaN values."
-        raise ValueError(msg)
-    return measured
+from ._langevin import SimulationResult
 
 
 def _calculate_total_offsset_multiplications_complex(
@@ -175,26 +118,6 @@ def plot_isf(
     ax.set_title("Intermediate Scattering Function Over Time")
     ax.set_xlabel("Time /characteristic time")
     ax.set_ylabel("ISF")
-
-    return fig, ax, line
-
-
-def plot_exact_isf_sho(
-    result: SimulationResult[SHOParameters],
-    *,
-    ax: Axes | None = None,
-) -> tuple[Figure, Axes, Line2D]:
-    """Plot the state occupations of a quantum simulation result."""
-    fig, ax = get_figure(ax)
-
-    isf_exact, times = get_exact_isf_sho(result.params)
-    (line,) = ax.plot(times, isf_exact)
-    line.set_label("ISF")
-
-    ax.set_title("Intermediate Scattering Function Over Time")
-    ax.set_xlabel("Time / characteristic time")
-    ax.set_ylabel("ISF")
-    ax.legend()
 
     return fig, ax, line
 
@@ -333,24 +256,6 @@ def plot_kinetic_probability[T: SimulationResult](
     return fig, ax, (line0, cast("BarContainer", bars))
 
 
-def get_exact_isf_sho(params: SHOParameters) -> tuple[np.ndarray, np.ndarray]:
-    """Return the exact ISF for simulation."""
-    times = np.arange(params.time_span.t0, params.time_span.t1, params.time_span.dt)
-    gamma, temp, m = astuple(params.physical_parameters)
-    f = np.sqrt(params.omega**2 - gamma**2 / 4)
-    delta_k = params.delta_k[0]  # unpack from tuple
-
-    return np.exp(
-        -(delta_k**2)
-        * ((1.0 * temp) / (m * params.omega**2))
-        * (
-            1
-            - np.exp(-gamma * times / 2)
-            * (np.cos(f * times) + (gamma / (2 * f)) * np.sin(f * times))
-        )
-    ), times / params.characteristic_values.time
-
-
 def split_result(result: SimulationResult) -> tuple[SimulationResult, SimulationResult]:
     """Split a simulation result in half along the time axis, each restarting at t=0."""
     xs1, xs2 = np.split(result.xs, 2, axis=-1)
@@ -365,6 +270,7 @@ def split_result(result: SimulationResult) -> tuple[SimulationResult, Simulation
     return first, second
 
 
+# TODO: in system?
 def x_exact_pdf(result: SimulationResult, *, n_grid: int = 10_000) -> tuple:
     """Return x boltzman pdf for given potential."""
     potential = sp.lambdify(
@@ -381,31 +287,6 @@ def x_exact_pdf(result: SimulationResult, *, n_grid: int = 10_000) -> tuple:
     z = np.trapezoid(unnormalised, x_grid)
 
     return x_grid, unnormalised / z
-
-
-def sample_result[P: SimulationParameters](
-    result: SimulationResult[P],
-) -> SimulationResult[P]:
-    """Subsample all trajectories at the parameters' stride, along the saved-time axis."""
-    stride = result.params.stride
-    return SimulationResult(
-        times=result.times[::stride],
-        xs=result.xs[:, :, ::stride],
-        ps=result.ps[:, :, ::stride],
-        params=result.params,
-    )
-
-
-def fold_result[P: PeriodicParameters](
-    result: SimulationResult[P],
-) -> SimulationResult[P]:
-    """Fold x into first BZ zone."""
-    return SimulationResult(
-        times=result.times,
-        xs=result.xs % result.params.lattice_spacing,
-        ps=result.ps,
-        params=result.params,
-    )
 
 
 def plot_x_histogram(
@@ -438,6 +319,7 @@ def plot_x_histogram(
     return fig, ax, cast("BarContainer", bars)
 
 
+# TODO: in system?
 def p_exact_pdf(result: SimulationResult, *, n_grid: int = 10_000) -> tuple:
     """Return p boltzman pdf."""
     p_grid = np.linspace(result.ps.min(), result.ps.max(), n_grid)
@@ -542,53 +424,6 @@ def plot_elastic_p(
     return fig, ax
 
 
-# TODO: should take in times
-def get_exact_isf_flat(
-    params: FlatParameters,
-    *,
-    delta_k: tuple[float, ...],
-) -> tuple[np.ndarray, np.ndarray]:
-    """Return the exact ballistic ISF for a 1D flat (potential-free) surface.
-
-    ISF(t) = exp(-delta_k^2 * kbT / (2m) * t^2), the Gaussian decay from
-    free-streaming thermal velocities with no confining potential.
-    """
-    times = np.arange(params.time_span.t0, params.time_span.t1, params.time_span.dt)
-    kbt, m = params.physical_parameters.kbt, params.physical_parameters.m
-    k_squared = sum(k_i**2 for k_i in delta_k)
-
-    isf_exact = np.exp(-(k_squared) * kbt / (2 * m) * times**2)
-
-    return isf_exact, times / params.characteristic_values.time
-
-
-def plot_exact_isf_flat(
-    params: FlatParameters,
-    *,
-    delta_k: tuple[float, ...],
-    ax: Axes | None = None,
-    # TODO: just ndarray of times?
-    time_scale: float | None = None,
-) -> tuple[Figure, Axes, Line2D]:
-    """Plot the exact ISF for a 1D flat (potential-free) surface."""
-    fig, ax = get_figure(ax)
-
-    isf_exact, times = get_exact_isf_flat(params, delta_k=delta_k)
-
-    if time_scale is not None:
-        times = times * params.characteristic_values.time / time_scale
-
-    (line,) = ax.plot(times, isf_exact)
-    line.set_label("Exact Flat ISF")
-
-    ax.set_title("Intermediate Scattering Function Over Time")
-    ax.set_xlabel("Time / characteristic time")
-    ax.set_ylabel("ISF")
-    ax.legend()
-
-    return fig, ax, line
-
-
 # TODO: encode in type system
 _EXPECTED_NDIM = 2
 
@@ -615,85 +450,3 @@ def plot_2d_trajectory(
     ax.set_ylabel("$y$")
 
     return fig, ax, line
-
-
-def plot_potential_1d(
-    params: SimulationParameters,
-    start: tuple[float, ...],
-    end: tuple[float, ...],
-    *,
-    n_points: int = 1000,
-    ax: Axes | None = None,
-) -> tuple[Figure, Axes, Line2D]:
-    """Plot the potential energy surface for a 1D or 2D system.
-
-    For 1D systems, plots V(x) as a line. For 2D systems, plots V(x, y)
-    as a filled heatmap.
-
-    """
-    fig, ax = get_figure(ax)
-
-    delta = np.array(start) - np.array(end)
-
-    t = np.linspace(0, 1, n_points)
-    points = np.array(start) + t[:, np.newaxis] * delta
-
-    potential_func = sp.lambdify(params.symbolic_coordinates, params.potential, "numpy")
-    potential = np.broadcast_to(potential_func(*points.T), (n_points,))
-
-    distances = np.linalg.norm(start) + t * np.linalg.norm(delta)
-
-    (line,) = ax.plot(distances, potential)
-
-    ax.set_xlabel(r"x")
-    ax.set_ylabel(r"$V(x)$")
-    ax.set_xlim(distances[0], distances[-1])
-
-    return fig, ax, line
-
-
-def plot_potential_2d(
-    params: SimulationParameters,
-    start: tuple[float, ...],
-    end: tuple[float, ...],
-    *,
-    n_points: tuple[int, int] = (100, 100),
-    ax: Axes | None = None,
-) -> tuple[Figure, Axes, QuadMesh]:
-    """Plot the potential energy surface for a 2D system as a filled heatmap.
-
-    Parameters
-    ----------
-    params : SimulationParameters
-        The simulation parameters containing the symbolic potential and coordinates.
-    start : tuple[float, ...]
-        The lower-bound coordinates (x_min, y_min).
-    end : tuple[float, ...]
-        The upper-bound coordinates (x_max, y_max).
-    n_points : tuple[int, int], optional
-        The number of grid points in the x and y directions, by default (100, 100).
-    ax : Axes | None, optional
-        The matplotlib Axes to plot on, by default None.
-
-    Returns
-    -------
-    tuple[Figure, Axes, QuadMesh]
-        The figure, axes, and the generated QuadMesh.
-    """
-    fig, ax = get_figure(ax)
-
-    x = np.linspace(start[0], end[0], n_points[0])
-    y = np.linspace(start[1], end[1], n_points[1])
-    x_grid, y_grid = np.meshgrid(x, y)
-
-    potential_func = sp.lambdify(params.symbolic_coordinates, params.potential, "numpy")
-    potential = np.broadcast_to(potential_func(x_grid, y_grid), x_grid.shape)
-
-    mesh = ax.pcolormesh(x_grid, y_grid, potential)
-
-    ax.set_xlabel(r"x")
-    ax.set_ylabel(r"y")
-    ax.set_xlim(start[0], end[0])
-    ax.set_ylim(start[1], end[1])
-
-    return fig, ax, mesh

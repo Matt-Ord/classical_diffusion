@@ -1,19 +1,17 @@
 import jax.random as jrandom
 import numpy as np
 
-from classical_diffusion.analysis import (
-    IsfConfig,
-    plot_exact_isf_sho,
-    plot_isf,
-)
-from classical_diffusion.solve import (
+from classical_diffusion.langevin import (
     InitialConditions,
+    IsfConfig,
     PhysicalParameters,
     SHOParameters,
     TimeSpan,
+    plot_exact_isf_sho,
+    plot_isf,
     solve_ensemble,
 )
-from classical_diffusion.theme import (
+from classical_diffusion.plot import (
     CAM_BLUE,
     CAM_SLATE_4,
     get_fancy_figure,

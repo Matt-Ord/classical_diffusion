@@ -1,46 +1,15 @@
-from typing import TYPE_CHECKING
-
 import jax.random as jrandom
 import numpy as np
 
-from classical_diffusion.analysis import (
-    plot_2d_trajectory,
-    plot_potential_2d,
-)
-from classical_diffusion.solve import (
+from classical_diffusion.langevin import (
     InitialConditions,
     PeriodicParameters2D,
     PhysicalParameters,
     TimeSpan,
+    plot_2d_trajectory,
     solve_ensemble,
 )
-from classical_diffusion.theme import CAM_BLUE, get_fancy_figure
-
-if TYPE_CHECKING:
-    from matplotlib.axes import Axes
-    from matplotlib.collections import QuadMesh
-    from matplotlib.figure import Figure
-
-
-def plot_periodic_potential_2d(
-    params: PeriodicParameters2D,
-    *,
-    n_points: tuple[int, int] = (100, 100),
-    ax: Axes | None = None,
-) -> tuple[Figure, Axes, QuadMesh]:
-    """Plot the periodic potential in 2D."""
-    # TODO: fix up  PeriodicParameters2D to make lattice directions explicit
-    return plot_potential_2d(
-        params,
-        (0, 0),
-        (
-            2 * params.characteristic_values.length,
-            2 * params.characteristic_values.length,
-        ),
-        n_points=n_points,
-        ax=ax,
-    )
-
+from classical_diffusion.plot import CAM_BLUE, get_fancy_figure
 
 if __name__ == "__main__":
     params = PeriodicParameters2D(

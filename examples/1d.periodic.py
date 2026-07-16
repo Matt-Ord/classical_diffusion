@@ -1,44 +1,24 @@
 import dataclasses
-from typing import TYPE_CHECKING
 
 import jax.random as jrandom
 import numpy as np
 
-from classical_diffusion.analysis import (
+from classical_diffusion.langevin import (
+    InitialConditions,
     IsfConfig,
+    TimeSpan,
     fold_result,
     plot_elastic_p,
     plot_isf,
     plot_p_histogram,
     plot_phase_space_density,
-    plot_potential_1d,
     plot_x_evolution,
     plot_x_histogram,
     sample_result,
-)
-from classical_diffusion.solve import (
-    InitialConditions,
-    PeriodicParameters,
-    PhysicalParameters,
-    TimeSpan,
     solve_ensemble,
 )
-from classical_diffusion.theme import get_fancy_figure
-
-if TYPE_CHECKING:
-    from matplotlib.axes import Axes
-    from matplotlib.figure import Figure
-    from matplotlib.lines import Line2D
-
-
-def plot_periodic_potential_1d(
-    params: PeriodicParameters, *, n_points: int = 1000, ax: Axes | None = None
-) -> tuple[Figure, Axes, Line2D]:
-    """Plot the periodic potential in 1D."""
-    return plot_potential_1d(
-        params, (0,), (params.lattice_spacing,), n_points=n_points, ax=ax
-    )
-
+from classical_diffusion.plot import get_fancy_figure
+from classical_diffusion.system import plot_periodic_potential_1d
 
 if __name__ == "__main__":
     rng = np.random.default_rng(seed=0)

@@ -3,22 +3,20 @@ import dataclasses
 import jax.random as jrandom
 import numpy as np
 
-from classical_diffusion.analysis import (
+from classical_diffusion.langevin import (
+    FlatParameters,
+    InitialConditions,
     IsfConfig,
+    PhysicalParameters,
+    TimeSpan,
     plot_2d_trajectory,
     plot_exact_isf_flat,
     plot_isf,
     plot_p_histogram,
     sample_result,
-)
-from classical_diffusion.solve import (
-    FlatParameters,
-    InitialConditions,
-    PhysicalParameters,
-    TimeSpan,
     solve_ensemble,
 )
-from classical_diffusion.theme import get_fancy_figure
+from classical_diffusion.plot import get_fancy_figure
 
 if __name__ == "__main__":
     rng = np.random.default_rng(seed=0)

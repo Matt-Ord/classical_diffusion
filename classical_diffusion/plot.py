@@ -1,13 +1,68 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import matplotlib.font_manager as fm
 import matplotlib.pyplot as plt
+import numpy as np
 from cycler import cycler
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
     from matplotlib.figure import Figure
+
+
+def get_figure(ax: Axes | None = None) -> tuple[Figure, Axes]:
+    """Get the figure of the given axis.
+
+    If no figure exists, a new figure is created
+    """  # noqa: DOC501
+    if plt is None:
+        msg = "Matplotlib is not installed. Please install it with the 'plot' extra."
+        raise ImportError(msg)  # noqa: RUF100
+
+    if ax is None:
+        return cast("tuple[Figure, Axes]", plt.subplots())  # type: ignore plt.subplots Unknown type
+
+    fig = cast("Figure|None", ax.get_figure())
+    if fig is None:
+        fig = cast("Figure", plt.figure())  # type: ignore plt.figure Unknown type
+        ax.set_figure(fig)
+    return fig, ax
+
+
+Measure = Literal["real", "imag", "abs", "angle"]
+
+
+def _measure_data[DT: np.dtype[np.number]](
+    data: np.ndarray[Any, DT],
+    measure: Measure,
+) -> np.ndarray[Any, np.dtype[np.floating]]:
+    match measure:
+        case "real":
+            return np.real(data)  # type: ignore[no-any-return]
+        case "imag":
+            return np.imag(data)  # type: ignore[no-any-return]
+        case "abs":
+            return np.abs(data)  # type: ignore[no-any-return]
+        case "angle":
+            return np.unwrap(np.angle(data))  # type: ignore[no-any-return]
+
+
+def get_measured_data[DT: np.dtype[np.number[Any]]](
+    data: np.ndarray[Any, DT],
+    measure: Measure,
+) -> np.ndarray[Any, np.dtype[np.floating]]:
+    """Transform data with the given measure.
+
+    Raises
+    ------
+        ValueError: If the data contains NaN values.
+    """  # noqa: DOC501
+    measured = _measure_data(data, measure)
+    if np.any(np.isnan(measured)):
+        msg = "The data contains NaN values."
+        raise ValueError(msg)
+    return measured
 
 
 @dataclass(frozen=True, kw_only=True)

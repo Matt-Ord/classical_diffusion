@@ -1,36 +1,36 @@
+import dataclasses
+
 import jax.random as jrandom
 import numpy as np
 
-from classical_diffusion.analysis import (
+from classical_diffusion.langevin import (
+    InitialConditions,
     IsfConfig,
+    SimulationParameters,
+    TimeSpan,
     plot_exact_isf_flat,
     plot_isf,
     plot_p_histogram,
     plot_x_histogram,
     sample_result,
-)
-from classical_diffusion.solve import (
-    FlatParameters,
-    InitialConditions,
-    PhysicalParameters,
-    TimeSpan,
     solve_ensemble,
 )
-from classical_diffusion.theme import get_fancy_figure
+from classical_diffusion.plot import get_fancy_figure
+from classical_diffusion.system import HarmonicSystem
 
 if __name__ == "__main__":
     rng = np.random.default_rng(seed=0)
     key = jrandom.PRNGKey(100)
 
-    dist_params = FlatParameters(
-        physical_parameters=PhysicalParameters(gamma=0.5, temperature=1.5, m=1),
-        time_span=TimeSpan(t0=0, t1=30_000, dt=0.01, burn_in=1),
+    dist_params = SimulationParameters(
+        system=HarmonicSystem(omega=0, gamma=0.5, temperature=1.5, m=1),
+        time_span=TimeSpan(t0=0, t1=100, dt=0.01, burn_in=1),
         initial_conditions=InitialConditions(
             x0=np.array([[0.0]]), p0=np.array([[0.0]])
         ),
     )
 
-    dist_result = solve_ensemble.load_or_call_cached(params=dist_params, _key=key)
+    dist_result = solve_ensemble.call_cached(params=dist_params, _key=key)
     dist_result_sampled = sample_result(dist_result)
 
     fig_p_hist, ax = get_fancy_figure()
@@ -51,8 +51,8 @@ if __name__ == "__main__":
         p0=rng.choice(dist_result_sampled.ps.reshape(-1), size=n_trajectories)[:, None],
     )
 
-    ballistic_params = FlatParameters(
-        physical_parameters=PhysicalParameters(gamma=0.0, temperature=1.5, m=1.0),
+    ballistic_params = SimulationParameters(
+        system=dataclasses.replace(dist_params.system, gamma=gamma),
         time_span=TimeSpan(t0=0, t1=cutoff, dt=0.01, burn_in=0),
         initial_conditions=initial_conditions,
     )
