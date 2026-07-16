@@ -1,41 +1,24 @@
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import matplotlib.pyplot as plt
 import numpy as np
-
-if TYPE_CHECKING:
-    from matplotlib.axes import Axes
-    from matplotlib.figure import Figure
-
-
-from typing import TYPE_CHECKING, Literal, cast
+import scipy
+import sympy as sp
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
     from matplotlib.axes import Axes as MPLAxesBase
-    from matplotlib.figure import Figure
-
-from typing import TYPE_CHECKING
-
-import scipy
-
-if TYPE_CHECKING:
-    from matplotlib.axes import Axes
+    from matplotlib.collections import QuadMesh
     from matplotlib.container import BarContainer
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
 
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from dataclasses import astuple, dataclass
 
 import matplotlib.font_manager as fm
 
-from .solve import SimulationResult
-
-if TYPE_CHECKING:
-    from matplotlib.axes import Axes
-    from matplotlib.figure import Figure
+from .solve import FlatParams, SHOParams, SimulationParams, SimulationResult
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -143,7 +126,6 @@ def get_fancy_figure(
         axis="both", direction="in", top=True, right=True, labelsize=8, which="both"
     )
 
-    # 3. Handle Label Sizes
     ax.xaxis.label.set_fontsize(11)
     ax.yaxis.label.set_fontsize(11)
     return fig, ax
@@ -246,40 +228,79 @@ def get_isf(
     return _time_average(convolution)
 
 
+@dataclass(frozen=True, kw_only=True)
+class IsfConfig:
+    """Settings controlling how the ISF is computed from trajectory data."""
+
+    delta_k: tuple[float, ...]
+    measure: Measure = "abs"
+    pairwise: bool = True
+
+
 def plot_isf(
     result: SimulationResult,
+    config: IsfConfig,
     *,
-    delta_k: tuple[float, ...],
-    measure: Measure = "abs",
     ax: Axes | None = None,
+    color: str,
+    time_scale: float | None = None,
 ) -> tuple[Figure, Axes, Line2D]:
-    """Plot the state occupations of a quantum simulation result."""
+    """Plot the ensemble-averaged ISF over time, with a shaded ±1 SEM band.
+
+    `time_scale` overrides the result's own characteristic time for
+    x-axis normalization — pass the same value to multiple calls to
+    compare curves on a shared timescale.
+    """
     fig, ax = get_figure(ax)
 
-    isf = get_isf(result.xs, delta_k=delta_k)
-    data = get_measured_data(isf, measure)
-    (line,) = ax.plot(result.times, data)
+    isf = get_isf(result.xs, delta_k=config.delta_k, pairwise=config.pairwise)
+
+    n_trajectories = isf.shape[0]
+    avg_isf = np.mean(isf, axis=0)
+    sem_isf = np.std(isf, axis=0) / np.sqrt(n_trajectories)
+
+    avg_data = get_measured_data(avg_isf, config.measure)
+    sem_data = get_measured_data(sem_isf, config.measure)
+
+    scale = (
+        time_scale
+        if time_scale is not None
+        else result.params.characteristic_values.time
+    )
+    scaled_times = result.times / scale
+    (line,) = ax.plot(scaled_times, avg_data)
     line.set_label("ISF")
+    line.set_color(color)
+
+    ax.fill_between(
+        scaled_times,
+        avg_data - sem_data,
+        avg_data + sem_data,
+        alpha=0.3,
+        color=color,
+        label="SEM",
+    )
 
     ax.set_title("Intermediate Scattering Function Over Time")
-    ax.set_xlabel("Time /au")
+    ax.set_xlabel("Time /characteristic time")
     ax.set_ylabel("ISF")
-    ax.legend()
 
     return fig, ax, line
 
 
-def plot_exact_isf(
-    isf: np.ndarray, times: np.ndarray, *, ax: Axes | None = None
+def plot_exact_isf_sho(
+    result: SimulationResult, *, ax: Axes | None = None, color: str
 ) -> tuple[Figure, Axes, Line2D]:
     """Plot the state occupations of a quantum simulation result."""
     fig, ax = get_figure(ax)
 
-    (line,) = ax.plot(times, isf)
+    isf_exact, times = get_exact_isf_sho(result.params)
+    (line,) = ax.plot(times, isf_exact)
     line.set_label("ISF")
+    line.set_color(color)
 
     ax.set_title("Intermediate Scattering Function Over Time")
-    ax.set_xlabel("Time /au")
+    ax.set_xlabel("Time / characteristic time")
     ax.set_ylabel("ISF")
     ax.legend()
 
@@ -287,39 +308,77 @@ def plot_exact_isf(
 
 
 def plot_x_evolution(
-    result: SimulationResult, *, ax: Axes | None = None, idx: int = 0
-) -> tuple[Figure, Axes, Line2D]:
-    """Plot x against t."""
+    result: SimulationResult,
+    *,
+    ax: Axes | None = None,
+    idx: int = 0,
+    n_trajectories: int = 1,
+) -> tuple[Figure, Axes, list[Line2D]]:
+    """Plot x against t for the first n_trajectories trajectories.
+
+    Raises
+    ------
+    ValueError
+        If `n_trajectories` exceeds the number of trajectories available in `result`.
+    """
     fig, ax = get_figure(ax)
 
+    if n_trajectories > result.xs.shape[0]:
+        msg = f"n_trajectories={n_trajectories} exceeds available trajectories ({result.xs.shape[0]})"
+        raise ValueError(msg)
+
     times = result.times - result.times[0]
-    (line,) = ax.plot(times, result.xs[idx])
-    line.set_label("$x$")
-    ax.set_xlabel("$t$")
+    times /= result.params.characteristic_values.time
+
+    lines = []
+    for traj in range(n_trajectories):
+        (line,) = ax.plot(times, result.xs[traj, idx])
+        lines.append(line)
+
+    ax.set_xlabel("$t / characteristic time$")
     ax.set_ylabel("$x$")
 
-    return fig, ax, line
+    return fig, ax, lines
 
 
 def plot_p_evolution(
-    result: SimulationResult, *, ax: Axes | None = None, idx: int = 0
-) -> tuple[Figure, Axes, Line2D]:
-    """Plot p against t."""
+    result: SimulationResult,
+    *,
+    ax: Axes | None = None,
+    idx: int = 0,
+    n_trajectories: int = 1,
+) -> tuple[Figure, Axes, list[Line2D]]:
+    """Plot p against t for the first n_trajectories trajectories.
+
+    Raises
+    ------
+    ValueError
+        If `n_trajectories` exceeds the number of trajectories available in `result`.
+    """
     fig, ax = get_figure(ax)
 
+    if n_trajectories > result.ps.shape[0]:
+        msg = f"n_trajectories={n_trajectories} exceeds available trajectories ({result.ps.shape[0]})"
+        raise ValueError(msg)
+
     times = result.times - result.times[0]
-    (line,) = ax.plot(times, result.ps[idx])
-    line.set_label("$p$")
-    ax.set_xlabel("$t$")
+    times /= result.params.characteristic_values.time
+
+    lines = []
+    for traj in range(n_trajectories):
+        (line,) = ax.plot(times, result.ps[traj, idx])
+        lines.append(line)
+
+    ax.set_xlabel("$t / characteristic time$")
     ax.set_ylabel("$p$")
 
-    return fig, ax, line
+    return fig, ax, lines
 
 
 def _get_sampled_kinetic_energies[T: SimulationResult](
     result: T,
 ) -> np.ndarray[Any, np.dtype[np.float64]]:
-    return (np.sum(result.ps**2, axis=0)) / (
+    return (np.sum(result.ps**2, axis=1)) / (
         2 * result.params.physical.m * result.params.physical.kbt
     )
 
@@ -417,3 +476,350 @@ def plot_kinetic_probability[T: SimulationResult](  # noqa: PLR0914
     ax.set_yscale("log")
 
     return fig, ax, (line0, line1, line2, cast("BarContainer", bars))
+
+
+def get_exact_isf_sho(params: SHOParams) -> tuple[np.ndarray, np.ndarray]:
+    """Return the exact ISF for simulation."""
+    times = np.arange(params.time_span.t0, params.time_span.t1, params.time_span.dt)
+    gamma, temp, m = astuple(params.physical)
+    f = np.sqrt(params.omega**2 - gamma**2 / 4)
+    delta_k = params.delta_k[0]  # unpack from tuple
+
+    return np.exp(
+        -(delta_k**2)
+        * ((1.0 * temp) / (m * params.omega**2))
+        * (
+            1
+            - np.exp(-gamma * times / 2)
+            * (np.cos(f * times) + (gamma / (2 * f)) * np.sin(f * times))
+        )
+    ), times / params.characteristic_values.time
+
+
+def split_result(result: SimulationResult) -> tuple[SimulationResult, SimulationResult]:
+    """Split a simulation result in half along the time axis, each restarting at t=0."""
+    xs1, xs2 = np.split(result.xs, 2, axis=-1)
+    ps1, ps2 = np.split(result.ps, 2, axis=-1)
+    times1, times2 = np.split(result.times, 2)
+
+    times1 -= times1[0]
+    times2 -= times2[0]
+
+    first = SimulationResult(times=times1, xs=xs1, ps=ps1, params=result.params)
+    second = SimulationResult(times=times2, xs=xs2, ps=ps2, params=result.params)
+    return first, second
+
+
+def x_exact_pdf(result: SimulationResult, *, n_grid: int = 10_000) -> tuple:
+    """Return x boltzman pdf for given potential."""
+    potential = sp.lambdify(
+        result.params.symbolic_coordinates, result.params.potential, "numpy"
+    )
+    x_grid = np.linspace(result.xs.min(), result.xs.max(), n_grid)
+    v_grid = np.broadcast_to(potential(x_grid), x_grid.shape)
+
+    kbt = result.params.physical.kbt
+
+    v_shifted = v_grid - v_grid.min()
+    unnormalised = np.exp(-v_shifted / kbt)
+
+    z = np.trapezoid(unnormalised, x_grid)
+
+    return x_grid, unnormalised / z
+
+
+def sample_result(result: SimulationResult) -> SimulationResult:
+    """Subsample all trajectories at the parameters' stride, along the saved-time axis."""
+    stride = result.params.stride
+    return SimulationResult(
+        times=result.times[::stride],
+        xs=result.xs[:, :, ::stride],
+        ps=result.ps[:, :, ::stride],
+        params=result.params,
+    )
+
+
+def fold_result(result: SimulationResult) -> SimulationResult:
+    """Fold x into first BZ zone."""
+    return SimulationResult(
+        times=result.times,
+        xs=result.xs % result.params.lattice_spacing,
+        ps=result.ps,
+        params=result.params,
+    )
+
+
+def plot_x_histogram(
+    result: SimulationResult,
+    *,
+    ax: Axes | None = None,
+    bins: int = 100,
+) -> tuple[Figure, Axes, tuple[Line2D, BarContainer]]:
+    """Plot a fancy histogram of periodically sampled position or momentum.
+
+    Subsamples the trajectory every `sample_every` steps (to reduce
+    autocorrelation between adjacent time points) before histogramming.
+    """
+    fig, ax = get_figure(ax)
+
+    _bin_counts, _bin_edges, bars = ax.hist(
+        result.xs.reshape(-1),
+        bins=bins,
+        density=True,
+        alpha=1.0,
+        color=CAM_BLUE.warm,
+    )
+
+    x_grid, x_pdf = x_exact_pdf(result)
+    ax.plot(x_grid, x_pdf, color=CAM_BLUE.dark, lw=1.5)
+
+    ax.set_xlabel("x")
+    ax.set_ylabel("Probability Density")
+    ax.legend(frameon=False, fontsize=9, labelcolor=CAM_SLATE_4)
+
+    return fig, ax, cast("BarContainer", bars)
+
+
+def p_exact_pdf(result: SimulationResult, *, n_grid: int = 10_000) -> tuple:
+    """Return p boltzman pdf."""
+    p_grid = np.linspace(result.ps.min(), result.ps.max(), n_grid)
+    m, kbt = result.params.physical.m, result.params.physical.kbt
+    pdf_theory = np.sqrt(1 / (2 * np.pi * m * kbt)) * np.exp(
+        -(p_grid**2) / (2 * m * kbt)
+    )
+
+    return p_grid, pdf_theory
+
+
+def plot_p_histogram(
+    result: SimulationResult,
+    *,
+    ax: Axes | None = None,
+    bins: int = 100,
+) -> tuple[Figure, Axes, tuple[Line2D, BarContainer]]:
+    """Plot a fancy histogram of periodically sampled position or momentum.
+
+    Subsamples the trajectory every `sample_every` steps (to reduce
+    autocorrelation between adjacent time points) before histogramming.
+    """
+    fig, ax = get_figure(ax)
+
+    _bin_counts, _bin_edges, bars = ax.hist(
+        result.ps.reshape(-1),
+        bins=bins,
+        density=True,
+        alpha=1.0,
+        color=CAM_BLUE.warm,
+    )
+
+    p_grid, p_pdf = p_exact_pdf(result=result)
+    ax.plot(p_grid, p_pdf, color=CAM_BLUE.dark, lw=1.5)
+
+    ax.set_xlabel("p")
+    ax.set_ylabel("Probability Density")
+    ax.legend(frameon=False, fontsize=9, labelcolor=CAM_SLATE_4)
+
+    return fig, ax, cast("BarContainer", bars)
+
+
+def plot_phase_space_density(
+    result: SimulationResult,
+    *,
+    ax: Axes | None = None,
+    bins: int = 100,
+) -> tuple[Figure, Axes, QuadMesh]:
+    """Plot 2D density map of (x, p) phase space."""
+    fig, ax = get_figure(ax)
+
+    _counts, _xedges, _yedges, mesh = ax.hist2d(
+        result.xs.reshape(-1),
+        result.ps.reshape(-1),
+        bins=bins,
+        density=True,
+        cmap="viridis",
+    )
+
+    fig.colorbar(mesh, ax=ax, label="Probability Density")
+    ax.set_xlabel("x")
+    ax.set_ylabel("p")
+    ax.set_title("Phase Space Density")
+
+    return fig, ax, mesh
+
+
+def get_elastic_p(
+    result: SimulationResult,
+) -> np.ndarray[Any, np.dtype[np.floating]]:
+    """Return the elastic (ballistic straight-line) momentum estimate per trajectory."""
+    x0 = result.params.initial_conditions.x0[:, :, None]
+    safe_times = np.where(result.times == 0, np.nan, result.times)
+    v_elastic = (result.xs - x0) / safe_times
+    return v_elastic * result.params.physical.m
+
+
+def plot_elastic_p(
+    result: SimulationResult, *, n_trajectories: int = 5, ax: Axes | None = None
+) -> tuple[Figure, Axes]:
+    """Plot convergence of elastic momenta over all trajectories.
+
+    Raises
+    ------
+    ValueError
+        If `n_trajectories` exceeds the number of trajectories available in `result`.
+    """
+    if n_trajectories > result.ps.shape[0]:
+        msg = f"n_trajectories={n_trajectories} exceeds available trajectories ({result.ps.shape[0]})"
+        raise ValueError(msg)
+
+    fig, ax = get_figure(ax)
+
+    result = sample_result(result)
+    ts = result.times
+    ps = get_elastic_p(result)
+    for traj in range(n_trajectories):
+        ax.plot(ts, ps[traj, 0], label=f"trajectory {traj}")
+
+    ax.set_xlabel("time")
+    ax.set_ylabel("p_elastic")
+
+    return fig, ax
+
+
+def get_exact_isf_flat(
+    params: FlatParams,
+    *,
+    delta_k: tuple[float, ...],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return the exact ballistic ISF for a 1D flat (potential-free) surface.
+
+    ISF(t) = exp(-delta_k^2 * kbT / (2m) * t^2), the Gaussian decay from
+    free-streaming thermal velocities with no confining potential.
+    """
+    times = np.arange(params.time_span.t0, params.time_span.t1, params.time_span.dt)
+    kbt, m = params.physical.kbt, params.physical.m
+    k_squared = sum(k_i**2 for k_i in delta_k)
+
+    isf_exact = np.exp(-(k_squared) * kbt / (2 * m) * times**2)
+
+    return isf_exact, times / params.characteristic_values.time
+
+
+def plot_exact_isf_flat(
+    params: FlatParams,
+    *,
+    delta_k: tuple[float, ...],
+    ax: Axes | None = None,
+    color: str,
+    time_scale: float | None = None,
+) -> tuple[Figure, Axes, Line2D]:
+    """Plot the exact ISF for a 1D flat (potential-free) surface."""
+    fig, ax = get_figure(ax)
+
+    isf_exact, times = get_exact_isf_flat(params, delta_k=delta_k)
+
+    if time_scale is not None:
+        times = times * params.characteristic_values.time / time_scale
+
+    (line,) = ax.plot(times, isf_exact)
+    line.set_label("Exact Flat ISF")
+    line.set_color(color)
+
+    ax.set_title("Intermediate Scattering Function Over Time")
+    ax.set_xlabel("Time / characteristic time")
+    ax.set_ylabel("ISF")
+    ax.legend()
+
+    return fig, ax, line
+
+
+_EXPECTED_NDIM = 2
+
+
+def plot_2d_trajectory(
+    result: SimulationResult, *, ax: Axes | None = None
+) -> tuple[Figure, Axes, Line2D]:
+    """Plot x against y for 2d trajectory.
+
+    Raises
+    ------
+    ValueError
+        If n_dimensions is not 2.
+    """
+    fig, ax = get_figure(ax)
+
+    if result.xs.shape[1] != _EXPECTED_NDIM:
+        msg = "incorrect number of system dimensions, must be 2)"
+        raise ValueError(msg)
+
+    (line,) = ax.plot(result.xs[0, 0], result.xs[0, 1])
+
+    ax.set_xlabel("$x$")
+    ax.set_ylabel("$y$")
+
+    return fig, ax, line
+
+
+DEFAULT_EXTENT_MULTIPLIER = 5.0
+
+
+def plot_potential(
+    params: SimulationParams,
+    *,
+    ax: Axes | None = None,
+    n_grid: int = 200,
+    extent: tuple[float, float] | None = None,
+) -> tuple[Figure, Axes, Line2D | QuadMesh]:
+    """Plot the potential energy surface for a 1D or 2D system.
+
+    For 1D systems, plots V(x) as a line. For 2D systems, plots V(x, y)
+    as a filled heatmap.
+
+    Raises
+    ------
+    NotImplementedError
+        If the system has more than 2 spatial dimensions, since a
+        potential surface in >2D isn't directly visualizable without
+        slicing or projecting onto a lower-dimensional subspace.
+    """
+    fig, ax = get_figure(ax)
+
+    n_dims = params.n_dimensions
+    potential_func = sp.lambdify(params.symbolic_coordinates, params.potential, "numpy")
+
+    lo, hi = (
+        extent
+        if extent is not None
+        else (
+            -DEFAULT_EXTENT_MULTIPLIER * params.characteristic_values.length,
+            DEFAULT_EXTENT_MULTIPLIER * params.characteristic_values.length,
+        )
+    )
+
+    if n_dims == 1:
+        x_grid = np.linspace(lo, hi, n_grid)
+        v_grid = np.broadcast_to(potential_func(x_grid), x_grid.shape)
+
+        (line,) = ax.plot(x_grid, v_grid, color=CAM_BLUE.dark, lw=1.5)
+        ax.set_xlabel("$x$")
+        ax.set_ylabel("$V(x)$")
+        return fig, ax, line
+
+    if n_dims == 2:  # noqa: PLR2004
+        x_grid = np.linspace(lo, hi, n_grid)
+        y_grid = np.linspace(lo, hi, n_grid)
+        x_mesh, y_mesh = np.meshgrid(x_grid, y_grid)
+        v_mesh = np.broadcast_to(potential_func(x_mesh, y_mesh), x_mesh.shape)
+
+        mesh = ax.pcolormesh(x_mesh, y_mesh, v_mesh, cmap="viridis", shading="auto")
+        fig.colorbar(mesh, ax=ax, label="$V(x, y)$")
+        ax.set_xlabel("$x$")
+        ax.set_ylabel("$y$")
+        ax.set_title("Potential Energy Surface")
+        return fig, ax, mesh
+
+    msg = (
+        f"plot_potential only supports 1D and 2D systems; got "
+        f"n_dimensions={n_dims}. Slice the potential along a subset of "
+        f"coordinates before plotting."
+    )
+    raise NotImplementedError(msg)
