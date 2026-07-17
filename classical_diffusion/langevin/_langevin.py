@@ -27,6 +27,22 @@ class TimeSpan:
     dt: float
     dt_step: float | None = None
 
+    def __post_init__(self) -> None:
+        if self.t1 <= self.t0:
+            msg = f"t1 must be greater than t0, got t0={self.t0}, t1={self.t1}"
+            raise ValueError(msg)
+        if self.dt <= 0:
+            msg = f"dt must be positive, got dt={self.dt}"
+            raise ValueError(msg)
+        if self.n_steps < 2:
+            msg = f"Time span must have at least 2 steps, got n_steps={self.n_steps}"
+            raise ValueError(msg)
+
+    @property
+    def n_steps(self) -> int:
+        """Return the number of steps in the time span."""
+        return int((self.t1 - self.t0) / self.dt) + 1
+
 
 @dataclass(frozen=True, kw_only=True)
 class SingleSimulationResult[S: System[Any] = System[Any]]:
@@ -204,7 +220,8 @@ def solve_ensemble[S: System](
     times = jnp.linspace(
         time_span.t0,
         time_span.t1,
-        int((time_span.t1 - time_span.t0) / time_span.dt) + 1,
+        time_span.n_steps,
+        endpoint=True,
     )
 
     if np.isclose(system.gamma, 0.0):
@@ -267,8 +284,8 @@ def solve_single[S: System](
         system,
         time_span,
         (
-            np.array([[initial_conditions[0][0]]]),
-            np.array([[initial_conditions[1][0]]]),
+            np.array([initial_conditions[0]]),
+            np.array([initial_conditions[1]]),
         ),
         _key,
     )[0]

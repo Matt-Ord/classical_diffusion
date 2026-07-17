@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
 
+    from classical_diffusion.langevin._langevin import SingleSimulationResult
     from classical_diffusion.plot import Measure
 
 
@@ -423,7 +424,7 @@ _EXPECTED_NDIM = 2
 
 
 def plot_2d_trajectory(
-    result: SimulationResult, *, ax: Axes | None = None
+    result: SingleSimulationResult, *, ax: Axes | None = None
 ) -> tuple[Figure, Axes, Line2D]:
     """Plot x against y for 2d trajectory.
 
@@ -434,11 +435,11 @@ def plot_2d_trajectory(
     """
     fig, ax = get_figure(ax)
 
-    if result.x_points.shape[1] != _EXPECTED_NDIM:
+    if result.x_points.shape[0] != _EXPECTED_NDIM:
         msg = "incorrect number of system dimensions, must be 2)"
         raise ValueError(msg)
 
-    (line,) = ax.plot(result.x_points[0, 0], result.x_points[0, 1])
+    (line,) = ax.plot(result.x_points[0], result.x_points[1])
 
     ax.set_xlabel("$x$")
     ax.set_ylabel("$y$")

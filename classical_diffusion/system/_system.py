@@ -238,7 +238,7 @@ class PeriodicSystemFCC(System):
     _delta_x: float
     _barrier_energy: float
 
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
         *,
         gamma: float,
@@ -246,7 +246,6 @@ class PeriodicSystemFCC(System):
         m: float,
         delta_x: float,
         barrier_energy: float,
-        n_dim: int = 1,
     ) -> None:
         potential = _get_potential_expr_fcc(barrier_energy, delta_x)
         self._delta_x = delta_x
@@ -256,7 +255,7 @@ class PeriodicSystemFCC(System):
             gamma=gamma,
             temperature=temperature,
             m=m,
-            potential=(n_dim, potential),
+            potential=(2, potential),
         )
 
     @property

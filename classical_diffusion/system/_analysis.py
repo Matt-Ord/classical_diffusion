@@ -61,7 +61,7 @@ def plot_periodic_potential_1d(
 ) -> tuple[Figure, Axes, Line2D]:
     """Plot the periodic potential in 1D."""
     return plot_potential_1d(
-        system, -system.delta_x * 4, system.delta_x * 4, n_points=n_points, ax=ax
+        system, -system.delta_x * 2, system.delta_x * 2, n_points=n_points, ax=ax
     )
 
 
@@ -99,7 +99,9 @@ def plot_potential_2d(
     y = np.linspace(start[1], end[1], n_points[1])
     x_grid, y_grid = np.meshgrid(x, y)
 
-    potential_func = sp.lambdify(params.symbolic_coordinates, params.potential, "numpy")
+    potential_func = sp.lambdify(
+        params.symbolic_coordinates, params.potential_expr, "numpy"
+    )
     potential = np.broadcast_to(potential_func(x_grid, y_grid), x_grid.shape)
 
     mesh = ax.pcolormesh(x_grid, y_grid, potential)

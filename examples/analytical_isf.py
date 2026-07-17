@@ -100,6 +100,46 @@ def _plot_flat_isf() -> None:
     fig.savefig("./examples/analytical_isf.flat.pdf", dpi=300, bbox_inches="tight")
 
 
+def _plot_flat_isf_2d() -> None:
+    key = jrandom.PRNGKey(100)
+
+    system = HarmonicSystem(gamma=0.1, temperature=0.5, m=1.0, omega=0, n_dim=2)
+
+    result = solve_ensemble(
+        system,
+        TimeSpan(
+            t0=0,
+            t1=50 / system.gamma,
+            dt=0.01 / system.gamma,
+            dt_step=0.01 / system.gamma,
+        ),
+        (np.full((200, 2), 0.0), np.full((200, 2), 0.0)),
+        _key=key,
+    )
+
+    fig, ax = get_fancy_figure()
+
+    delta_k = (2 * np.pi / 40, 0)
+    _, ax, line_simulated, _ = plot_isf(
+        result=result,
+        ax=ax,
+        delta_k=delta_k,
+    )
+    line_simulated.set_label("simulation")
+
+    _, ax, line_exact = plot_exact_flat_isf(system, delta_k, result.times, ax=ax)
+    line_exact.set_label("exact")
+    ax.legend(
+        loc="upper right",
+        handles=[line_simulated, line_exact],
+        labels=["Simulation", "Exact"],
+    )
+    ax.set_xlim(0, 2 / system.gamma)
+    ax.set_ylim(0, 1)
+    fig.savefig("./examples/analytical_isf.flat_2d.pdf", dpi=300, bbox_inches="tight")
+
+
 if __name__ == "__main__":
     _plot_harmonic_isf()
     _plot_flat_isf()
+    _plot_flat_isf_2d()
