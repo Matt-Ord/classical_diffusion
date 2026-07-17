@@ -53,11 +53,6 @@ def _plot_xp_distributions_periodic() -> None:
     fig.savefig("examples/distribution.1d_periodic.phase_space.pdf", dpi=1000)
 
     fig, ax = get_fancy_figure()
-    _, ax, _bars = plot_x_histogram(result=result, ax=ax)
-    ax.set_xlim(-4 * system.delta_x, 4 * system.delta_x)
-    fig.savefig("examples/distribution.1d_periodic.x.pdf")
-
-    fig, ax = get_fancy_figure()
     _, ax, _bars = plot_p_histogram(result=result, ax=ax)
     fig.savefig("examples/distribution.1d_periodic.p.pdf")
 
@@ -66,15 +61,13 @@ def _plot_xp_distributions_periodic() -> None:
     fig, ax = get_fancy_figure()
     _, ax, _bars = plot_x_histogram(result=result_folded, ax=ax)
     ax.set_xlim(0, system.delta_x)
-    fig.savefig("examples/distribution.1d_periodic.x.folded.pdf")
+    fig.savefig("examples/distribution.1d_periodic.x.pdf")
 
     fig, ax = get_fancy_figure()
     _, ax, mesh = plot_phase_space_density(result=result_folded, ax=ax)
     ax.set_xlim(0, system.delta_x)
     mesh.set_rasterized(True)
-    fig.savefig(
-        "examples/distribution.1d_periodic.phase_space.density.folded.pdf", dpi=1000
-    )
+    fig.savefig("examples/distribution.1d_periodic.phase_space.folded.pdf", dpi=1000)
 
 
 def _plot_xp_distributions_harmonic() -> None:
@@ -120,5 +113,15 @@ def _plot_xp_distributions_harmonic() -> None:
 
 
 if __name__ == "__main__":
+    # These examples plot the distribution of the
+    # classical coordinates of (x,p) for a periodic and harmonic system.
+    # This is a good test of convergence - there is a known analytical distribution for both systems,
+    # and a lack of high momentum states (or the wrong distribution of x) indicates that the simulation is not converged
+    # and therefore smaller timesteps are needed.
+    #
+    # To generate statistically independent samples, the simulation is
+    # sampled once every 1 / gamma, and the first 1 / gamma time is discarded as burn-in.
+    #
+    # In the periodic system, the x distribution is folded into the first Brillouin zone.
     _plot_xp_distributions_periodic()
     _plot_xp_distributions_harmonic()
