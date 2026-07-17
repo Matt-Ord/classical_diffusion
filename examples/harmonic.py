@@ -59,15 +59,3 @@ if __name__ == "__main__":
         dpi=300,
         bbox_inches="tight",
     )
-
-    fig, ax = get_fancy_figure()
-    _, _, (line0, bars) = plot_kinetic_probability(result=result, max_energy=6, ax=ax)
-
-    for patch in bars.patches:
-        patch.set_alpha(1)
-    ax.legend(
-        loc="upper right",
-        handles=[line0],
-        labels=["Theoretical"],
-    )
-    fig.savefig("examples/harmonic.kinetic.probability.pdf")

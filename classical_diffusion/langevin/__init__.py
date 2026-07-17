@@ -17,6 +17,7 @@ from ._analysis import (
     plot_x_evolution,
     plot_x_histogram,
     plot_2d_trajectory,
+    plot_kinetic_probability,
 )
 
 __all__ = [
@@ -26,6 +27,7 @@ __all__ = [
     "plot_2d_trajectory",
     "plot_elastic_p",
     "plot_isf",
+    "plot_kinetic_probability",
     "plot_p_histogram",
     "plot_phase_space_density",
     "plot_x_evolution",
