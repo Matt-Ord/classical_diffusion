@@ -34,7 +34,7 @@ class TimeSpan:
         if self.dt <= 0:
             msg = f"dt must be positive, got dt={self.dt}"
             raise ValueError(msg)
-        if self.n_steps < 2:
+        if self.n_steps <= 1:
             msg = f"Time span must have at least 2 steps, got n_steps={self.n_steps}"
             raise ValueError(msg)
 
@@ -119,14 +119,17 @@ def _run_deterministic_ensemble_jit(
     def solve_one(x0: jnp.ndarray, p0: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
         sol = dfx.diffeqsolve(
             term,
-            solver=dfx.Tsit5(),
+            solver=dfx.Tsit5(),  # cspell: disable-line
             t0=0,
             t1=times[-1],
             dt0=times[1] - times[0],
             y0=(x0, p0),
             args=None,
             saveat=dfx.SaveAt(ts=times),
-            stepsize_controller=dfx.PIDController(rtol=1e-3, atol=1e-5),
+            stepsize_controller=dfx.PIDController(
+                rtol=1e-3,  # cspell: disable-line
+                atol=1e-5,
+            ),  # cspell: disable-line
             max_steps=100_000_000,
         )
         return sol.ys
@@ -186,7 +189,7 @@ def _hash_initial_conditions(initial_conditions: tuple[np.ndarray, np.ndarray]) 
     chk = 0
     for arr in initial_conditions:
         # Chain the CRC32 checksums of the raw float bytes
-        chk = zlib.crc32(arr.tobytes(), chk)
+        chk = zlib.crc32(arr.tobytes(), chk)  # cspell: disable-line
         # Include shape just in case the same floats are reshaped
         chk = zlib.crc32(str(arr.shape).encode(), chk)
     return chk

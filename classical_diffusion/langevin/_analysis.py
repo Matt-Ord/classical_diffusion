@@ -138,8 +138,8 @@ def plot_x_evolution(
     scaled_times = result.times / time_scale
 
     lines = []
-    for traj in range(n_trajectories):
-        (line,) = ax.plot(scaled_times, result.x_points[traj, idx])
+    for trajectory in range(n_trajectories):
+        (line,) = ax.plot(scaled_times, result.x_points[trajectory, idx])
         lines.append(line)
 
     ax.set_xlabel("$t / characteristic time$")
@@ -172,8 +172,8 @@ def plot_p_evolution(
     scaled_times = result.times / time_scale
 
     lines = []
-    for traj in range(n_trajectories):
-        (line,) = ax.plot(scaled_times, result.p_points[traj, idx])
+    for trajectory in range(n_trajectories):
+        (line,) = ax.plot(scaled_times, result.p_points[trajectory, idx])
         lines.append(line)
 
     ax.set_xlabel("$t / characteristic time$")
@@ -411,8 +411,8 @@ def plot_elastic_p(
     fig, ax = get_figure(ax)
 
     ps = get_elastic_p(result)
-    for traj in range(n_trajectories):
-        ax.plot(result.times, ps[traj, 0], label=f"trajectory {traj}")
+    for trajectory in range(n_trajectories):
+        ax.plot(result.times, ps[trajectory, 0], label=f"trajectory {trajectory}")
 
     ax.set_xlabel("time")
     ax.set_ylabel("p_elastic")

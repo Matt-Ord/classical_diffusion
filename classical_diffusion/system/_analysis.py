@@ -121,7 +121,7 @@ def plot_periodic_potential_fcc(
     ax: Axes | None = None,
 ) -> tuple[Figure, Axes, QuadMesh]:
     """Plot the periodic potential in 2D."""
-    # TODO: fix up  PeriodicParameters2D to make lattice directions explicit
+    # TODO: fix up  PeriodicParameters2D to make lattice directions explicit # noqa: FIX002
     return plot_potential_2d(
         params,
         (0, 0),
