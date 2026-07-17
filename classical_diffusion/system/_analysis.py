@@ -21,8 +21,8 @@ if TYPE_CHECKING:
 
 def plot_potential_1d(
     params: System,
-    start: tuple[float, ...],
-    end: tuple[float, ...],
+    start: float,
+    end: float,
     *,
     n_points: int = 1000,
     ax: Axes | None = None,
@@ -40,7 +40,9 @@ def plot_potential_1d(
     t = np.linspace(0, 1, n_points)
     points = np.array(start) + t[:, np.newaxis] * delta
 
-    potential_func = sp.lambdify(params.symbolic_coordinates, params.potential, "numpy")
+    potential_func = sp.lambdify(
+        params.symbolic_coordinates, params.potential_expr, "numpy"
+    )
     potential = np.broadcast_to(potential_func(*points.T), (n_points,))
 
     distances = np.linalg.norm(start) + t * np.linalg.norm(delta)
@@ -58,7 +60,9 @@ def plot_periodic_potential_1d(
     system: PeriodicSystem1D, *, n_points: int = 1000, ax: Axes | None = None
 ) -> tuple[Figure, Axes, Line2D]:
     """Plot the periodic potential in 1D."""
-    return plot_potential_1d(system, (0,), (system.delta_x,), n_points=n_points, ax=ax)
+    return plot_potential_1d(
+        system, -system.delta_x * 4, system.delta_x * 4, n_points=n_points, ax=ax
+    )
 
 
 def plot_potential_2d(

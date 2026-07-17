@@ -88,6 +88,15 @@ class SimulationParameters[S: System = System]:
         """Return the number of saved steps."""
         return int((self.time_span.t1 - self.time_span.t0) / self.time_span.dt)
 
+    def with_initial_conditions(
+        self, initial_conditions: InitialConditions
+    ) -> SimulationParameters:
+        return SimulationParameters(
+            system=self.system,
+            time_span=self.time_span,
+            initial_conditions=initial_conditions,
+        )
+
 
 @dataclass(frozen=True, kw_only=True)
 class SimulationResult[S: System[Any] = System[Any]]:
@@ -155,7 +164,7 @@ def solve_batch[S: System](
         sol = dfx.diffeqsolve(
             terms,
             solver=dfx.ALIGN(),
-            t0=0,
+            t0=params.time_span.t0,
             t1=params.time_span.t1,
             dt0=params.time_span.dt,
             y0=(x0, p0),
@@ -238,7 +247,7 @@ def concatenate_results[S: System](
 
 @cached(_my_path, default_call="load_or_call_uncached")
 def solve_ensemble[S: System](
-    params: SimulationParameters[S], _key: jax.Array, chunk_size: int = 10
+    params: SimulationParameters[S], _key: jax.Array, chunk_size: int = 20
 ) -> SimulationResult[S]:
     """Batch simulation to retain some parallelisation while adding a progress bar."""
     if chunk_size > params.n_trajectories:

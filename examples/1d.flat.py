@@ -1,5 +1,3 @@
-import dataclasses
-
 import jax.random as jrandom
 import numpy as np
 
@@ -24,9 +22,10 @@ if __name__ == "__main__":
 
     dist_params = SimulationParameters(
         system=HarmonicSystem(omega=0, gamma=0.5, temperature=1.5, m=1),
-        time_span=TimeSpan(t0=0, t1=100, dt=0.01),
+        time_span=TimeSpan(t0=1, t1=100, dt=0.01),
         initial_conditions=InitialConditions(
-            x0=np.array([[0.0]]), p0=np.array([[0.0]])
+            x0=np.full((40, 1), 2.5),
+            p0=np.full((40, 1), 0.0),
         ),
     )
 
@@ -45,7 +44,7 @@ if __name__ == "__main__":
 
     # Ballistic
     gamma = 0.0
-    n_trajectories = 5000
+    n_trajectories = 1000
 
     initial_conditions = InitialConditions(
         x0=rng.choice(dist_result_sampled.xs.reshape(-1), size=n_trajectories)[:, None],
@@ -53,8 +52,8 @@ if __name__ == "__main__":
     )
 
     ballistic_params = SimulationParameters(
-        system=dataclasses.replace(dist_params.system, gamma=gamma),
-        time_span=TimeSpan(t0=0, t1=100, dt=0.01),
+        system=dist_params.system.with_gamma(gamma=gamma),
+        time_span=TimeSpan(t0=0, t1=10, dt=0.01),
         initial_conditions=initial_conditions,
     )
 
@@ -68,7 +67,6 @@ if __name__ == "__main__":
         result=ballistic_result,
         ax=ax,
         config=IsfConfig(delta_k=delta_k, pairwise=False),
-        time_scale=1 / ballistic_params.system.gamma,
     )
 
     _, ax, line_exact = plot_exact_flat_isf(

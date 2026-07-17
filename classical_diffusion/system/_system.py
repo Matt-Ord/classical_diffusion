@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import override
 
+import numpy as np
 import sympy as sp
 
 
@@ -40,7 +41,12 @@ class System:
         return [-sp.diff(self.potential_expr, c) for c in self.symbolic_coordinates]
 
     def with_gamma(self, gamma: float) -> System:
-        return System(gamma=gamma)
+        return System(
+            gamma=gamma,
+            m=self.m,
+            temperature=self.temperature,
+            potential=self.potential,
+        )
 
 
 class HarmonicSystem(System):
@@ -119,6 +125,22 @@ class PeriodicSystem1D(System):
     def barrier_energy(self) -> float:
         """Return the barrier energy of the system."""
         return self._barrier_energy
+
+    @property
+    def lattice_spacing(self) -> float:
+        """Return the barrier energy of the system."""
+        return 2 * np.pi * self.delta_x
+
+    @override
+    def with_gamma(self, gamma: float) -> PeriodicSystem1D:
+        return PeriodicSystem1D(
+            gamma=gamma,
+            temperature=self.temperature,
+            m=self.m,
+            delta_x=self.delta_x,
+            barrier_energy=self.barrier_energy,
+            n_dim=self.n_dim,
+        )
 
 
 class FlatSystem1D(System):
@@ -225,3 +247,7 @@ class PeriodicSystemFCC(System):
     def barrier_energy(self) -> float:
         """Return the barrier energy of the system."""
         return self._barrier_energy
+
+
+def get_diffusion_time(system: System, characteristic_length: float) -> float:
+    return np.sqrt(system.m * characteristic_length / system.kbt)
