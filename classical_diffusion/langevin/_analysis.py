@@ -89,7 +89,7 @@ def plot_isf(
     """
     fig, ax = get_figure(ax)
 
-    isf = get_isf(result.xs, delta_k=config.delta_k, pairwise=config.pairwise)
+    isf = get_isf(result.x_points, delta_k=config.delta_k, pairwise=config.pairwise)
 
     n_trajectories = isf.shape[0]
     avg_isf = np.mean(isf, axis=0)
@@ -137,15 +137,15 @@ def plot_x_evolution(
     """
     fig, ax = get_figure(ax)
 
-    if n_trajectories > result.xs.shape[0]:
-        msg = f"n_trajectories={n_trajectories} exceeds available trajectories ({result.xs.shape[0]})"
+    if n_trajectories > result.x_points.shape[0]:
+        msg = f"n_trajectories={n_trajectories} exceeds available trajectories ({result.x_points.shape[0]})"
         raise ValueError(msg)
 
     scaled_times = result.times / time_scale
 
     lines = []
     for traj in range(n_trajectories):
-        (line,) = ax.plot(scaled_times, result.xs[traj, idx])
+        (line,) = ax.plot(scaled_times, result.x_points[traj, idx])
         lines.append(line)
 
     ax.set_xlabel("$t / characteristic time$")
@@ -171,15 +171,15 @@ def plot_p_evolution(
     """
     fig, ax = get_figure(ax)
 
-    if n_trajectories > result.ps.shape[0]:
-        msg = f"n_trajectories={n_trajectories} exceeds available trajectories ({result.ps.shape[0]})"
+    if n_trajectories > result.p_points.shape[0]:
+        msg = f"n_trajectories={n_trajectories} exceeds available trajectories ({result.p_points.shape[0]})"
         raise ValueError(msg)
 
     scaled_times = result.times / time_scale
 
     lines = []
     for traj in range(n_trajectories):
-        (line,) = ax.plot(scaled_times, result.ps[traj, idx])
+        (line,) = ax.plot(scaled_times, result.p_points[traj, idx])
         lines.append(line)
 
     ax.set_xlabel("$t / characteristic time$")
@@ -191,7 +191,9 @@ def plot_p_evolution(
 def _get_sampled_kinetic_energies[T: SimulationResult](
     result: T,
 ) -> np.ndarray[Any, np.dtype[np.float64]]:
-    return (np.sum(result.ps**2, axis=1)) / (2 * result.system.m * result.system.kbt)
+    return (np.sum(result.p_points**2, axis=1)) / (
+        2 * result.system.m * result.system.kbt
+    )
 
 
 def _get_all_kinetic_energies[T: SimulationResult](
@@ -254,15 +256,19 @@ def plot_kinetic_probability[T: SimulationResult](
 
 def split_result(result: SimulationResult) -> tuple[SimulationResult, SimulationResult]:
     """Split a simulation result in half along the time axis, each restarting at t=0."""
-    xs1, xs2 = np.split(result.xs, 2, axis=-1)
-    ps1, ps2 = np.split(result.ps, 2, axis=-1)
+    xs1, xs2 = np.split(result.x_points, 2, axis=-1)
+    ps1, ps2 = np.split(result.p_points, 2, axis=-1)
     times1, times2 = np.split(result.times, 2)
 
     times1 -= times1[0]
     times2 -= times2[0]
 
-    first = SimulationResult(times=times1, xs=xs1, ps=ps1, system=result.system)
-    second = SimulationResult(times=times2, xs=xs2, ps=ps2, system=result.system)
+    first = SimulationResult(
+        times=times1, x_points=xs1, p_points=ps1, system=result.system
+    )
+    second = SimulationResult(
+        times=times2, x_points=xs2, p_points=ps2, system=result.system
+    )
     return first, second
 
 
@@ -273,7 +279,7 @@ def x_exact_pdf(result: SimulationResult, *, n_grid: int = 10_000) -> tuple:
         result.system.potential_expr,
         "numpy",
     )
-    x_grid = np.linspace(result.xs.min(), result.xs.max(), n_grid)
+    x_grid = np.linspace(result.x_points.min(), result.x_points.max(), n_grid)
     v_grid = np.broadcast_to(potential(x_grid), x_grid.shape)
 
     kbt = result.system.kbt
@@ -300,7 +306,7 @@ def plot_x_histogram(
     fig, ax = get_figure(ax)
 
     _bin_counts, _bin_edges, bars = ax.hist(
-        result.xs.reshape(-1),
+        result.x_points.reshape(-1),
         bins=bins,
         density=True,
         alpha=1.0,
@@ -318,7 +324,7 @@ def plot_x_histogram(
 
 def p_exact_pdf(result: SimulationResult, *, n_grid: int = 10_000) -> tuple:
     """Return p boltzman pdf."""
-    p_grid = np.linspace(result.ps.min(), result.ps.max(), n_grid)
+    p_grid = np.linspace(result.p_points.min(), result.p_points.max(), n_grid)
     m, kbt = (
         result.system.m,
         result.system.kbt,
@@ -344,7 +350,7 @@ def plot_p_histogram(
     fig, ax = get_figure(ax)
 
     _bin_counts, _bin_edges, bars = ax.hist(
-        result.ps.reshape(-1),
+        result.p_points.reshape(-1),
         bins=bins,
         density=True,
         alpha=1.0,
@@ -370,8 +376,8 @@ def plot_phase_space_density(
     fig, ax = get_figure(ax)
 
     _counts, _xedges, _yedges, mesh = ax.hist2d(
-        result.xs.reshape(-1),
-        result.ps.reshape(-1),
+        result.x_points.reshape(-1),
+        result.p_points.reshape(-1),
         bins=bins,
         density=True,
         cmap="viridis",
@@ -389,8 +395,8 @@ def get_elastic_p(
     result: SimulationResult,
 ) -> np.ndarray[Any, np.dtype[np.floating]]:
     """Return the elastic (ballistic straight-line) momentum estimate per trajectory."""
-    x0 = result.xs[:, :, 0]
-    v_elastic = (result.xs - x0) / result.times
+    x0 = result.x_points[:, :, 0]
+    v_elastic = (result.x_points - x0) / result.times
     return v_elastic * result.system.m
 
 
@@ -404,8 +410,8 @@ def plot_elastic_p(
     ValueError
         If `n_trajectories` exceeds the number of trajectories available in `result`.
     """
-    if n_trajectories > result.ps.shape[0]:
-        msg = f"n_trajectories={n_trajectories} exceeds available trajectories ({result.ps.shape[0]})"
+    if n_trajectories > result.p_points.shape[0]:
+        msg = f"n_trajectories={n_trajectories} exceeds available trajectories ({result.p_points.shape[0]})"
         raise ValueError(msg)
 
     fig, ax = get_figure(ax)
@@ -435,11 +441,11 @@ def plot_2d_trajectory(
     """
     fig, ax = get_figure(ax)
 
-    if result.xs.shape[1] != _EXPECTED_NDIM:
+    if result.x_points.shape[1] != _EXPECTED_NDIM:
         msg = "incorrect number of system dimensions, must be 2)"
         raise ValueError(msg)
 
-    (line,) = ax.plot(result.xs[0, 0], result.xs[0, 1])
+    (line,) = ax.plot(result.x_points[0, 0], result.x_points[0, 1])
 
     ax.set_xlabel("$x$")
     ax.set_ylabel("$y$")

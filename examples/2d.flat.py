@@ -6,14 +6,14 @@ from classical_diffusion.langevin import (
     IsfConfig,
     SimulationParameters,
     TimeSpan,
+    plot_2d_trajectory,
     plot_isf,
     plot_p_histogram,
     sample_result,
     solve_ensemble,
 )
-from classical_diffusion.langevin._analysis import plot_2d_trajectory
 from classical_diffusion.plot import get_fancy_figure
-from classical_diffusion.system._system import FlatSystem2D
+from classical_diffusion.system import FlatSystem2D
 
 if __name__ == "__main__":
     rng = np.random.default_rng(seed=0)

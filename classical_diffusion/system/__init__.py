@@ -7,9 +7,16 @@ from ._analysis import (
     plot_potential_1d,
     plot_potential_2d,
 )
-from ._system import HarmonicSystem, PeriodicSystem1D, PeriodicSystemFCC, System
+from ._system import (
+    FlatSystem2D,
+    HarmonicSystem,
+    PeriodicSystem1D,
+    PeriodicSystemFCC,
+    System,
+)
 
 __all__ = [
+    "FlatSystem2D",
     "HarmonicSystem",
     "HarmonicSystem",
     "PeriodicSystem1D",

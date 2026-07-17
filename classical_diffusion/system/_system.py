@@ -1,9 +1,15 @@
+import zlib
 from dataclasses import dataclass
 from functools import cached_property
 from typing import override
 
 import numpy as np
 import sympy as sp
+
+
+def _hash_sympy_expr(expr: sp.Expr) -> int:
+    stable_string = sp.srepr(expr)
+    return zlib.crc32(stable_string.encode("utf-8"))
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -46,6 +52,19 @@ class System:
             m=self.m,
             temperature=self.temperature,
             potential=self.potential,
+        )
+
+    def __hash__(self) -> int:
+        return hash(
+            (
+                self.gamma,
+                self.temperature,
+                self.m,
+                (
+                    self.potential[0],
+                    _hash_sympy_expr(self.potential[1]),
+                ),
+            )
         )
 
 
@@ -105,7 +124,9 @@ class PeriodicSystem1D(System):
         barrier_energy: float,
         n_dim: int = 1,
     ) -> None:
-        potential = 0.5 * barrier_energy * (1 - sp.cos(sp.symbols("x0") / delta_x))
+        potential = (
+            0.5 * barrier_energy * (1 - sp.cos(2 * sp.pi * sp.symbols("x0") / delta_x))
+        )
         self._delta_x = delta_x
         self._barrier_energy = barrier_energy
 

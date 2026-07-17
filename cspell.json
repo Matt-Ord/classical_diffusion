@@ -46,7 +46,8 @@
         "scipy",
         "trange",
         "tqdm",
-        "jrandom"
+        "jrandom",
+        "srepr",
     ],
     "flagWords": [
         "hte",

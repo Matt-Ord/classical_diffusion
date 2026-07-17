@@ -1,27 +1,21 @@
+import zlib
 from dataclasses import dataclass
-from functools import cached_property
+from functools import partial
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import diffrax as dfx
 import jax
 import jax.numpy as jnp
-import jax.random as jrandom
 import numpy as np
 import sympy as sp
-from tqdm import tqdm
+
+from classical_diffusion.util import cached, timed
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from classical_diffusion.system import System
-
-
-from pathlib import Path
-from typing import (
-    TYPE_CHECKING,
-)
-
-from classical_diffusion.util import cached
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -31,71 +25,17 @@ class TimeSpan:
     t0: float
     t1: float
     dt: float
-
-
-_EXPECTED_NDIM = 2
+    dt_step: float | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
-class InitialConditions:
-    """initial conditions, bundled together."""
+class SingleSimulationResult[S: System[Any] = System[Any]]:
+    """Results of a simulation of the periodic Langevin equation."""
 
-    x0: np.ndarray[Any, np.dtype[np.floating]]
-    p0: np.ndarray[Any, np.dtype[np.floating]]
-
-    def __post_init__(self) -> None:
-        if self.x0.ndim != _EXPECTED_NDIM or self.p0.ndim != _EXPECTED_NDIM:
-            msg = (
-                f"x0/p0 must be 2D (n_trajectories, n_dims), got "
-                f"x0.shape={self.x0.shape}, p0.shape={self.p0.shape}"
-            )
-            raise ValueError(msg)
-        if self.x0.shape != self.p0.shape:
-            msg = f"x0 shape {self.x0.shape} != p0 shape {self.p0.shape}"
-            raise ValueError(msg)
-
-
-class SimulationParameters[S: System = System]:
-    """Parameters for the Langevin equation."""
-
-    def __init__(
-        self,
-        *,
-        system: S,
-        time_span: TimeSpan,
-        initial_conditions: InitialConditions,
-    ) -> None:
-        self.system = system
-
-        assert system.n_dim == initial_conditions.x0.shape[1], (
-            f"system.n_dim={system.n_dim} != initial_conditions.x0.shape[1]={initial_conditions.x0.shape[1]}"
-        )
-        self.time_span = time_span
-        self.initial_conditions = initial_conditions
-
-    @cached_property
-    def n_trajectories(self) -> int:
-        """Return the number of simulated trajectories."""
-        return self.initial_conditions.x0.shape[0]
-
-    @cached_property
-    def n_dimensions(self) -> int:
-        """Return the dimensions of the system."""
-        return self.initial_conditions.x0.shape[1]
-
-    @cached_property
-    def n_save(self) -> int:
-        """Return the number of saved steps."""
-        return int((self.time_span.t1 - self.time_span.t0) / self.time_span.dt)
-
-    def with_initial_conditions(
-        self, initial_conditions: InitialConditions
-    ) -> SimulationParameters:
-        return SimulationParameters(
-            system=self.system,
-            time_span=self.time_span,
-            initial_conditions=initial_conditions,
-        )
+    times: np.ndarray
+    x_points: np.ndarray[Any, np.dtype[np.floating]]
+    p_points: np.ndarray[Any, np.dtype[np.floating]]
+    system: S
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -103,93 +43,29 @@ class SimulationResult[S: System[Any] = System[Any]]:
     """Results of a simulation of the periodic Langevin equation."""
 
     times: np.ndarray
-    xs: np.ndarray[Any, np.dtype[np.floating]]
-    ps: np.ndarray[Any, np.dtype[np.floating]]
+    x_points: np.ndarray[Any, np.dtype[np.floating]]
+    p_points: np.ndarray[Any, np.dtype[np.floating]]
     system: S
 
-
-def _my_path[S: System](params: SimulationParameters[S], _key: jax.Array) -> Path:
-    ts = params.time_span
-
-    parts = [
-        f"{hash(params.system)}",
-        f"t0-{ts.t0:.4g}",
-        f"t1-{ts.t1:.4g}",
-        f"dt{ts.dt:.4g}",
-        f"n_trajectory{params.n_trajectories}",
-        f"n_dims{params.n_dimensions}",
-    ]
-
-    filename = "_".join(parts) + ".npz"
-    return Path("examples/data") / filename
+    def __getitem__(self, idx: int) -> SingleSimulationResult[S]:
+        """Return a single trajectory from the ensemble."""
+        return SingleSimulationResult(
+            times=self.times,
+            x_points=self.x_points[idx],
+            p_points=self.p_points[idx],
+            system=self.system,
+        )
 
 
 def _get_force_fn(
-    params: SimulationParameters[Any],
+    system: System,
 ) -> Callable[[jnp.ndarray], jnp.ndarray]:
     """Compute a callable force function, taking and returning an array."""
-    raw_fn = sp.lambdify(
-        params.system.symbolic_coordinates, params.system.force_expr, "jax"
-    )
+    raw_fn = sp.lambdify(system.symbolic_coordinates, system.force_expr, "jax")
     return lambda x_array: jnp.array(raw_fn(*x_array))
 
 
-def solve_batch[S: System](
-    params: SimulationParameters[S], _key: jax.Array
-) -> SimulationResult[S]:
-    """Solve the ULD Langevin equation for an ensemble of trajectories via vmap."""
-    n_dims = params.n_dimensions
-    gamma = jnp.broadcast_to(params.system.gamma, (n_dims,))
-    u = jnp.broadcast_to(params.system.kbt / params.system.m, (n_dims,))
-    force_fn = _get_force_fn(params)
-
-    def grad_f(x: jnp.ndarray, _args: jnp.ndarray) -> jnp.ndarray:
-        return -force_fn(x) / params.system.kbt
-
-    def solve_single(
-        key: jax.Array, x0: jnp.ndarray, p0: jnp.ndarray
-    ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        bm = dfx.VirtualBrownianTree(
-            params.time_span.t0,
-            params.time_span.t1,
-            tol=1e-4,
-            shape=(n_dims,),
-            key=key,
-            levy_area=dfx.SpaceTimeTimeLevyArea,
-        )
-        drift_term = dfx.UnderdampedLangevinDriftTerm(gamma, u, grad_f)
-        diffusion_term = dfx.UnderdampedLangevinDiffusionTerm(gamma, u, bm)
-        terms = dfx.MultiTerm(drift_term, diffusion_term)
-
-        sol = dfx.diffeqsolve(
-            terms,
-            solver=dfx.ALIGN(),
-            t0=params.time_span.t0,
-            t1=params.time_span.t1,
-            dt0=params.time_span.dt,
-            y0=(x0, p0),
-            args=None,
-            saveat=dfx.SaveAt(
-                ts=jnp.linspace(params.time_span.t0, params.time_span.t1, params.n_save)
-            ),
-            max_steps=100_000_000,
-        )
-        return sol.ts, sol.ys  # ys is (x, v) tuple pytree
-
-    keys = jrandom.split(_key, params.n_trajectories)
-    times, (xs_batch, ps_batch) = jax.vmap(solve_single)(
-        keys, params.initial_conditions.x0, params.initial_conditions.p0
-    )
-
-    return SimulationResult[S](
-        times=np.array(times[0]),
-        xs=np.array(xs_batch).transpose(0, 2, 1),  # -> (n_trajectories, n_dims, n_save)
-        ps=np.array(ps_batch).transpose(0, 2, 1),
-        system=params.system,
-    )
-
-
-def sample_result[S: System](
+def sample_results[S: System](
     result: SimulationResult[S],
     *,
     stride_time: float,
@@ -198,65 +74,201 @@ def sample_result[S: System](
     stride = int(stride_time / (result.times[1] - result.times[0]))
     return SimulationResult(
         times=result.times[::stride],
-        xs=result.xs[:, :, ::stride],
-        ps=result.ps[:, :, ::stride],
+        x_points=result.x_points[:, :, ::stride],
+        p_points=result.p_points[:, :, ::stride],
         system=result.system,
     )
 
 
-def fold_result[S: System](
-    result: SimulationResult[S],
-    delta: float,
-) -> SimulationResult[S]:
-    """Fold x into first BZ zone."""
-    return SimulationResult(
-        times=result.times,
-        xs=result.xs % delta,
-        ps=result.ps,
-        system=result.system,
-    )
+@partial(jax.jit, static_argnames=("system"))
+def _run_deterministic_ensemble_jit(
+    system: "System",  # noqa: UP037
+    xs0: jnp.ndarray,
+    ps0: jnp.ndarray,
+    times: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    force_fn = _get_force_fn(system)
+
+    def vector_field(
+        _t: Any,  # noqa: ANN401
+        y: jnp.ndarray,
+        _args: Any,  # noqa: ANN401
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        x, v = y
+        return (v, force_fn(x) / system.m)
+
+    term = dfx.ODETerm(vector_field)
+
+    # Core solver for a single particle pair (x0, p0)
+    def solve_one(x0: jnp.ndarray, p0: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        sol = dfx.diffeqsolve(
+            term,
+            solver=dfx.Tsit5(),
+            t0=0,
+            t1=times[-1],
+            dt0=times[1] - times[0],
+            y0=(x0, p0),
+            args=None,
+            saveat=dfx.SaveAt(ts=times),
+            stepsize_controller=dfx.PIDController(rtol=1e-3, atol=1e-5),
+            max_steps=100_000_000,
+        )
+        return sol.ys
+
+    return jax.vmap(solve_one, in_axes=(0, 0))(xs0, ps0)
 
 
-def truncate_trajectories[S: System](
-    params: SimulationParameters[S], chunk_i: int, chunk_size: int
-) -> SimulationParameters[S]:
-    """Return a copy of params restricted to one chunk of trajectories."""
-    start = chunk_i * chunk_size
-    end = (chunk_i + 1) * chunk_size
-    return SimulationParameters(
-        system=params.system,
-        time_span=params.time_span,
-        initial_conditions=InitialConditions(
-            x0=params.initial_conditions.x0[start:end],
-            p0=params.initial_conditions.p0[start:end],
-        ),
-    )
+@partial(jax.jit, static_argnames=("system", "dt_step"))
+def _run_langevin_ensemble_jit(  # noqa: PLR0913, PLR0917
+    system: "System",  # noqa: UP037
+    xs0: jnp.ndarray,
+    ps0: jnp.ndarray,
+    keys: jax.Array,
+    times: jnp.ndarray,
+    dt_step: float,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    gamma = jnp.broadcast_to(system.gamma, (system.n_dim,))
+    u = jnp.broadcast_to(system.kbt / system.m, (system.n_dim,))
+    force_fn = _get_force_fn(system)
+
+    def grad_f(x: jnp.ndarray, _args: jnp.ndarray) -> jnp.ndarray:
+        return -force_fn(x) / system.kbt
+
+    def solve_one(
+        x0: jnp.ndarray, p0: jnp.ndarray, key: jax.Array
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        bm = dfx.VirtualBrownianTree(
+            t0=0,
+            t1=times[-1],
+            tol=dt_step / 2,
+            shape=(system.n_dim,),
+            key=key,
+            levy_area=dfx.SpaceTimeTimeLevyArea,
+        )
+
+        drift_term = dfx.UnderdampedLangevinDriftTerm(gamma, u, grad_f)
+        diffusion_term = dfx.UnderdampedLangevinDiffusionTerm(gamma, u, bm)
+        terms = dfx.MultiTerm(drift_term, diffusion_term)
+
+        sol = dfx.diffeqsolve(
+            terms,
+            solver=dfx.ALIGN(),
+            t0=0,
+            t1=times[-1],
+            dt0=dt_step,
+            y0=(x0, p0),
+            args=None,
+            saveat=dfx.SaveAt(ts=times),
+            max_steps=100_000_000,
+        )
+        return sol.ys
+
+    return jax.vmap(solve_one, in_axes=(0, 0, 0))(xs0, ps0, keys)
 
 
-def concatenate_results[S: System](
-    results: list[SimulationResult[S]],
-) -> SimulationResult[S]:
-    """Concatenate a list of chunked results, merging trajectories and initial conditions."""
-    return SimulationResult(
-        times=results[0].times,
-        xs=np.concatenate([r.xs for r in results], axis=0),
-        ps=np.concatenate([r.ps for r in results], axis=0),
-        system=results[0].system,
-    )
+def _hash_initial_conditions(initial_conditions: tuple[np.ndarray, np.ndarray]) -> int:
+    chk = 0
+    for arr in initial_conditions:
+        # Chain the CRC32 checksums of the raw float bytes
+        chk = zlib.crc32(arr.tobytes(), chk)
+        # Include shape just in case the same floats are reshaped
+        chk = zlib.crc32(str(arr.shape).encode(), chk)
+    return chk
 
 
-@cached(_my_path, default_call="load_or_call_uncached")
+def _solve_ensemble_path[S: System](
+    system: S,
+    time_span: TimeSpan,
+    initial_conditions: tuple[np.ndarray, np.ndarray],
+    _key: jax.Array,
+) -> Path:
+    filename = f"{hash(system)}_{hash(time_span)}_{_hash_initial_conditions(initial_conditions)}.npz"
+    return Path("examples/data") / filename
+
+
+@cached(_solve_ensemble_path, default_call="load_or_call_uncached")
+@timed
 def solve_ensemble[S: System](
-    params: SimulationParameters[S], _key: jax.Array, chunk_size: int = 20
+    system: S,
+    time_span: TimeSpan,
+    initial_conditions: tuple[
+        np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
+    ],
+    _key: jax.Array,
 ) -> SimulationResult[S]:
-    """Batch simulation to retain some parallelisation while adding a progress bar."""
-    if chunk_size > params.n_trajectories:
-        return solve_batch(params=params, _key=_key)
+    """Solve an ensemble of ULD Langevin trajectories in parallel via jax.vmap."""
+    xs0_jax = jnp.asarray(initial_conditions[0])
+    ps0_jax = jnp.asarray(initial_conditions[1])
+    n_run = xs0_jax.shape[0]
 
-    results = []
-    n_chunks = (params.n_trajectories + chunk_size - 1) // chunk_size
-    for i in tqdm(range(n_chunks), desc="Solving trajectories"):
-        chunk_params = truncate_trajectories(params, chunk_size=chunk_size, chunk_i=i)
-        chunk_result = solve_batch(params=chunk_params, _key=_key)
-        results.append(chunk_result)
-    return concatenate_results(results)
+    times = jnp.linspace(
+        time_span.t0,
+        time_span.t1,
+        int((time_span.t1 - time_span.t0) / time_span.dt) + 1,
+    )
+
+    if np.isclose(system.gamma, 0.0):
+        # Deterministic batch run
+        xs_batch, ps_batch = _run_deterministic_ensemble_jit(
+            system, xs0_jax, ps0_jax, times
+        )
+    else:
+        # Stochastic batch run: Calculate safe physical timestep criteria
+        dt_friction_limit = 0.05 / system.gamma if system.gamma > 0 else time_span.dt
+        dt_step = (
+            jnp.minimum(time_span.dt, dt_friction_limit)
+            if time_span.dt_step is None
+            else time_span.dt_step
+        )
+
+        # Vectorized generation of independent noise seeds per run
+        keys = jax.random.split(_key, n_run)
+
+        xs_batch, ps_batch = _run_langevin_ensemble_jit(
+            system, xs0_jax, ps0_jax, keys, times, float(dt_step)
+        )
+
+    # --- SHAPE TRANSFORMATION ---
+    # Diffrax + vmap naturally outputs: (n_run, n_time, n_dim)
+    # We transpose axes 1 and 2 to match your target layout: (n_run, n_dim, n_time)
+    xs_batch = jnp.transpose(xs_batch, (0, 2, 1))
+    ps_batch = jnp.transpose(ps_batch, (0, 2, 1))
+
+    return SimulationResult[S](
+        times=np.array(times),
+        x_points=np.array(xs_batch),
+        p_points=np.array(ps_batch),
+        system=system,
+    )
+
+
+def _solve_single_path[S: System](
+    system: S,
+    time_span: TimeSpan,
+    initial_conditions: tuple[np.ndarray, np.ndarray],
+    _key: jax.Array,
+) -> Path:
+    filename = f"{hash(system)}_{hash(time_span)}_{_hash_initial_conditions(initial_conditions)}.npz"
+    return Path("examples/data") / filename
+
+
+@cached(_solve_single_path, default_call="load_or_call_uncached")
+@timed
+def solve_single[S: System](
+    system: S,
+    time_span: TimeSpan,
+    initial_conditions: tuple[
+        np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
+    ],
+    _key: jax.Array,
+) -> SingleSimulationResult[S]:
+    """Solve the ULD Langevin equation for an ensemble of trajectories via vmap."""
+    return solve_ensemble.load_or_call_uncached(
+        system,
+        time_span,
+        (
+            np.array([[initial_conditions[0][0]]]),
+            np.array([[initial_conditions[1][0]]]),
+        ),
+        _key,
+    )[0]

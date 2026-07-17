@@ -4,12 +4,8 @@ import numpy as np
 from classical_diffusion.langevin import (
     InitialConditions,
     IsfConfig,
-    PhysicalParameters,
-    SHOParameters,
     TimeSpan,
-    plot_exact_isf_sho,
     plot_isf,
-    plot_kinetic_probability,
     solve_ensemble,
 )
 from classical_diffusion.plot import (

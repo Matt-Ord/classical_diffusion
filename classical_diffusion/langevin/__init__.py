@@ -1,13 +1,11 @@
 """Langevin Simulations of a Physical System."""
 
 from ._langevin import (  # noqa: I001
-    InitialConditions,
-    SimulationParameters,
     SimulationResult,
     TimeSpan,
-    fold_result,
-    sample_result,
+    sample_results,
     solve_ensemble,
+    solve_single,
 )
 
 from ._analysis import (
@@ -18,21 +16,21 @@ from ._analysis import (
     plot_phase_space_density,
     plot_x_evolution,
     plot_x_histogram,
+    plot_2d_trajectory,
 )
 
 __all__ = [
-    "InitialConditions",
     "IsfConfig",
-    "SimulationParameters",
     "SimulationResult",
     "TimeSpan",
-    "fold_result",
+    "plot_2d_trajectory",
     "plot_elastic_p",
     "plot_isf",
     "plot_p_histogram",
     "plot_phase_space_density",
     "plot_x_evolution",
     "plot_x_histogram",
-    "sample_result",
+    "sample_results",
     "solve_ensemble",
+    "solve_single",
 ]
