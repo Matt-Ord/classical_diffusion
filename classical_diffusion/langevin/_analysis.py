@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, Unpack, cast
 
 import numpy as np
 import scipy
@@ -17,9 +17,6 @@ if TYPE_CHECKING:
     from matplotlib.lines import Line2D
 
     from classical_diffusion.plot import Measure
-
-
-from dataclasses import dataclass
 
 
 def _calculate_total_offsset_multiplications_complex(
@@ -65,21 +62,19 @@ def get_isf(
     return _time_average(convolution)
 
 
-@dataclass(frozen=True, kw_only=True)
-class IsfConfig:
+class ISFKwargs(TypedDict):
     """Settings controlling how the ISF is computed from trajectory data."""
 
     delta_k: tuple[float, ...]
-    measure: Measure = "abs"
-    pairwise: bool = True
+    pairwise: NotRequired[bool]
 
 
 def plot_isf(
     result: SimulationResult,
-    config: IsfConfig,
     *,
     ax: Axes | None = None,
-    time_scale: float = 1.0,
+    measure: Measure = "abs",
+    **kwargs: Unpack[ISFKwargs],
 ) -> tuple[Figure, Axes, Line2D, PolyCollection]:
     """Plot the ensemble-averaged ISF over time, with a shaded ±1 SEM band.
 
@@ -89,18 +84,16 @@ def plot_isf(
     """
     fig, ax = get_figure(ax)
 
-    isf = get_isf(result.x_points, delta_k=config.delta_k, pairwise=config.pairwise)
+    isf = get_isf(result.x_points, **kwargs)
 
     n_trajectories = isf.shape[0]
     avg_isf = np.mean(isf, axis=0)
     sem_isf = np.std(isf, axis=0) / np.sqrt(n_trajectories)
 
-    avg_data = get_measured_data(avg_isf, config.measure)
-    sem_data = get_measured_data(sem_isf, config.measure)
+    avg_data = get_measured_data(avg_isf, measure)
+    sem_data = get_measured_data(sem_isf, measure)
 
-    scaled_times = result.times / time_scale
-
-    (line,) = ax.plot(scaled_times, avg_data)
+    (line,) = ax.plot(result.times, avg_data)
     line.set_label("ISF")
 
     fill = ax.fill_between(
@@ -114,7 +107,7 @@ def plot_isf(
     line.set_label("SEM")
 
     ax.set_title("Intermediate Scattering Function Over Time")
-    ax.set_xlabel("Time /characteristic time")
+    ax.set_xlabel("Time / s")
     ax.set_ylabel("ISF")
 
     return fig, ax, line, fill

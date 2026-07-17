@@ -186,7 +186,7 @@ def _solve_ensemble_path[S: System](
     return Path("examples/data") / filename
 
 
-@cached(_solve_ensemble_path, default_call="load_or_call_uncached")
+@cached(_solve_ensemble_path)
 @timed
 def solve_ensemble[S: System](
     system: S,
@@ -252,7 +252,7 @@ def _solve_single_path[S: System](
     return Path("examples/data") / filename
 
 
-@cached(_solve_single_path, default_call="load_or_call_uncached")
+@cached(_solve_single_path)
 @timed
 def solve_single[S: System](
     system: S,

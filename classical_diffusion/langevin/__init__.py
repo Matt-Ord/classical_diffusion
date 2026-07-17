@@ -9,7 +9,6 @@ from ._langevin import (  # noqa: I001
 )
 
 from ._analysis import (
-    IsfConfig,
     plot_elastic_p,
     plot_isf,
     plot_p_histogram,
@@ -21,7 +20,6 @@ from ._analysis import (
 )
 
 __all__ = [
-    "IsfConfig",
     "SimulationResult",
     "TimeSpan",
     "plot_2d_trajectory",

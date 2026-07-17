@@ -169,7 +169,7 @@ def plot_exact_harmonic_isf(
     line.set_label("ISF")
 
     ax.set_title("Intermediate Scattering Function Over Time")
-    ax.set_xlabel("Time / characteristic time")
+    ax.set_xlabel("Time / s")
     ax.set_ylabel("ISF")
     ax.legend()
 
@@ -188,7 +188,7 @@ def get_exact_flat_isf(
     """
     kbt, m = system.kbt, system.m
     k_squared = sum(k_i**2 for k_i in delta_k)
-
+    # TODO: this formula is wrong - ie it should include friction!  # noqa: FIX002
     return np.exp(-(k_squared) * kbt / (2 * m) * times**2)
 
 
@@ -209,14 +209,14 @@ def plot_exact_flat_isf(
     line.set_label("Exact Flat ISF")
 
     ax.set_title("Intermediate Scattering Function Over Time")
-    ax.set_xlabel("Time / characteristic time")
+    ax.set_xlabel("Time / s")
     ax.set_ylabel("ISF")
     ax.legend()
 
     return fig, ax, line
 
 
-def characteristic_time_friction(system: System) -> float:
+def get_characteristic_friction_time(system: System) -> float:
     """Return characteristic time for a flat system."""
     if system.gamma == 0:
         return 1.0

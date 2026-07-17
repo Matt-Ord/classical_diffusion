@@ -1,6 +1,8 @@
 """Representation of a Physical System."""
 
 from ._analysis import (
+    get_characteristic_friction_time,
+    plot_exact_flat_isf,
     plot_exact_harmonic_isf,
     plot_periodic_potential_1d,
     plot_periodic_potential_fcc,
@@ -22,6 +24,8 @@ __all__ = [
     "PeriodicSystem1D",
     "PeriodicSystemFCC",
     "System",
+    "get_characteristic_friction_time",
+    "plot_exact_flat_isf",
     "plot_exact_harmonic_isf",
     "plot_periodic_potential_1d",
     "plot_periodic_potential_fcc",
