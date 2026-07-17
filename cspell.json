@@ -58,7 +58,8 @@
     "useGitignore": true,
     "ignorePaths": [
         "cspell.json",
-        "*.bat"
+        "*.bat",
+        ".gitignore"
     ],
     "noConfigSearch": true
 }
