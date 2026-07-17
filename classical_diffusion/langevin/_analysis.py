@@ -4,12 +4,14 @@ import numpy as np
 import scipy
 import sympy as sp
 
-from classical_diffusion.langevin import sample_result
+from classical_diffusion.langevin import (
+    SimulationResult,
+)
 from classical_diffusion.plot import get_figure, get_measured_data
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
-    from matplotlib.collections import QuadMesh
+    from matplotlib.collections import PolyCollection, QuadMesh
     from matplotlib.container import BarContainer
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
@@ -18,8 +20,6 @@ if TYPE_CHECKING:
 
 
 from dataclasses import dataclass
-
-from ._langevin import SimulationResult
 
 
 def _calculate_total_offsset_multiplications_complex(
@@ -79,8 +79,8 @@ def plot_isf(
     config: IsfConfig,
     *,
     ax: Axes | None = None,
-    time_scale: float | None = None,
-) -> tuple[Figure, Axes, Line2D]:
+    time_scale: float = 1.0,
+) -> tuple[Figure, Axes, Line2D, PolyCollection]:
     """Plot the ensemble-averaged ISF over time, with a shaded ±1 SEM band.
 
     `time_scale` overrides the result's own characteristic time for
@@ -98,28 +98,26 @@ def plot_isf(
     avg_data = get_measured_data(avg_isf, config.measure)
     sem_data = get_measured_data(sem_isf, config.measure)
 
-    scale = (
-        time_scale
-        if time_scale is not None
-        else result.params.characteristic_values.time
-    )
-    scaled_times = result.times / scale
+    scaled_times = result.times / time_scale
+
     (line,) = ax.plot(scaled_times, avg_data)
     line.set_label("ISF")
 
-    ax.fill_between(
-        scaled_times,
+    fill = ax.fill_between(
+        result.times,
         avg_data - sem_data,
         avg_data + sem_data,
         alpha=0.3,
         label="SEM",
     )
 
+    line.set_label("SEM")
+
     ax.set_title("Intermediate Scattering Function Over Time")
     ax.set_xlabel("Time /characteristic time")
     ax.set_ylabel("ISF")
 
-    return fig, ax, line
+    return fig, ax, line, fill
 
 
 def plot_x_evolution(
@@ -128,6 +126,7 @@ def plot_x_evolution(
     ax: Axes | None = None,
     idx: int = 0,
     n_trajectories: int = 1,
+    time_scale: float,
 ) -> tuple[Figure, Axes, list[Line2D]]:
     """Plot x against t for the first n_trajectories trajectories.
 
@@ -142,12 +141,11 @@ def plot_x_evolution(
         msg = f"n_trajectories={n_trajectories} exceeds available trajectories ({result.xs.shape[0]})"
         raise ValueError(msg)
 
-    times = result.times - result.times[0]
-    times /= result.params.characteristic_values.time
+    scaled_times = result.times / time_scale
 
     lines = []
     for traj in range(n_trajectories):
-        (line,) = ax.plot(times, result.xs[traj, idx])
+        (line,) = ax.plot(scaled_times, result.xs[traj, idx])
         lines.append(line)
 
     ax.set_xlabel("$t / characteristic time$")
@@ -162,6 +160,7 @@ def plot_p_evolution(
     ax: Axes | None = None,
     idx: int = 0,
     n_trajectories: int = 1,
+    time_scale: float,
 ) -> tuple[Figure, Axes, list[Line2D]]:
     """Plot p against t for the first n_trajectories trajectories.
 
@@ -176,12 +175,11 @@ def plot_p_evolution(
         msg = f"n_trajectories={n_trajectories} exceeds available trajectories ({result.ps.shape[0]})"
         raise ValueError(msg)
 
-    times = result.times - result.times[0]
-    times /= result.params.characteristic_values.time
+    scaled_times = result.times / time_scale
 
     lines = []
     for traj in range(n_trajectories):
-        (line,) = ax.plot(times, result.ps[traj, idx])
+        (line,) = ax.plot(scaled_times, result.ps[traj, idx])
         lines.append(line)
 
     ax.set_xlabel("$t / characteristic time$")
@@ -193,9 +191,7 @@ def plot_p_evolution(
 def _get_sampled_kinetic_energies[T: SimulationResult](
     result: T,
 ) -> np.ndarray[Any, np.dtype[np.float64]]:
-    return (np.sum(result.ps**2, axis=1)) / (
-        2 * result.params.system.m * result.params.system.kbt
-    )
+    return (np.sum(result.ps**2, axis=1)) / (2 * result.system.m * result.system.kbt)
 
 
 def _get_all_kinetic_energies[T: SimulationResult](
@@ -265,21 +261,22 @@ def split_result(result: SimulationResult) -> tuple[SimulationResult, Simulation
     times1 -= times1[0]
     times2 -= times2[0]
 
-    first = SimulationResult(times=times1, xs=xs1, ps=ps1, params=result.params)
-    second = SimulationResult(times=times2, xs=xs2, ps=ps2, params=result.params)
+    first = SimulationResult(times=times1, xs=xs1, ps=ps1, system=result.system)
+    second = SimulationResult(times=times2, xs=xs2, ps=ps2, system=result.system)
     return first, second
 
 
-# TODO: in system?
 def x_exact_pdf(result: SimulationResult, *, n_grid: int = 10_000) -> tuple:
     """Return x boltzman pdf for given potential."""
     potential = sp.lambdify(
-        result.params.symbolic_coordinates, result.params.potential, "numpy"
+        result.system.symbolic_coordinates,
+        result.system.potential_expr,
+        "numpy",
     )
     x_grid = np.linspace(result.xs.min(), result.xs.max(), n_grid)
     v_grid = np.broadcast_to(potential(x_grid), x_grid.shape)
 
-    kbt = result.params.system.kbt
+    kbt = result.system.kbt
 
     v_shifted = v_grid - v_grid.min()
     unnormalised = np.exp(-v_shifted / kbt)
@@ -319,11 +316,13 @@ def plot_x_histogram(
     return fig, ax, cast("BarContainer", bars)
 
 
-# TODO: in system?
 def p_exact_pdf(result: SimulationResult, *, n_grid: int = 10_000) -> tuple:
     """Return p boltzman pdf."""
     p_grid = np.linspace(result.ps.min(), result.ps.max(), n_grid)
-    m, kbt = result.params.system.m, result.params.system.kbt
+    m, kbt = (
+        result.system.m,
+        result.system.kbt,
+    )
     pdf_theory = np.sqrt(1 / (2 * np.pi * m * kbt)) * np.exp(
         -(p_grid**2) / (2 * m * kbt)
     )
@@ -390,14 +389,13 @@ def get_elastic_p(
     result: SimulationResult,
 ) -> np.ndarray[Any, np.dtype[np.floating]]:
     """Return the elastic (ballistic straight-line) momentum estimate per trajectory."""
-    x0 = result.params.initial_conditions.x0[:, :, None]
-    safe_times = np.where(result.times == 0, np.nan, result.times)
-    v_elastic = (result.xs - x0) / safe_times
-    return v_elastic * result.params.system.m
+    x0 = result.xs[:, :, 0]
+    v_elastic = (result.xs - x0) / result.times
+    return v_elastic * result.system.m
 
 
 def plot_elastic_p(
-    result: SimulationResult, *, n_trajectories: int = 5, ax: Axes | None = None
+    result: SimulationResult, *, n_trajectories: int, ax: Axes | None = None
 ) -> tuple[Figure, Axes]:
     """Plot convergence of elastic momenta over all trajectories.
 
@@ -412,11 +410,9 @@ def plot_elastic_p(
 
     fig, ax = get_figure(ax)
 
-    result = sample_result(result)
-    ts = result.times
     ps = get_elastic_p(result)
     for traj in range(n_trajectories):
-        ax.plot(ts, ps[traj, 0], label=f"trajectory {traj}")
+        ax.plot(result.times, ps[traj, 0], label=f"trajectory {traj}")
 
     ax.set_xlabel("time")
     ax.set_ylabel("p_elastic")
@@ -424,7 +420,6 @@ def plot_elastic_p(
     return fig, ax
 
 
-# TODO: encode in type system
 _EXPECTED_NDIM = 2
 
 

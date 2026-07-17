@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from functools import cached_property
+from typing import override
 
 import sympy as sp
 
@@ -36,7 +37,10 @@ class System:
     @cached_property
     def force_expr(self) -> list[sp.Expr]:
         """Return the symbolic force of the system."""
-        return [-sp.diff(self.potential, c) for c in self.symbolic_coordinates]
+        return [-sp.diff(self.potential_expr, c) for c in self.symbolic_coordinates]
+
+    def with_gamma(self, gamma: float) -> System:
+        return System(gamma=gamma)
 
 
 class HarmonicSystem(System):
@@ -67,6 +71,16 @@ class HarmonicSystem(System):
     def omega(self) -> float:
         """Return the angular frequency of the system."""
         return self._omega
+
+    @override
+    def with_gamma(self, gamma: float) -> HarmonicSystem:
+        return HarmonicSystem(
+            gamma=gamma,
+            temperature=self.temperature,
+            m=self.m,
+            omega=self.omega,
+            n_dim=self.n_dim,
+        )
 
 
 class PeriodicSystem1D(System):
@@ -105,6 +119,54 @@ class PeriodicSystem1D(System):
     def barrier_energy(self) -> float:
         """Return the barrier energy of the system."""
         return self._barrier_energy
+
+
+class FlatSystem1D(System):
+    """Parameters for a 1D cosine potential system."""
+
+    _delta_x: float
+    _barrier_energy: float
+
+    def __init__(
+        self,
+        *,
+        gamma: float,
+        temperature: float,
+        m: float,
+        n_dim: int = 1,
+    ) -> None:
+        potential = 0 * sp.symbols("x0")
+
+        super().__init__(
+            gamma=gamma,
+            temperature=temperature,
+            m=m,
+            potential=(n_dim, potential),
+        )
+
+
+class FlatSystem2D(System):
+    """Parameters for a 1D cosine potential system."""
+
+    _delta_x: float
+    _barrier_energy: float
+
+    def __init__(
+        self,
+        *,
+        gamma: float,
+        temperature: float,
+        m: float,
+        n_dim: int = 2,
+    ) -> None:
+        potential = 0 * sp.symbols("x0")
+
+        super().__init__(
+            gamma=gamma,
+            temperature=temperature,
+            m=m,
+            potential=(n_dim, potential),
+        )
 
 
 def _get_potential_expr_fcc(barrier_energy: float, delta_x: float) -> sp.Expr:

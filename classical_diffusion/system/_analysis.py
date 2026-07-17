@@ -158,7 +158,6 @@ def plot_exact_harmonic_isf(
     """Plot the state occupations of a quantum simulation result."""
     fig, ax = get_figure(ax)
 
-    # TODO: calculate characteristic time here...
     times = times if times is not None else np.linspace(0, 30, 1000)
 
     isf_exact = get_exact_harmonic_isf(system, delta_k, times)
@@ -173,7 +172,6 @@ def plot_exact_harmonic_isf(
     return fig, ax, line
 
 
-# TODO: should take in times
 def get_exact_flat_isf(
     system: System,
     delta_k: tuple[float, ...],
@@ -200,7 +198,6 @@ def plot_exact_flat_isf(
     """Plot the exact ISF for a 1D flat (potential-free) surface."""
     fig, ax = get_figure(ax)
 
-    # TODO: calculate characteristic time here...
     times = times if times is not None else np.linspace(0, 30, 1000)
     isf_exact = get_exact_flat_isf(system, delta_k=delta_k, times=times)
 
@@ -213,3 +210,10 @@ def plot_exact_flat_isf(
     ax.legend()
 
     return fig, ax, line
+
+
+def characteristic_time_friction(system: System) -> float:
+    """Return characteristic time for a flat system."""
+    if system.gamma == 0:
+        return 1.0
+    return 1 / system.gamma

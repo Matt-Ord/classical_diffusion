@@ -1,5 +1,15 @@
 """Langevin Simulations of a Physical System."""
 
+from ._langevin import (  # noqa: I001
+    InitialConditions,
+    SimulationParameters,
+    SimulationResult,
+    TimeSpan,
+    fold_result,
+    sample_result,
+    solve_ensemble,
+)
+
 from ._analysis import (
     IsfConfig,
     plot_elastic_p,
@@ -8,15 +18,6 @@ from ._analysis import (
     plot_phase_space_density,
     plot_x_evolution,
     plot_x_histogram,
-)
-from ._langevin import (
-    InitialConditions,
-    SimulationParameters,
-    SimulationResult,
-    TimeSpan,
-    fold_result,
-    sample_result,
-    solve_ensemble,
 )
 
 __all__ = [

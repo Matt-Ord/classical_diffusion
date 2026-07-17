@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import jax.random as jrandom
 import numpy as np
 import sympy as sp
+from tqdm import tqdm
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -23,7 +24,6 @@ from typing import (
 from classical_diffusion.util import cached
 
 
-# TODO: split into "physical system" code, and "simulation" code.
 @dataclass(frozen=True, kw_only=True)
 class TimeSpan:
     """Time-stepping parameters, bundled together."""
@@ -31,8 +31,6 @@ class TimeSpan:
     t0: float
     t1: float
     dt: float
-    # TODO: burn in??
-    burn_in: int
 
 
 _EXPECTED_NDIM = 2
@@ -86,28 +84,21 @@ class SimulationParameters[S: System = System]:
         return self.initial_conditions.x0.shape[1]
 
     @cached_property
-    def burn_in_time(self) -> float:
-        """Return the number of saved steps."""
-        return self.time_span.burn_in
-
-    @cached_property
     def n_save(self) -> int:
         """Return the number of saved steps."""
-        return int((self.time_span.t1 - self.burn_in_time) / self.time_span.dt)
+        return int((self.time_span.t1 - self.time_span.t0) / self.time_span.dt)
 
 
 @dataclass(frozen=True, kw_only=True)
-class SimulationResult[P: SimulationParameters[Any] = SimulationParameters[Any]]:
+class SimulationResult[S: System[Any] = System[Any]]:
     """Results of a simulation of the periodic Langevin equation."""
 
-    # TODO: duplication here!
     times: np.ndarray
     xs: np.ndarray[Any, np.dtype[np.floating]]
     ps: np.ndarray[Any, np.dtype[np.floating]]
-    params: P
+    system: S
 
 
-# TODO: discuss __hash__ as a nice way to do this
 def _my_path[S: System](params: SimulationParameters[S], _key: jax.Array) -> Path:
     ts = params.time_span
 
@@ -134,10 +125,9 @@ def _get_force_fn(
     return lambda x_array: jnp.array(raw_fn(*x_array))
 
 
-@cached(_my_path, default_call="load_or_call_uncached")
-def solve_ensemble[S: System](
+def solve_batch[S: System](
     params: SimulationParameters[S], _key: jax.Array
-) -> SimulationResult[SimulationParameters[S]]:
+) -> SimulationResult[S]:
     """Solve the ULD Langevin equation for an ensemble of trajectories via vmap."""
     n_dims = params.n_dimensions
     gamma = jnp.broadcast_to(params.system.gamma, (n_dims,))
@@ -165,54 +155,99 @@ def solve_ensemble[S: System](
         sol = dfx.diffeqsolve(
             terms,
             solver=dfx.ALIGN(),
-            t0=params.time_span.t0,
+            t0=0,
             t1=params.time_span.t1,
             dt0=params.time_span.dt,
             y0=(x0, p0),
             args=None,
             saveat=dfx.SaveAt(
-                ts=jnp.linspace(params.burn_in_time, params.time_span.t1, params.n_save)
+                ts=jnp.linspace(params.time_span.t0, params.time_span.t1, params.n_save)
             ),
             max_steps=100_000_000,
         )
         return sol.ts, sol.ys  # ys is (x, v) tuple pytree
 
     keys = jrandom.split(_key, params.n_trajectories)
-    ts_batch, (xs_batch, ps_batch) = jax.vmap(solve_single)(
+    times, (xs_batch, ps_batch) = jax.vmap(solve_single)(
         keys, params.initial_conditions.x0, params.initial_conditions.p0
     )
 
-    return SimulationResult[SimulationParameters[S]](
-        # TODO: discuss duplicating data
-        times=np.array(ts_batch[0]),
+    return SimulationResult[S](
+        times=np.array(times[0]),
         xs=np.array(xs_batch).transpose(0, 2, 1),  # -> (n_trajectories, n_dims, n_save)
         ps=np.array(ps_batch).transpose(0, 2, 1),
-        params=params,
+        system=params.system,
     )
 
 
-def sample_result[P: SimulationParameters](
-    result: SimulationResult[P],
+def sample_result[S: System](
+    result: SimulationResult[S],
     *,
-    stride: int,
-) -> SimulationResult[P]:
+    stride_time: float,
+) -> SimulationResult[S]:
     """Subsample all trajectories at the parameters' stride, along the saved-time axis."""
+    stride = int(stride_time / (result.times[1] - result.times[0]))
     return SimulationResult(
         times=result.times[::stride],
         xs=result.xs[:, :, ::stride],
         ps=result.ps[:, :, ::stride],
-        params=result.params,
+        system=result.system,
     )
 
 
-def fold_result[P: SimulationParameters](
-    result: SimulationResult[P],
+def fold_result[S: System](
+    result: SimulationResult[S],
     delta: float,
-) -> SimulationResult[P]:
+) -> SimulationResult[S]:
     """Fold x into first BZ zone."""
     return SimulationResult(
         times=result.times,
         xs=result.xs % delta,
         ps=result.ps,
-        params=result.params,
+        system=result.system,
     )
+
+
+def truncate_trajectories[S: System](
+    params: SimulationParameters[S], chunk_i: int, chunk_size: int
+) -> SimulationParameters[S]:
+    """Return a copy of params restricted to one chunk of trajectories."""
+    start = chunk_i * chunk_size
+    end = (chunk_i + 1) * chunk_size
+    return SimulationParameters(
+        system=params.system,
+        time_span=params.time_span,
+        initial_conditions=InitialConditions(
+            x0=params.initial_conditions.x0[start:end],
+            p0=params.initial_conditions.p0[start:end],
+        ),
+    )
+
+
+def concatenate_results[S: System](
+    results: list[SimulationResult[S]],
+) -> SimulationResult[S]:
+    """Concatenate a list of chunked results, merging trajectories and initial conditions."""
+    return SimulationResult(
+        times=results[0].times,
+        xs=np.concatenate([r.xs for r in results], axis=0),
+        ps=np.concatenate([r.ps for r in results], axis=0),
+        system=results[0].system,
+    )
+
+
+@cached(_my_path, default_call="load_or_call_uncached")
+def solve_ensemble[S: System](
+    params: SimulationParameters[S], _key: jax.Array, chunk_size: int = 10
+) -> SimulationResult[S]:
+    """Batch simulation to retain some parallelisation while adding a progress bar."""
+    if chunk_size > params.n_trajectories:
+        return solve_batch(params=params, _key=_key)
+
+    results = []
+    n_chunks = (params.n_trajectories + chunk_size - 1) // chunk_size
+    for i in tqdm(range(n_chunks), desc="Solving trajectories"):
+        chunk_params = truncate_trajectories(params, chunk_size=chunk_size, chunk_i=i)
+        chunk_result = solve_batch(params=chunk_params, _key=_key)
+        results.append(chunk_result)
+    return concatenate_results(results)
