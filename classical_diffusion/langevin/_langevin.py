@@ -1,6 +1,5 @@
 import zlib
 from dataclasses import dataclass
-from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -15,7 +14,7 @@ from classical_diffusion.util import cached, timed
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from classical_diffusion.system import System
+    from classical_diffusion.system import CanonicalSystem, System
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -75,10 +74,10 @@ class SimulationResult[S: System[Any] = System[Any]]:
 
 def _get_force_fn(
     system: System,
-) -> Callable[[jnp.ndarray], jnp.ndarray]:
+) -> Callable[[jnp.ndarray, tuple[float, ...]], jnp.ndarray]:
     """Compute a callable force function, taking and returning an array."""
-    raw_fn = sp.lambdify(system.symbolic_coordinates, system.force_expr, "jax")
-    return lambda x_array: jnp.array(raw_fn(*x_array))
+    raw_fn = sp.lambdify(system.lambda_symbols, system.force_expr, "jax")
+    return lambda x_array, params: jnp.array(raw_fn(*x_array, *params))
 
 
 def sample_results[S: System](
@@ -96,9 +95,9 @@ def sample_results[S: System](
     )
 
 
-@partial(jax.jit, static_argnames=("system"))
+@jax.jit
 def _run_deterministic_ensemble_jit(
-    system: "System",  # noqa: UP037
+    system: "CanonicalSystem",  # noqa: UP037
     xs0: jnp.ndarray,
     ps0: jnp.ndarray,
     times: jnp.ndarray,
@@ -111,7 +110,7 @@ def _run_deterministic_ensemble_jit(
         _args: Any,  # noqa: ANN401
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
         x, v = y
-        return (v, force_fn(x) / system.m)
+        return (v, force_fn(x, system.params) / system.m)
 
     term = dfx.ODETerm(vector_field)
 
@@ -137,9 +136,9 @@ def _run_deterministic_ensemble_jit(
     return jax.vmap(solve_one, in_axes=(0, 0))(xs0, ps0)
 
 
-@partial(jax.jit, static_argnames=("system"))
+@jax.jit
 def _run_langevin_ensemble_jit(  # noqa: PLR0913, PLR0917
-    system: "System",  # noqa: UP037
+    system: "CanonicalSystem",  # noqa: UP037
     xs0: jnp.ndarray,
     ps0: jnp.ndarray,
     keys: jax.Array,
@@ -151,7 +150,7 @@ def _run_langevin_ensemble_jit(  # noqa: PLR0913, PLR0917
     force_fn = _get_force_fn(system)
 
     def grad_f(x: jnp.ndarray, _args: jnp.ndarray) -> jnp.ndarray:
-        return -force_fn(x) / system.kbt
+        return -force_fn(x, system.params) / system.kbt
 
     def solve_one(
         x0: jnp.ndarray, p0: jnp.ndarray, key: jax.Array
@@ -229,7 +228,7 @@ def solve_ensemble[S: System](
 
     if np.isclose(system.gamma, 0.0):
         xs_batch, ps_batch = _run_deterministic_ensemble_jit(
-            system, xs0_jax, ps0_jax, times
+            system.as_canonical(), xs0_jax, ps0_jax, times
         )
     else:
         dt_friction_limit = 0.05 / system.gamma if system.gamma > 0 else time_span.dt
@@ -243,7 +242,7 @@ def solve_ensemble[S: System](
         keys = jax.random.split(_key, n_run)
 
         xs_batch, ps_batch = _run_langevin_ensemble_jit(
-            system, xs0_jax, ps0_jax, keys, times, jnp.asarray(dt_step)
+            system.as_canonical(), xs0_jax, ps0_jax, keys, times, jnp.asarray(dt_step)
         )
 
     # --- SHAPE TRANSFORMATION ---

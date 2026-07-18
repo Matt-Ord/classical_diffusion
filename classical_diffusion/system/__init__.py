@@ -10,7 +10,7 @@ from ._analysis import (
     plot_potential_2d,
 )
 from ._system import (
-    FlatSystem2D,
+    CanonicalSystem,
     HarmonicSystem,
     PeriodicSystem1D,
     PeriodicSystemFCC,
@@ -18,7 +18,7 @@ from ._system import (
 )
 
 __all__ = [
-    "FlatSystem2D",
+    "CanonicalSystem",
     "HarmonicSystem",
     "HarmonicSystem",
     "PeriodicSystem1D",

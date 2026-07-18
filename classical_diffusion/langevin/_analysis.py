@@ -274,7 +274,7 @@ def x_exact_pdf(result: SimulationResult, *, n_grid: int = 10_000) -> tuple:
         "numpy",
     )
     x_grid = np.linspace(result.x_points.min(), result.x_points.max(), n_grid)
-    v_grid = np.broadcast_to(potential(x_grid), x_grid.shape)
+    v_grid = np.broadcast_to(potential(x_grid, *result.system.params), x_grid.shape)
 
     kbt = result.system.kbt
 
