@@ -52,7 +52,7 @@ def _plot_1d_periodic_isf() -> None:
     )
     line_0.set_label("full simulation")
 
-    result = solve_ballistic_ensemble.call_cached(
+    result = solve_ballistic_ensemble(
         system,
         TimeSpan(
             t0=0,

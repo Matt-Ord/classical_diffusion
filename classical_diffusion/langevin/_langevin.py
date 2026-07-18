@@ -137,14 +137,14 @@ def _run_deterministic_ensemble_jit(
     return jax.vmap(solve_one, in_axes=(0, 0))(xs0, ps0)
 
 
-@partial(jax.jit, static_argnames=("system", "dt_step"))
+@partial(jax.jit, static_argnames=("system"))
 def _run_langevin_ensemble_jit(  # noqa: PLR0913, PLR0917
     system: "System",  # noqa: UP037
     xs0: jnp.ndarray,
     ps0: jnp.ndarray,
     keys: jax.Array,
     times: jnp.ndarray,
-    dt_step: float,
+    dt_step: jnp.ndarray,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     gamma = jnp.broadcast_to(system.gamma, (system.n_dim,))
     u = jnp.broadcast_to(system.kbt / system.m, (system.n_dim,))
@@ -243,7 +243,7 @@ def solve_ensemble[S: System](
         keys = jax.random.split(_key, n_run)
 
         xs_batch, ps_batch = _run_langevin_ensemble_jit(
-            system, xs0_jax, ps0_jax, keys, times, float(dt_step)
+            system, xs0_jax, ps0_jax, keys, times, jnp.asarray(dt_step)
         )
 
     # --- SHAPE TRANSFORMATION ---
