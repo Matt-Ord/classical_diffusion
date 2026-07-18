@@ -1,5 +1,5 @@
 import datetime
-import pickle  # noqa: S403
+import pickle  # ruff:ignore[suspicious-pickle-import]
 import types
 from functools import update_wrapper, wraps
 from types import FunctionType
@@ -35,7 +35,7 @@ def timed[**P, R](f: Callable[P, R]) -> Callable[P, R]:
             result = f(*args, **kw)
         finally:
             te = datetime.datetime.now(tz=datetime.UTC)
-            print(f"func: {f.__name__} took: {(te - ts).total_seconds()} sec")  # noqa: T201
+            print(f"func: {f.__name__} took: {(te - ts).total_seconds()} sec")  # ruff:ignore[print]
         return result
 
     return wrap  # type: ignore[return-value]
@@ -106,7 +106,7 @@ class CachedFunction[**P, R]:
         if cache_path is None:
             return None
 
-        try:
+        try:  # ruff:ignore[too-many-statements-in-try-clause]
             buffer_data = np.load(cache_path.with_suffix(".buffer.npz"))
 
             def _get_buffer() -> Generator[memoryview, memoryview]:
@@ -124,7 +124,7 @@ class CachedFunction[**P, R]:
 
         try:
             with cache_path.open("rb") as f:
-                unpickler = pickle.Unpickler(f, buffers=buffers)  # noqa: S301
+                unpickler = pickle.Unpickler(f, buffers=buffers)  # ruff:ignore[suspicious-pickle-usage]
                 return unpickler.load()
         except FileNotFoundError:
             return None

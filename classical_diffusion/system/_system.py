@@ -25,42 +25,42 @@ class System:
 
     @cached_property
     def kbt(self) -> float:
-        """Return the kbt of system."""
+        """The kbt of the system."""
         return 1.0 * self.temperature  # k_B set to 1 for now
 
     @property
     def n_dim(self) -> int:
-        """Return the number of dimensions of the system."""
+        """The number of dimensions of the system."""
         return self.potential[0]
 
     @cached_property
     def coordinate_symbols(self) -> tuple[sp.Symbol, ...]:
-        """Return the symbols of each coordinate of the system."""
+        """The symbols of each coordinate of the system."""
         return sp.symbols(f"x0:{self.n_dim}")
 
     @property
     def n_params(self) -> int:
-        """Return the number of parameters of the system."""
+        """The number of parameters of the system."""
         return len(self.params)
 
     @cached_property
     def parameter_symbols(self) -> tuple[sp.Symbol, ...]:
-        """Return the symbols of each parameter of the system."""
+        """The symbols of each parameter of the system."""
         return sp.symbols(f"s0:{self.n_params}")
 
     @cached_property
     def lambda_symbols(self) -> tuple[sp.Symbol, ...]:
-        """Return all symbols of the system, including coordinates and parameters."""
+        """The symbols of the system, including coordinates and parameters."""
         return (*self.coordinate_symbols, *self.parameter_symbols)
 
     @property
     def potential_expr(self) -> sp.Expr:
-        """Return the potential expression of the system."""
+        """The potential expression of the system."""
         return self.potential[1]
 
     @cached_property
     def force_expr(self) -> list[sp.Expr]:
-        """Return the symbolic force of the system."""
+        """The symbolic force of the system."""
         return [
             -sp.simplify(sp.diff(self.potential_expr, c))
             for c in self.coordinate_symbols
@@ -135,7 +135,7 @@ class HarmonicSystem(System):
 
     @property
     def omega(self) -> float:
-        """Return the angular frequency of the system."""
+        """The angular frequency of the system."""
         return self.params[0]
 
     @override
@@ -152,7 +152,7 @@ class HarmonicSystem(System):
 class PeriodicSystem1D(System):
     """Parameters for a 1D cosine potential system."""
 
-    def __init__(  # noqa: PLR0913
+    def __init__(  # ruff:ignore[too-many-arguments]
         self,
         *,
         gamma: float,
@@ -176,12 +176,12 @@ class PeriodicSystem1D(System):
 
     @property
     def delta_x(self) -> float:
-        """Return the delta x of the system."""
+        """The delta x of the system."""
         return self.params[0]
 
     @property
     def barrier_energy(self) -> float:
-        """Return the barrier energy of the system."""
+        """The barrier energy of the system."""
         return self.params[1]
 
     @override
@@ -241,12 +241,12 @@ class PeriodicSystemFCC(System):
 
     @property
     def delta_x(self) -> float:
-        """Return the delta x of the system."""
+        """The delta x of the system."""
         return self.params[0]
 
     @property
     def barrier_energy(self) -> float:
-        """Return the barrier energy of the system."""
+        """The barrier energy of the system."""
         return self.params[1]
 
 

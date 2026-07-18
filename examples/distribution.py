@@ -47,7 +47,7 @@ def _plot_xp_distributions_periodic() -> None:
     )
 
     fig, ax = get_fancy_figure()
-    # TODO: x range...  # noqa: FIX002
+    # TODO: x range...  # ruff:ignore[line-contains-todo]
     _, ax, mesh = plot_phase_space_density(result=result, ax=ax)
     mesh.set_rasterized(True)
     fig.savefig("examples/distribution.1d_periodic.phase_space.pdf", dpi=1000)
