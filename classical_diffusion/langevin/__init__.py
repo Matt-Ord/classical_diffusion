@@ -1,6 +1,6 @@
 """Langevin Simulations of a Physical System."""
 
-from ._langevin import (  # noqa: I001
+from ._langevin import (  # ruff:ignore[unsorted-imports]
     SimulationResult,
     TimeSpan,
     sample_results,

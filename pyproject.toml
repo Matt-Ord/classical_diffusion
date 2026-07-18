@@ -30,28 +30,28 @@ exclude = [".git", ".git-rewrite", ".vscode"]
 select = ["ALL"]
 preview = true
 ignore = [
-    "COM812",
-    "E501",
-    "S101",
-    "PT009",
-    "D100",
-    "D105",
-    "CPY001",
-    "TD003",
-    "TD002",
-    "DOC201",
-    "DOC402",
+    "missing-trailing-comma",
+    "line-too-long",
+    "assert",
+    "pytest-unittest-assertion",
+    "undocumented-public-module",
+    "undocumented-magic-method",
+    "missing-copyright-notice",
+    "missing-todo-link",
+    "missing-todo-author",
+    "docstring-missing-returns",
+    "docstring-missing-yields",
     "PD",
 ]
 fixable = ["ALL"]
-unfixable = ["T201"]
+unfixable = ["print"]
 
 
 [tool.ruff.lint.extend-per-file-ignores]
-"tests/**/*" = ["PLR6301", "PLR0914", "D101", "D102", "D103", "D104"]
-"examples/**/*" = ["INP001", "T201"]
-"scripts/**/*" = ["INP001", "T201", "D101", "D102", "D103", "D104"]
-"docs/**/*" = ["INP001", "I002"]
+"tests/**/*" = ["no-self-use", "too-many-locals", "undocumented-public-class", "undocumented-public-method", "undocumented-public-function", "undocumented-public-package"]
+"examples/**/*" = ["implicit-namespace-package", "print"]
+"scripts/**/*" = ["implicit-namespace-package", "print", "undocumented-public-class", "undocumented-public-method", "undocumented-public-function", "undocumented-public-package"]
+"docs/**/*" = ["implicit-namespace-package", "missing-required-import"]
 
 [tool.ruff.lint.pylint]
 allow-dunder-method-names = [

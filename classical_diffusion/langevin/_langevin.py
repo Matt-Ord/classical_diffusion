@@ -39,7 +39,7 @@ class TimeSpan:
 
     @property
     def n_steps(self) -> int:
-        """Return the number of steps in the time span."""
+        """The number of steps in the time span."""
         return int((self.t1 - self.t0) / self.dt) + 1
 
 
@@ -97,7 +97,7 @@ def sample_results[S: System](
 
 @jax.jit
 def _run_deterministic_ensemble_jit(
-    system: "CanonicalSystem",  # noqa: UP037
+    system: "CanonicalSystem",  # ruff:ignore[quoted-annotation]
     xs0: jnp.ndarray,
     ps0: jnp.ndarray,
     times: jnp.ndarray,
@@ -105,9 +105,9 @@ def _run_deterministic_ensemble_jit(
     force_fn = _get_force_fn(system)
 
     def vector_field(
-        _t: Any,  # noqa: ANN401
+        _t: Any,  # ruff:ignore[any-type]
         y: jnp.ndarray,
-        _args: Any,  # noqa: ANN401
+        _args: Any,  # ruff:ignore[any-type]
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
         x, v = y
         return (v, force_fn(x, system.params) / system.m)
@@ -137,8 +137,8 @@ def _run_deterministic_ensemble_jit(
 
 
 @jax.jit
-def _run_langevin_ensemble_jit(  # noqa: PLR0913, PLR0917
-    system: "CanonicalSystem",  # noqa: UP037
+def _run_langevin_ensemble_jit(  # ruff:ignore[too-many-arguments, too-many-positional-arguments]
+    system: "CanonicalSystem",  # ruff:ignore[quoted-annotation]
     xs0: jnp.ndarray,
     ps0: jnp.ndarray,
     keys: jax.Array,

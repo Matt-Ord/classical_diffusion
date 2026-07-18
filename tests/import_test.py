@@ -1,6 +1,6 @@
 def test_import() -> None:
     try:
-        import classical_diffusion  # noqa: PLC0415
+        import classical_diffusion  # ruff:ignore[import-outside-top-level]
     except ImportError:
         classical_diffusion = None  # ty:ignore[invalid-assignment]
 

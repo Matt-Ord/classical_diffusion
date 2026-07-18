@@ -119,7 +119,7 @@ def plot_periodic_potential_fcc(
     ax: Axes | None = None,
 ) -> tuple[Figure, Axes, QuadMesh]:
     """Plot the periodic potential in 2D."""
-    # TODO: fix up  PeriodicParameters2D to make lattice directions explicit # noqa: FIX002
+    # TODO: fix up  PeriodicParameters2D to make lattice directions explicit # ruff:ignore[line-contains-todo]
     return plot_potential_2d(
         params,
         (0, 0),
@@ -188,7 +188,7 @@ def get_exact_flat_isf(
     """
     kbt, m = system.kbt, system.m
     k_squared = sum(k_i**2 for k_i in delta_k)
-    # TODO: this formula is wrong - ie it should include friction!  # noqa: FIX002
+    # TODO: this formula is wrong - ie it should include friction!  # ruff:ignore[line-contains-todo]
     return np.exp(-(k_squared) * kbt / (2 * m) * times**2)
 
 

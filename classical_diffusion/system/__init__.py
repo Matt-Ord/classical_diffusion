@@ -20,7 +20,6 @@ from ._system import (
 __all__ = [
     "CanonicalSystem",
     "HarmonicSystem",
-    "HarmonicSystem",
     "PeriodicSystem1D",
     "PeriodicSystemFCC",
     "System",

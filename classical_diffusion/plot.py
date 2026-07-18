@@ -15,10 +15,10 @@ def get_figure(ax: Axes | None = None) -> tuple[Figure, Axes]:
     """Get the figure of the given axis.
 
     If no figure exists, a new figure is created
-    """  # noqa: DOC501
+    """  # ruff:ignore[docstring-missing-exception]
     if plt is None:
         msg = "Matplotlib is not installed. Please install it with the 'plot' extra."
-        raise ImportError(msg)  # noqa: RUF100
+        raise ImportError(msg)
 
     if ax is None:
         return cast("tuple[Figure, Axes]", plt.subplots())  # type: ignore plt.subplots Unknown type
@@ -57,7 +57,7 @@ def get_measured_data[DT: np.dtype[np.number[Any]]](
     Raises
     ------
         ValueError: If the data contains NaN values.
-    """  # noqa: DOC501
+    """  # ruff:ignore[docstring-missing-exception]
     measured = _measure_data(data, measure)
     if np.any(np.isnan(measured)):
         msg = "The data contains NaN values."
