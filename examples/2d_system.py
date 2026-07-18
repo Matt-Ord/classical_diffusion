@@ -5,6 +5,7 @@ from classical_diffusion.langevin import (
     TimeSpan,
     plot_2d_trajectory,
     plot_isf,
+    solve_ballistic_ensemble,
     solve_ensemble,
     solve_single,
 )
@@ -37,7 +38,7 @@ def _plot_2d_periodic_isf() -> None:
             t0=0,
             t1=50 / system.gamma,
             dt=0.01 / system.gamma,
-            dt_step=0.05 / system.gamma,
+            dt_step=0.01 / system.gamma,
         ),
         (np.full((2000, 2), 0.0), np.full((2000, 2), 0.0)),
         _key=key,
@@ -46,15 +47,31 @@ def _plot_2d_periodic_isf() -> None:
     fig, ax = get_fancy_figure()
 
     delta_k = (0.5 * 2 * np.pi / system.delta_x,)
-    _, ax, line_simulated, _ = plot_isf(
+    _, ax, line_0, _ = plot_isf(
         result=result,
         ax=ax,
         delta_k=delta_k,
     )
-    line_simulated.set_label("simulation")
+    line_0.set_label("simulation")
+
+    result = solve_ballistic_ensemble(
+        system,
+        TimeSpan(
+            t0=0,
+            t1=4 / system.gamma,
+            dt=0.01 / system.gamma,
+            dt_step=0.01 / system.gamma,
+        ),
+        (np.full((2,), 0.0), np.full((2,), 0.0)),
+        n_samples=2000,
+        _key=key,
+    )
+    _, ax, line_1, _ = plot_isf(result=result, ax=ax, delta_k=delta_k, pairwise=False)
+    line_1.set_label("ballistic simulation")
 
     ax.set_xlim(0, 4 / system.gamma)
     ax.set_ylim(0, 1)
+    ax.legend(handles=[line_0, line_1])
     fig.savefig("./examples/2d_system.isf.pdf", dpi=300, bbox_inches="tight")
 
 

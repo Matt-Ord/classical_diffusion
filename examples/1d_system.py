@@ -4,9 +4,9 @@ import numpy as np
 from classical_diffusion.langevin import (
     TimeSpan,
     plot_isf,
+    solve_ballistic_ensemble,
     solve_ensemble,
 )
-from classical_diffusion.langevin._langevin import solve_ballistic_ensemble
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.system import (
     PeriodicSystem1D,
@@ -36,7 +36,7 @@ def _plot_1d_periodic_isf() -> None:
             t0=0,
             t1=50 / system.gamma,
             dt=0.01 / system.gamma,
-            dt_step=0.05 / system.gamma,
+            dt_step=0.01 / system.gamma,
         ),
         (np.full((2000, 1), 0.0), np.full((2000, 1), 0.0)),
         _key=key,
@@ -52,23 +52,19 @@ def _plot_1d_periodic_isf() -> None:
     )
     line_0.set_label("full simulation")
 
-    result = solve_ballistic_ensemble(
+    result = solve_ballistic_ensemble.call_cached(
         system,
         TimeSpan(
             t0=0,
             t1=4 / system.gamma,
             dt=0.01 / system.gamma,
-            dt_step=0.05 / system.gamma,
+            dt_step=0.01 / system.gamma,
         ),
         (np.full((1,), 0.0), np.full((1,), 0.0)),
-        n_samples=1000,
+        n_samples=2000,
         _key=key,
     )
-    _, ax, line_1, _ = plot_isf(
-        result=result,
-        ax=ax,
-        delta_k=delta_k,
-    )
+    _, ax, line_1, _ = plot_isf(result=result, ax=ax, delta_k=delta_k, pairwise=False)
     line_1.set_label("ballistic simulation")
 
     ax.set_xlim(0, 4 / system.gamma)

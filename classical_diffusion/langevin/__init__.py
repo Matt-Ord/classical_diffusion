@@ -6,6 +6,7 @@ from ._langevin import (  # noqa: I001
     sample_results,
     solve_ensemble,
     solve_single,
+    solve_ballistic_ensemble,
 )
 
 from ._analysis import (
@@ -31,6 +32,7 @@ __all__ = [
     "plot_x_evolution",
     "plot_x_histogram",
     "sample_results",
+    "solve_ballistic_ensemble",
     "solve_ensemble",
     "solve_single",
 ]

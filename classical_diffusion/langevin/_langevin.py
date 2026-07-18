@@ -228,12 +228,10 @@ def solve_ensemble[S: System](
     )
 
     if np.isclose(system.gamma, 0.0):
-        # Deterministic batch run
         xs_batch, ps_batch = _run_deterministic_ensemble_jit(
             system, xs0_jax, ps0_jax, times
         )
     else:
-        # Stochastic batch run: Calculate safe physical timestep criteria
         dt_friction_limit = 0.05 / system.gamma if system.gamma > 0 else time_span.dt
         dt_step = (
             jnp.minimum(time_span.dt, dt_friction_limit)
@@ -331,7 +329,7 @@ def solve_ballistic_ensemble[S: System](
     )
 
     return solve_ensemble.load_or_call_uncached(
-        system,
+        system.with_gamma(0.0),
         time_span,
         (result.x_points.T, result.p_points.T),
         _key,
