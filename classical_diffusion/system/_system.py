@@ -1,8 +1,9 @@
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property
-from typing import override
+from typing import final, override
 
+import jax
 import numpy as np
 import sympy as sp
 
@@ -20,21 +21,37 @@ class System:
     temperature: float
     m: float
     potential: tuple[int, sp.Expr]
+    params: tuple[float, ...] = ()
 
     @cached_property
     def kbt(self) -> float:
         """Return the kbt of system."""
         return 1.0 * self.temperature  # k_B set to 1 for now
 
-    @cached_property
-    def symbolic_coordinates(self) -> tuple:
-        """Return the symbolic coordinates of the system."""
-        return sp.symbols(f"x0:{self.n_dim}")
-
     @property
     def n_dim(self) -> int:
         """Return the number of dimensions of the system."""
         return self.potential[0]
+
+    @cached_property
+    def coordinate_symbols(self) -> tuple[sp.Symbol, ...]:
+        """Return the symbols of each coordinate of the system."""
+        return sp.symbols(f"x0:{self.n_dim}")
+
+    @property
+    def n_params(self) -> int:
+        """Return the number of parameters of the system."""
+        return len(self.params)
+
+    @cached_property
+    def parameter_symbols(self) -> tuple[sp.Symbol, ...]:
+        """Return the symbols of each parameter of the system."""
+        return sp.symbols(f"s0:{self.n_params}")
+
+    @cached_property
+    def lambda_symbols(self) -> tuple[sp.Symbol, ...]:
+        """Return all symbols of the system, including coordinates and parameters."""
+        return (*self.coordinate_symbols, *self.parameter_symbols)
 
     @property
     def potential_expr(self) -> sp.Expr:
@@ -44,7 +61,10 @@ class System:
     @cached_property
     def force_expr(self) -> list[sp.Expr]:
         """Return the symbolic force of the system."""
-        return [-sp.diff(self.potential_expr, c) for c in self.symbolic_coordinates]
+        return [
+            -sp.simplify(sp.diff(self.potential_expr, c))
+            for c in self.coordinate_symbols
+        ]
 
     def with_gamma(self, gamma: float) -> System:
         return System(
@@ -54,18 +74,38 @@ class System:
             potential=self.potential,
         )
 
+    def as_canonical(self) -> CanonicalSystem:
+        """Return the canonical form of the system."""
+        return CanonicalSystem(
+            gamma=self.gamma,
+            temperature=self.temperature,
+            m=self.m,
+            potential=self.potential,
+            params=self.params,
+        )
+
     def __hash__(self) -> int:
         return hash(
             (
                 self.gamma,
                 self.temperature,
                 self.m,
+                self.params,
                 (
                     self.potential[0],
                     _hash_sympy_expr(self.potential[1]),
                 ),
             )
         )
+
+
+@jax.tree_util.register_dataclass
+@final
+@dataclass(frozen=True, kw_only=True)
+class CanonicalSystem(System):
+    """Parameters representing a physical system."""
+
+    potential: tuple[int, sp.Expr] = field(metadata={"static": True})
 
 
 class HarmonicSystem(System):
@@ -82,20 +122,21 @@ class HarmonicSystem(System):
         omega: float,
         n_dim: int = 1,
     ) -> None:
-        potential = 0.5 * omega**2 * sp.symbols("x0") ** 2
-        self._omega = omega
+        s0 = sp.Symbol("s0")
+        potential = 0.5 * s0**2 * sp.symbols("x0") ** 2
 
         super().__init__(
             gamma=gamma,
             temperature=temperature,
             m=m,
             potential=(n_dim, potential),
+            params=(omega,),
         )
 
     @property
     def omega(self) -> float:
         """Return the angular frequency of the system."""
-        return self._omega
+        return self.params[0]
 
     @override
     def with_gamma(self, gamma: float) -> HarmonicSystem:
@@ -111,9 +152,6 @@ class HarmonicSystem(System):
 class PeriodicSystem1D(System):
     """Parameters for a 1D cosine potential system."""
 
-    _delta_x: float
-    _barrier_energy: float
-
     def __init__(  # noqa: PLR0913
         self,
         *,
@@ -124,33 +162,27 @@ class PeriodicSystem1D(System):
         barrier_energy: float,
         n_dim: int = 1,
     ) -> None:
-        potential = (
-            0.5 * barrier_energy * (1 - sp.cos(2 * sp.pi * sp.symbols("x0") / delta_x))
-        )
-        self._delta_x = delta_x
-        self._barrier_energy = barrier_energy
+        s0 = sp.Symbol("s0")
+        s1 = sp.Symbol("s1")
+        potential = 0.5 * s1 * (1 - sp.cos(2 * sp.pi * sp.symbols("x0") / s0))
 
         super().__init__(
             gamma=gamma,
             temperature=temperature,
             m=m,
             potential=(n_dim, potential),
+            params=(delta_x, barrier_energy),
         )
 
     @property
     def delta_x(self) -> float:
         """Return the delta x of the system."""
-        return self._delta_x
+        return self.params[0]
 
     @property
     def barrier_energy(self) -> float:
         """Return the barrier energy of the system."""
-        return self._barrier_energy
-
-    @property
-    def lattice_spacing(self) -> float:
-        """Return the barrier energy of the system."""
-        return 2 * np.pi * self.delta_x
+        return self.params[1]
 
     @override
     def with_gamma(self, gamma: float) -> PeriodicSystem1D:
@@ -164,58 +196,11 @@ class PeriodicSystem1D(System):
         )
 
 
-class FlatSystem1D(System):
-    """Parameters for a 1D cosine potential system."""
-
-    _delta_x: float
-    _barrier_energy: float
-
-    def __init__(
-        self,
-        *,
-        gamma: float,
-        temperature: float,
-        m: float,
-        n_dim: int = 1,
-    ) -> None:
-        potential = 0 * sp.symbols("x0")
-
-        super().__init__(
-            gamma=gamma,
-            temperature=temperature,
-            m=m,
-            potential=(n_dim, potential),
-        )
-
-
-class FlatSystem2D(System):
-    """Parameters for a 1D cosine potential system."""
-
-    _delta_x: float
-    _barrier_energy: float
-
-    def __init__(
-        self,
-        *,
-        gamma: float,
-        temperature: float,
-        m: float,
-        n_dim: int = 2,
-    ) -> None:
-        potential = 0 * sp.symbols("x0")
-
-        super().__init__(
-            gamma=gamma,
-            temperature=temperature,
-            m=m,
-            potential=(n_dim, potential),
-        )
-
-
-def _get_potential_expr_fcc(barrier_energy: float, delta_x: float) -> sp.Expr:
+def _get_potential_expr_fcc() -> sp.Expr:
     """Return the potential energy expression for a 2D FCC lattice."""
     x0, x1 = sp.symbols("x0 x1")
-    c = 2.0 * sp.pi / (sp.sqrt(3.0) * delta_x)
+    s0, s1 = sp.symbols("s0 s1")
+    c = 2.0 * sp.pi / (sp.sqrt(3.0) * s0)
 
     kx0 = c * (-1.0 / sp.sqrt(3.0))
     kx1 = c * 1.0
@@ -229,14 +214,11 @@ def _get_potential_expr_fcc(barrier_energy: float, delta_x: float) -> sp.Expr:
 
     cos_sum = sp.cos(arg1) + sp.cos(arg2) + sp.cos(arg3)
 
-    return 2.0 * barrier_energy * cos_sum
+    return 2.0 * s1 * cos_sum
 
 
 class PeriodicSystemFCC(System):
     """Parameters for the face-centered cubic periodic system."""
-
-    _delta_x: float
-    _barrier_energy: float
 
     def __init__(
         self,
@@ -247,26 +229,25 @@ class PeriodicSystemFCC(System):
         delta_x: float,
         barrier_energy: float,
     ) -> None:
-        potential = _get_potential_expr_fcc(barrier_energy, delta_x)
-        self._delta_x = delta_x
-        self._barrier_energy = barrier_energy
+        potential = _get_potential_expr_fcc()
 
         super().__init__(
             gamma=gamma,
             temperature=temperature,
             m=m,
             potential=(2, potential),
+            params=(delta_x, barrier_energy),
         )
 
     @property
     def delta_x(self) -> float:
         """Return the delta x of the system."""
-        return self._delta_x
+        return self.params[0]
 
     @property
     def barrier_energy(self) -> float:
         """Return the barrier energy of the system."""
-        return self._barrier_energy
+        return self.params[1]
 
 
 def get_diffusion_time(system: System, characteristic_length: float) -> float:

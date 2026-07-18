@@ -40,10 +40,8 @@ def plot_potential_1d(
     t = np.linspace(0, 1, n_points)
     points = np.array(start) + t[:, np.newaxis] * delta
 
-    potential_func = sp.lambdify(
-        params.symbolic_coordinates, params.potential_expr, "numpy"
-    )
-    potential = np.broadcast_to(potential_func(*points.T), (n_points,))
+    potential_func = sp.lambdify(params.lambda_symbols, params.potential_expr, "numpy")
+    potential = np.broadcast_to(potential_func(*points.T, *params.params), (n_points,))
 
     distances = np.linalg.norm(start) + t * np.linalg.norm(delta)
 
@@ -99,10 +97,10 @@ def plot_potential_2d(
     y = np.linspace(start[1], end[1], n_points[1])
     x_grid, y_grid = np.meshgrid(x, y)
 
-    potential_func = sp.lambdify(
-        params.symbolic_coordinates, params.potential_expr, "numpy"
+    potential_func = sp.lambdify(params.lambda_symbols, params.potential_expr, "numpy")
+    potential = np.broadcast_to(
+        potential_func(x_grid, y_grid, *params.params), x_grid.shape
     )
-    potential = np.broadcast_to(potential_func(x_grid, y_grid), x_grid.shape)
 
     mesh = ax.pcolormesh(x_grid, y_grid, potential)
 
