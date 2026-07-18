@@ -159,7 +159,7 @@ def _run_langevin_ensemble_jit(  # noqa: PLR0913, PLR0917
         bm = dfx.VirtualBrownianTree(
             t0=0,
             t1=times[-1],
-            tol=dt_step / 2,
+            tol=1e-3,
             shape=(system.n_dim,),
             key=key,
             levy_area=dfx.SpaceTimeTimeLevyArea,
@@ -265,10 +265,10 @@ def solve_ensemble[S: System](
 def _solve_single_path[S: System](
     system: S,
     time_span: TimeSpan,
-    initial_conditions: tuple[np.ndarray, np.ndarray],
+    initial_condition: tuple[np.ndarray, np.ndarray],
     _key: jax.Array,
 ) -> Path:
-    filename = f"{hash(system)}_{hash(time_span)}_{_hash_initial_conditions(initial_conditions)}.npz"
+    filename = f"{hash(system)}_{hash(time_span)}_{_hash_initial_conditions(initial_condition)}.npz"
     return Path("examples/data") / filename
 
 
@@ -277,18 +277,62 @@ def _solve_single_path[S: System](
 def solve_single[S: System](
     system: S,
     time_span: TimeSpan,
-    initial_conditions: tuple[
+    initial_condition: tuple[
         np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
     ],
     _key: jax.Array,
 ) -> SingleSimulationResult[S]:
-    """Solve the ULD Langevin equation for an ensemble of trajectories via vmap."""
+    """Solve the ULD Langevin equation for a single trajectory via vmap."""
     return solve_ensemble.load_or_call_uncached(
         system,
         time_span,
         (
-            np.array([initial_conditions[0]]),
-            np.array([initial_conditions[1]]),
+            np.array([initial_condition[0]]),
+            np.array([initial_condition[1]]),
         ),
         _key,
     )[0]
+
+
+def _solve_ballistic_ensemble_path[S: System](
+    system: S,
+    time_span: TimeSpan,
+    initial_condition: tuple[np.ndarray, np.ndarray],
+    n_samples: int,
+    _key: jax.Array,
+) -> Path:
+    filename = f"{hash(system)}_{hash(time_span)}_{_hash_initial_conditions(initial_condition)}_{n_samples}.npz"
+    return Path("examples/data") / filename
+
+
+@cached(_solve_ballistic_ensemble_path)
+@timed
+def solve_ballistic_ensemble[S: System](
+    system: S,
+    time_span: TimeSpan,
+    initial_condition: tuple[
+        np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
+    ],
+    n_samples: int,
+    _key: jax.Array,
+) -> SimulationResult[S]:
+    """Solve an ensemble of ballistic trajectories in parallel via jax.vmap."""
+    # First, we do a single stochastic trajectory to get the initial conditions
+    result = solve_single.load_or_call_uncached(
+        system,
+        TimeSpan(
+            t0=1 / system.gamma,
+            t1=n_samples / system.gamma,
+            dt=1 / system.gamma,
+            dt_step=time_span.dt_step,
+        ),
+        initial_condition,
+        _key,
+    )
+
+    return solve_ensemble.load_or_call_uncached(
+        system,
+        time_span,
+        (result.x_points.T, result.p_points.T),
+        _key,
+    )
