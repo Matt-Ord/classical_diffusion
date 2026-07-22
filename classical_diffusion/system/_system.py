@@ -97,7 +97,7 @@ class System:
     @property
     def kbt(self) -> float:
         """Convert to simulation parameters."""
-        return 1.0 * self.temperature
+        return self.temperature
 
     @property
     def sampling_domain(self) -> tuple[float, float]:

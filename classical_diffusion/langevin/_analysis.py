@@ -11,7 +11,6 @@ from classical_diffusion.langevin import (
 from classical_diffusion.langevin._langevin import sample_results
 from classical_diffusion.plot import get_figure, get_measured_data
 from classical_diffusion.system._system import System
-from classical_diffusion.util import expanding_slope_ensemble
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -426,6 +425,21 @@ def plot_phase_space_density(
     ax.set_title("Phase Space Density")
 
     return fig, ax, mesh
+
+
+def expanding_slope_ensemble(
+    times: np.ndarray[Any, np.dtype[np.floating]],
+    x_points: np.ndarray[Any, np.dtype[np.floating]],
+) -> np.ndarray[Any, np.dtype[np.floating]]:
+    """Compute the expanding slope of x_points over time for an ensemble of trajectories."""
+    n_trajectories, n_timepoints = x_points.shape
+    slopes = np.zeros((n_trajectories, n_timepoints))
+
+    for i in range(n_trajectories):
+        for j in range(1, n_timepoints):
+            slopes[i, j] = (x_points[i, j] - x_points[i, 0]) / (times[j] - times[0])
+    # TODO: replace with whatever this was meant to be!
+    return slopes
 
 
 def get_elastic_p(
