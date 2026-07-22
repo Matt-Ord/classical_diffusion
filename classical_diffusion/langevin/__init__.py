@@ -18,10 +18,10 @@ from ._analysis import (
     plot_x_histogram,
     plot_2d_trajectory,
     plot_kinetic_probability,
-    plot_isf_with_delta_k,
-    split_escaped_and_trapped,
     get_under_barrier_probability_ballistic,
     breakdown_ballistic_trajectory,
+    split_escaped_and_trapped,
+    plot_isf_with_delta_k,
     get_effective_mass,
     plot_effective_mass_periodic_1D,
 )
