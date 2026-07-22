@@ -127,7 +127,7 @@ def _run_deterministic_ensemble_jit(
             stepsize_controller=dfx.PIDController(
                 rtol=1e-3,  # cspell: disable-line
                 atol=1e-5,
-            ),  # cspell: disable-line
+            ),
             max_steps=100_000_000,
         )
         return sol.ys
@@ -176,7 +176,7 @@ def _run_langevin_ensemble_jit(
             args=None,
             saveat=dfx.SaveAt(ts=times),
             stepsize_controller=dfx.PIDController(
-                rtol=1e-2,
+                rtol=1e-2,  # cspell: disable-line
                 atol=1e-3,
             ),
             max_steps=100_000_000,
