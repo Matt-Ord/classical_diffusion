@@ -24,7 +24,6 @@ class TimeSpan:
     t0: float
     t1: float
     dt: float
-    dt_step: float | None = None
 
     def __post_init__(self) -> None:
         if self.t1 <= self.t0:
@@ -137,13 +136,12 @@ def _run_deterministic_ensemble_jit(
 
 
 @jax.jit
-def _run_langevin_ensemble_jit(  # ruff:ignore[too-many-arguments, too-many-positional-arguments]
+def _run_langevin_ensemble_jit(
     system: "CanonicalSystem",  # ruff:ignore[quoted-annotation]
     xs0: jnp.ndarray,
     ps0: jnp.ndarray,
     keys: jax.Array,
     times: jnp.ndarray,
-    dt_step: jnp.ndarray,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     gamma = jnp.broadcast_to(system.gamma, (system.n_dim,))
     u = jnp.broadcast_to(system.kbt / system.m, (system.n_dim,))
@@ -173,12 +171,17 @@ def _run_langevin_ensemble_jit(  # ruff:ignore[too-many-arguments, too-many-posi
             solver=dfx.ALIGN(),
             t0=0,
             t1=times[-1],
-            dt0=dt_step,
+            dt0=times[1] - times[0],
             y0=(x0, p0),
             args=None,
             saveat=dfx.SaveAt(ts=times),
+            stepsize_controller=dfx.PIDController(
+                rtol=1e-2,
+                atol=1e-3,
+            ),
             max_steps=100_000_000,
         )
+
         return sol.ys
 
     return jax.vmap(solve_one, in_axes=(0, 0, 0))(xs0, ps0, keys)
@@ -231,18 +234,9 @@ def solve_ensemble[S: System](
             system.as_canonical(), xs0_jax, ps0_jax, times
         )
     else:
-        dt_friction_limit = 0.05 / system.gamma if system.gamma > 0 else time_span.dt
-        dt_step = (
-            jnp.minimum(time_span.dt, dt_friction_limit)
-            if time_span.dt_step is None
-            else time_span.dt_step
-        )
-
-        # Vectorized generation of independent noise seeds per run
         keys = jax.random.split(_key, n_run)
-
         xs_batch, ps_batch = _run_langevin_ensemble_jit(
-            system.as_canonical(), xs0_jax, ps0_jax, keys, times, jnp.asarray(dt_step)
+            system.as_canonical(), xs0_jax, ps0_jax, keys, times
         )
 
     # --- SHAPE TRANSFORMATION ---
