@@ -181,15 +181,78 @@ def get_exact_flat_isf(
     delta_k: tuple[float, ...],
     times: np.ndarray[Any, np.dtype[np.floating[Any]]],
 ) -> np.ndarray:
-    """Return the exact ballistic ISF for a 1D flat (potential-free) surface.
-
-    ISF(t) = exp(-delta_k^2 * kbT / (2m) * t^2), the Gaussian decay from
-    free-streaming thermal velocities with no confining potential.
-    """
-    kbt, m = system.kbt, system.m
+    """Return the exact ballistic ISF for a 1D flat (potential-free) surface."""
+    kbt, m, gamma = system.kbt, system.m, system.gamma
     k_squared = sum(k_i**2 for k_i in delta_k)
-    # TODO: this formula is wrong - ie it should include friction!  # ruff:ignore[line-contains-todo]
-    return np.exp(-(k_squared) * kbt / (2 * m) * times**2)
+    return np.exp(
+        ((k_squared) * kbt / (gamma**2 * m))
+        * (1 - gamma * times - np.exp(-gamma * times))
+    )
+
+
+def get_exact_gaussian_isf(
+    system: System,
+    effective_mass: float,
+    delta_k: tuple[float, ...],
+    times: np.ndarray[Any, np.dtype[np.floating[Any]]],
+) -> np.ndarray:
+    """Return the exact ballistic ISF for a 1D flat (potential-free) surface."""
+    kbt, _, _ = system.kbt, system.m, system.gamma
+    k_squared = sum(k_i**2 for k_i in delta_k)
+    return np.exp(-((k_squared) * kbt / (2 * effective_mass)) * times**2)
+
+
+def plot_exact_gaussian_isf(
+    system: System,
+    effective_mass: float,
+    delta_k: tuple[float, ...],
+    times: np.ndarray[Any, np.dtype[np.floating[Any]]] | None = None,
+    *,
+    ax: Axes | None = None,
+) -> tuple[Figure, Axes, Line2D]:
+    """Plot the exact ISF for a 1D flat (potential-free) surface."""
+    fig, ax = get_figure(ax)
+
+    times = times if times is not None else np.linspace(0, 30, 1000)
+    isf_exact = get_exact_gaussian_isf(
+        system=system, effective_mass=effective_mass, delta_k=delta_k, times=times
+    )
+
+    (line,) = ax.plot(times, isf_exact)
+
+    ax.set_title("Intermediate Scattering Function Over Time")
+    ax.set_xlabel("Time / s")
+    ax.set_ylabel("ISF")
+    ax.legend()
+
+    return fig, ax, line
+
+
+def plot_exact_offset_gaussian_isf(
+    system: System,
+    effective_mass: float,
+    delta_k: tuple[float, ...],
+    times: np.ndarray[Any, np.dtype[np.floating[Any]]] | None = None,
+    *,
+    ax: Axes | None = None,
+    offset: float = 0,
+) -> tuple[Figure, Axes, Line2D]:
+    """Plot the exact ISF for a 1D flat (potential-free) surface."""
+    fig, ax = get_figure(ax)
+
+    times = times if times is not None else np.linspace(0, 30, 1000)
+    isf_exact = offset + (1 - offset) * get_exact_gaussian_isf(
+        system=system, effective_mass=effective_mass, delta_k=delta_k, times=times
+    )
+
+    (line,) = ax.plot(times, isf_exact)
+
+    ax.set_title("Intermediate Scattering Function Over Time")
+    ax.set_xlabel("Time / s")
+    ax.set_ylabel("ISF")
+    ax.legend()
+
+    return fig, ax, line
 
 
 def plot_exact_flat_isf(
