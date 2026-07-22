@@ -8,8 +8,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import sympy as sp
+from scipy.stats.sampling import NumericalInversePolynomial
 
-from classical_diffusion.util import cached, timed
+from classical_diffusion.util import cached
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -24,6 +25,7 @@ class TimeSpan:
     t0: float
     t1: float
     dt: float
+    dt_step: float | None = None
 
     def __post_init__(self) -> None:
         if self.t1 <= self.t0:
@@ -125,9 +127,9 @@ def _run_deterministic_ensemble_jit(
             args=None,
             saveat=dfx.SaveAt(ts=times),
             stepsize_controller=dfx.PIDController(
-                rtol=1e-3,  # cspell: disable-line
-                atol=1e-5,
-            ),
+                rtol=1e-6,  # cspell: disable-line
+                atol=1e-8,
+            ),  # cspell: disable-line
             max_steps=100_000_000,
         )
         return sol.ys
@@ -136,12 +138,13 @@ def _run_deterministic_ensemble_jit(
 
 
 @jax.jit
-def _run_langevin_ensemble_jit(
+def _run_langevin_ensemble_jit(  # ruff:ignore[too-many-arguments, too-many-positional-arguments]
     system: "CanonicalSystem",  # ruff:ignore[quoted-annotation]
     xs0: jnp.ndarray,
     ps0: jnp.ndarray,
     keys: jax.Array,
     times: jnp.ndarray,
+    dt_step: jnp.ndarray,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     gamma = jnp.broadcast_to(system.gamma, (system.n_dim,))
     u = jnp.broadcast_to(system.kbt / system.m, (system.n_dim,))
@@ -171,17 +174,12 @@ def _run_langevin_ensemble_jit(
             solver=dfx.ALIGN(),
             t0=0,
             t1=times[-1],
-            dt0=times[1] - times[0],
+            dt0=dt_step,
             y0=(x0, p0),
             args=None,
             saveat=dfx.SaveAt(ts=times),
-            stepsize_controller=dfx.PIDController(
-                rtol=1e-2,  # cspell: disable-line
-                atol=1e-3,
-            ),
             max_steps=100_000_000,
         )
-
         return sol.ys
 
     return jax.vmap(solve_one, in_axes=(0, 0, 0))(xs0, ps0, keys)
@@ -208,7 +206,6 @@ def _solve_ensemble_path[S: System](
 
 
 @cached(_solve_ensemble_path)
-@timed
 def solve_ensemble[S: System](
     system: S,
     time_span: TimeSpan,
@@ -234,9 +231,18 @@ def solve_ensemble[S: System](
             system.as_canonical(), xs0_jax, ps0_jax, times
         )
     else:
+        dt_friction_limit = 0.05 / system.gamma if system.gamma > 0 else time_span.dt
+        dt_step = (
+            jnp.minimum(time_span.dt, dt_friction_limit)
+            if time_span.dt_step is None
+            else time_span.dt_step
+        )
+
+        # Vectorized generation of independent noise seeds per run
         keys = jax.random.split(_key, n_run)
+
         xs_batch, ps_batch = _run_langevin_ensemble_jit(
-            system.as_canonical(), xs0_jax, ps0_jax, keys, times
+            system.as_canonical(), xs0_jax, ps0_jax, keys, times, jnp.asarray(dt_step)
         )
 
     # --- SHAPE TRANSFORMATION ---
@@ -264,7 +270,6 @@ def _solve_single_path[S: System](
 
 
 @cached(_solve_single_path)
-@timed
 def solve_single[S: System](
     system: S,
     time_span: TimeSpan,
@@ -288,41 +293,51 @@ def solve_single[S: System](
 def _solve_ballistic_ensemble_path[S: System](
     system: S,
     time_span: TimeSpan,
-    initial_condition: tuple[np.ndarray, np.ndarray],
-    n_samples: int,
+    n_trajectories: int,
     _key: jax.Array,
 ) -> Path:
-    filename = f"{hash(system)}_{hash(time_span)}_{_hash_initial_conditions(initial_condition)}_{n_samples}.npz"
+    filename = f"{hash(system)}_{hash(time_span)}_{n_trajectories}.npz"
     return Path("examples/data") / filename
 
 
+def sample_x_initial(system: System, n_trajectories: int):
+    x0, *_ = system.coordinate_symbols
+    potential_fn = sp.lambdify(
+        (x0, *system.parameter_symbols), system.potential_expr, "numpy"
+    )
+    kbt = system.kbt
+    params = system.params
+
+    class XDensity:
+        def pdf(self, x: float) -> float:
+            return np.exp(-potential_fn(x, *params) / kbt)
+
+    x_sampler = NumericalInversePolynomial(XDensity(), domain=system.sampling_domain)
+    return x_sampler.rvs(size=n_trajectories).reshape(n_trajectories, system.n_dim)
+
+
+def sample_p_initial(system: System, n_trajectories: int):
+
+    rng = np.random.default_rng()
+    p_std = np.sqrt(system.kbt * system.m)
+
+    return rng.normal(0.0, p_std, size=(n_trajectories, system.n_dim))
+
+
 @cached(_solve_ballistic_ensemble_path)
-@timed
 def solve_ballistic_ensemble[S: System](
     system: S,
     time_span: TimeSpan,
-    initial_condition: tuple[
-        np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
-    ],
-    n_samples: int,
+    n_trajectories: int,
     _key: jax.Array,
 ) -> SimulationResult[S]:
     """Solve an ensemble of ballistic trajectories in parallel via jax.vmap."""
-    # First, we do a single stochastic trajectory to get the initial conditions
-    result = solve_single.load_or_call_uncached(
-        system,
-        TimeSpan(
-            t0=1 / system.gamma,
-            t1=n_samples / system.gamma,
-            dt=1 / system.gamma,
-        ),
-        initial_condition,
-        _key,
-    )
-
     return solve_ensemble.load_or_call_uncached(
         system.with_gamma(0.0),
         time_span,
-        (result.x_points.T, result.p_points.T),
+        (
+            sample_x_initial(system=system, n_trajectories=n_trajectories),
+            sample_p_initial(system=system, n_trajectories=n_trajectories),
+        ),
         _key,
     )

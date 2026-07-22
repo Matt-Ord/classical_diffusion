@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, Unpack, cast
 
+import matplotlib as mpl
 import numpy as np
 import scipy
 import sympy as sp
@@ -7,7 +8,10 @@ import sympy as sp
 from classical_diffusion.langevin import (
     SimulationResult,
 )
+from classical_diffusion.langevin._langevin import sample_results
 from classical_diffusion.plot import get_figure, get_measured_data
+from classical_diffusion.system._system import System
+from classical_diffusion.util import expanding_slope_ensemble
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -114,13 +118,49 @@ def plot_isf(
     return fig, ax, line, fill
 
 
+def plot_isf_with_delta_k(
+    result: SimulationResult,
+    delta_k_values: list,
+    *,
+    ax: Axes | None = None,
+    measure: Measure = "abs",
+    pairwise: bool = True,
+) -> tuple[Figure, Axes, Line2D, PolyCollection]:
+    """Plot the ensemble-averaged ISF over time, with a shaded ±1 SEM band.
+
+    `time_scale` overrides the result's own characteristic time for
+    x-axis normalization — pass the same value to multiple calls to
+    compare curves on a shared timescale.
+    """
+    fig, ax = get_figure(ax)
+
+    cmap = mpl.cm.viridis
+    norm = mpl.colors.Normalize(vmin=delta_k_values.min(), vmax=delta_k_values.max())
+
+    for dk in delta_k_values:
+        dk_tuple = (dk,)
+        isf = get_isf(result.x_points, delta_k=dk_tuple, pairwise=pairwise)
+        avg_isf = np.mean(isf, axis=0)
+        avg_data = get_measured_data(avg_isf, measure)
+        ax.plot(result.times, avg_data, color=cmap(norm(dk)))
+
+    ax.set_title("Intermediate Scattering Function Over Time")
+    ax.set_xlabel("Time / s")
+    ax.set_ylabel("ISF")
+    fig.colorbar(
+        mpl.cm.ScalarMappable(norm=norm, cmap=cmap), ax=ax, label=r"$\Delta k$"
+    )
+
+    return fig, ax
+
+
 def plot_x_evolution(
     result: SimulationResult,
     *,
     ax: Axes | None = None,
     idx: int = 0,
     n_trajectories: int = 1,
-    time_scale: float,
+    time_scale: float = 1.0,
 ) -> tuple[Figure, Axes, list[Line2D]]:
     """Plot x against t for the first n_trajectories trajectories.
 
@@ -269,7 +309,7 @@ def split_result(result: SimulationResult) -> tuple[SimulationResult, Simulation
 def x_exact_pdf(result: SimulationResult, *, n_grid: int = 10_000) -> tuple:
     """Return x boltzman pdf for given potential."""
     potential = sp.lambdify(
-        result.system.symbolic_coordinates,
+        (*result.system.coordinate_symbols, *result.system.parameter_symbols),
         result.system.potential_expr,
         "numpy",
     )
@@ -386,15 +426,51 @@ def plot_phase_space_density(
 
 
 def get_elastic_p(
-    result: SimulationResult,
+    result: SimulationResult, *, idx: int = 0
 ) -> np.ndarray[Any, np.dtype[np.floating]]:
     """Return the elastic (ballistic straight-line) momentum estimate per trajectory."""
-    x0 = result.x_points[:, :, 0]
-    v_elastic = (result.x_points - x0) / result.times
+    x_points = result.x_points[:, idx, :]
+    v_elastic = expanding_slope_ensemble(result.times, x_points)
     return v_elastic * result.system.m
 
 
 def plot_elastic_p(
+    result: SimulationResult,
+    stride_time: float,
+    *,
+    n_trajectories: int,
+    ax: Axes | None = None,
+    time_scale: float = 1.0,
+) -> tuple[Figure, Axes]:
+    """Plot convergence of elastic momenta over all trajectories.
+
+    Raises
+    ------
+    ValueError
+        If `n_trajectories` exceeds the number of trajectories available in `result`.
+    """
+    if n_trajectories > result.p_points.shape[0]:
+        msg = f"n_trajectories={n_trajectories} exceeds available trajectories ({result.p_points.shape[0]})"
+        raise ValueError(msg)
+
+    fig, ax = get_figure(ax)
+
+    sampled_result = sample_results(result, stride_time=stride_time)
+    ps = get_elastic_p(sampled_result)
+    for trajectory in range(n_trajectories):
+        ax.plot(
+            sampled_result.times / time_scale,
+            ps[trajectory, :],
+            label=f"trajectory {trajectory}",
+        )
+
+    ax.set_xlabel("time")
+    ax.set_ylabel("p_elastic")
+
+    return fig, ax
+
+
+def plot_initial_p(
     result: SimulationResult, *, n_trajectories: int, ax: Axes | None = None
 ) -> tuple[Figure, Axes]:
     """Plot convergence of elastic momenta over all trajectories.
@@ -410,14 +486,43 @@ def plot_elastic_p(
 
     fig, ax = get_figure(ax)
 
-    ps = get_elastic_p(result)
     for trajectory in range(n_trajectories):
-        ax.plot(result.times, ps[trajectory, 0], label=f"trajectory {trajectory}")
-
-    ax.set_xlabel("time")
-    ax.set_ylabel("p_elastic")
+        ax.axhline(
+            result.p_points[trajectory, 0, 0],
+            label=f"trajectory {trajectory}",
+            linestyle=":",
+        )
 
     return fig, ax
+
+
+def breakdown_ballistic_trajectory[S: System](
+    result: SimulationResult[S], stride_time: float, idx: int = 0
+) -> tuple[SimulationResult[S], SimulationResult[S]]:
+    """Split a ballistic simulation into its elastic and inelastic components."""
+    sampled_result = sample_results(result, stride_time=stride_time)
+    p_elastic = get_elastic_p(sampled_result)
+    p_final = p_elastic[..., -1:]
+    p_elastic_points = (np.broadcast_to(p_final, result.p_points[:, idx, :].shape))[
+        :, None, :
+    ]
+    x_elastic_points = (
+        p_final * result.times / result.system.m + result.x_points[:, :, 0]
+    )[:, None, :]
+
+    elastic = SimulationResult(
+        times=result.times,
+        x_points=x_elastic_points,
+        p_points=p_elastic_points,
+        system=result.system,
+    )
+    inelastic = SimulationResult(
+        times=result.times,
+        x_points=result.x_points - x_elastic_points,
+        p_points=result.p_points - p_elastic_points,
+        system=result.system,
+    )
+    return elastic, inelastic
 
 
 _EXPECTED_NDIM = 2
@@ -445,3 +550,139 @@ def plot_2d_trajectory(
     ax.set_ylabel("$y$")
 
     return fig, ax, line
+
+
+def get_energy(result: SimulationResult) -> np.ndarray:
+    """Return the energy of the system."""
+    potential = sp.lambdify(
+        (*result.system.coordinate_symbols, *result.system.parameter_symbols),
+        result.system.potential_expr,
+        "numpy",
+    )
+
+    potential = potential(result.x_points, *result.system.params).squeeze(axis=1)
+
+    kinetic = np.sum(result.p_points**2, axis=1) / (2 * result.system.m)
+
+    return kinetic + potential
+
+
+def plot_energy(
+    result: SimulationResult, n_trajectories: int, *, ax: Axes, time_scale: float = 1.0
+) -> tuple[Figure, Axes]:
+    """Plot the enrgy of the system with time."""
+    fig, ax = get_figure(ax)
+    energy = get_energy(result)
+    for trajectory in range(n_trajectories):
+        ax.plot(
+            result.times / time_scale,
+            energy[trajectory, :],
+            label=f"trajectory {trajectory}",
+        )
+
+    ax.set_xlabel("time")
+    ax.set_ylabel("energy")
+
+    return fig, ax
+
+
+def _partition_result(
+    result: SimulationResult, mask: np.ndarray[np.bool_]
+) -> np.ndarray:
+    return result.x_points[mask], result.p_points[mask]
+
+
+def split_escaped_and_trapped(
+    result: SimulationResult,
+) -> tuple[SimulationResult, SimulationResult]:
+    """Split result into trajectories trapped within or free to move over the barrier."""
+    energy = get_energy(result)[:, 0]
+
+    free_x_points, free_p_points = _partition_result(
+        result, energy > result.system.barrier_energy
+    )
+    trapped_x_points, trapped_p_points = _partition_result(
+        result, energy <= result.system.barrier_energy
+    )
+
+    free = SimulationResult(
+        times=result.times,
+        x_points=free_x_points,
+        p_points=free_p_points,
+        system=result.system,
+    )
+    trapped = SimulationResult(
+        times=result.times,
+        x_points=trapped_x_points,
+        p_points=trapped_p_points,
+        system=result.system,
+    )
+    return free, trapped
+
+
+def _under_barrier_probability_convergence(result: SimulationResult) -> np.ndarray:
+    energies = get_energy(result)
+    is_over_barrier = energies < result.system.barrier_energy
+    return np.cumsum(is_over_barrier, axis=-1) / (
+        np.arange(is_over_barrier.shape[-1]) + 1
+    )
+
+
+def under_barrier_probability_ballistic(result: SimulationResult) -> np.ndarray:
+    """Return the probability of a particle being trapped under barrier."""
+    energies = get_energy(result)[:, 0]
+    is_over_barrier = energies < result.system.barrier_energy
+    return np.sum(is_over_barrier) / is_over_barrier.size
+
+
+def plot_probability_over_barrier(
+    result: SimulationResult, n_trajectories: int, *, ax: Axes
+) -> tuple[Figure, Axes]:
+    """Plot the convergance of the probability of a trajectory having sufficient energy to cross barrier."""
+    fig, ax = get_figure(ax)
+    probability_evolution = _under_barrier_probability_convergence(result)
+    for trajectory in range(n_trajectories):
+        ax.plot(
+            result.times,
+            probability_evolution[trajectory, :],
+            label=f"trajectory {trajectory}",
+        )
+
+    ax.set_xlabel("time")
+    ax.set_ylabel("probability")
+
+    return fig, ax
+
+
+def get_effective_mass(result: SimulationResult) -> np.ndarray:
+    """Return the effective mass averaged over a full simulation."""
+    elastic_ps = get_elastic_p(result=result)[:, -1]
+    return (result.system.kbt * result.system.m**2) / np.average(elastic_ps**2, axis=0)
+
+
+def plot_effective_mass_periodic_1D(  # ruff:ignore[invalid-function-name]
+    effective_mass: np.ndarray[Any, np.dtype[np.floating]],
+    inertial_mass: np.ndarray[Any, np.dtype[np.floating]],
+    barrier_energy: np.ndarray[Any, np.dtype[np.floating]],
+    *,
+    ax: Axes | None = None,
+) -> tuple[Figure, Axes]:
+    """Plot the effective mass against intertial mass and barrier energy."""
+    fig, ax = get_figure(ax)
+
+    scaled_inertial_mass = inertial_mass
+    scaled_barrier_energy = barrier_energy
+
+    mesh = ax.pcolormesh(
+        scaled_barrier_energy,
+        scaled_inertial_mass,
+        effective_mass,
+        shading="auto",
+        cmap="viridis",
+    )
+    fig.colorbar(mesh, ax=ax, label="effective mass")
+
+    ax.set_xlabel("Dimensionless Barrier energy")
+    ax.set_ylabel("Dimenesionless Inertial mass")
+
+    return fig, ax, mesh
