@@ -315,7 +315,6 @@ def solve_ballistic_ensemble[S: System](
             t0=1 / system.gamma,
             t1=n_samples / system.gamma,
             dt=1 / system.gamma,
-            dt_step=time_span.dt_step,
         ),
         initial_condition,
         _key,
