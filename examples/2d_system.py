@@ -22,6 +22,7 @@ def _plot_periodic_system() -> None:
     )
     fig, ax = get_fancy_figure()
     _, _, _ = plot_periodic_potential_fcc(system, ax=ax)
+
     fig.savefig("examples/2d_system.potential.pdf")
 
 
