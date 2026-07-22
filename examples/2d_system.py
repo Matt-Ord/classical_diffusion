@@ -60,7 +60,7 @@ def _plot_2d_periodic_isf() -> None:
             t1=4 / system.gamma,
             dt=0.01 / system.gamma,
         ),
-        n_trajectories=2000,
+        n_samples=2000,
         _key=key,
     )
     _, ax, line_1, _ = plot_isf(result=result, ax=ax, delta_k=delta_k, pairwise=False)

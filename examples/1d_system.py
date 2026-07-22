@@ -34,7 +34,7 @@ def _plot_periodic_system() -> None:
     fig.savefig("examples/1d_system.potential.pdf")
 
 
-def _plot_1d_periodic_isf() -> None:  # ruff:ignore[too-many-locals]
+def _plot_1d_periodic_isf() -> None:
     key = jrandom.PRNGKey(100)
 
     system = PeriodicSystem1D(
@@ -47,7 +47,6 @@ def _plot_1d_periodic_isf() -> None:  # ruff:ignore[too-many-locals]
             t0=0,
             t1=40 / system.gamma,
             dt=0.01 / system.gamma,
-            dt_step=0.01 / system.gamma,
         ),
         (np.full((20, 1), 0.0), np.full((20, 1), 0.0)),
         _key=key,
@@ -69,9 +68,8 @@ def _plot_1d_periodic_isf() -> None:  # ruff:ignore[too-many-locals]
             t0=0,
             t1=10 / system.gamma,
             dt=0.01 / system.gamma,
-            dt_step=0.01 / system.gamma,
         ),
-        n_trajectories=2000,
+        n_samples=2000,
         _key=key,
     )
 
@@ -136,9 +134,8 @@ def _plot_effective_mass_isf() -> None:
             t0=0,
             t1=100 / system.gamma,
             dt=0.01 / system.gamma,
-            dt_step=0.01 / system.gamma,
         ),
-        n_trajectories=2000,
+        n_samples=2000,
         _key=key,
     )
 
@@ -192,9 +189,8 @@ def _plot_effective_mass_offset_isf() -> None:
             t0=0,
             t1=100 / system.gamma,
             dt=0.01 / system.gamma,
-            dt_step=0.01 / system.gamma,
         ),
-        n_trajectories=2000,
+        n_samples=2000,
         _key=key,
     )
 

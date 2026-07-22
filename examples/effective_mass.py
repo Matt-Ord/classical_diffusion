@@ -42,9 +42,8 @@ def _full_effective_mass_plot() -> None:
                 t0=0,
                 t1=100 / system.gamma,
                 dt=0.01 / system.gamma,
-                dt_step=0.01 / system.gamma,
             ),
-            n_trajectories=10,
+            n_samples=10,
             _key=keys[idx],
         )
 
@@ -89,9 +88,8 @@ def _free_effective_mass_plot() -> None:
                 t0=0,
                 t1=100 / system.gamma,
                 dt=0.01 / system.gamma,
-                dt_step=0.01 / system.gamma,
             ),
-            n_trajectories=15,
+            n_samples=15,
             _key=keys[idx],
         )
         free_result, _ = split_escaped_and_trapped(result)

@@ -108,6 +108,7 @@ def plot_isf(
         alpha=0.3,
         label="SEM",
     )
+    fill.set_color(line.get_color())
 
     line.set_label("SEM")
 
@@ -120,7 +121,7 @@ def plot_isf(
 
 def plot_isf_with_delta_k(
     result: SimulationResult,
-    delta_k_values: np.ndarray,
+    delta_k_values: np.ndarray[Any, np.dtype[np.floating]],
     *,
     ax: Axes | None = None,
     measure: Measure = "abs",
@@ -135,7 +136,9 @@ def plot_isf_with_delta_k(
     fig, ax = get_figure(ax)
 
     cmap = mpl.cm.viridis
-    norm = mpl.colors.Normalize(vmin=delta_k_values.min(), vmax=delta_k_values.max())
+    norm = mpl.colors.Normalize(
+        vmin=np.min(delta_k_values).item(), vmax=np.max(delta_k_values).item()
+    )
 
     for dk in delta_k_values:
         dk_tuple = (dk,)
@@ -587,8 +590,10 @@ def plot_energy(
 
 
 def _partition_result(
-    result: SimulationResult, mask: np.ndarray
-) -> tuple[np.ndarray, np.ndarray]:
+    result: SimulationResult, mask: np.ndarray[Any, np.dtype[np.bool_]]
+) -> tuple[
+    np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
+]:
     return result.x_points[mask], result.p_points[mask]
 
 
@@ -655,7 +660,7 @@ def plot_probability_over_barrier(
     return fig, ax
 
 
-def get_effective_mass(result: SimulationResult) -> int:
+def get_effective_mass(result: SimulationResult) -> float:
     """Return the effective mass averaged over a full simulation."""
     elastic_ps = get_elastic_p(result=result)[:, -1]
     return (result.system.kbt * result.system.m**2) / np.average(elastic_ps**2, axis=0)
@@ -668,7 +673,7 @@ def plot_effective_mass_periodic_1D(  # ruff:ignore[invalid-function-name]
     *,
     ax: Axes | None = None,
 ) -> tuple[Figure, Axes, QuadMesh]:
-    """Plot the effective mass against intertial mass and barrier energy."""
+    """Plot the effective mass against inertial mass and barrier energy."""
     fig, ax = get_figure(ax)
 
     scaled_inertial_mass = inertial_mass
