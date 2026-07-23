@@ -10,7 +10,7 @@ import numpy as np
 import sympy as sp
 from scipy.stats.sampling import NumericalInversePolynomial
 
-from classical_diffusion.util import cached
+from classical_diffusion.util import cached, timed
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -193,6 +193,7 @@ def _solve_ensemble_path[S: System](
 
 
 @cached(_solve_ensemble_path)
+@timed
 def solve_ensemble[S: System](
     system: S,
     time_span: TimeSpan,
@@ -250,6 +251,7 @@ def _solve_single_path[S: System](
 
 
 @cached(_solve_single_path)
+@timed
 def solve_single[S: System](
     system: S,
     time_span: TimeSpan,
@@ -319,6 +321,7 @@ def sample_p_initial(
 
 
 @cached(_solve_ballistic_ensemble_path)
+@timed
 def solve_ballistic_ensemble[S: System](
     system: S,
     time_span: TimeSpan,

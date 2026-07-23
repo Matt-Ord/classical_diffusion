@@ -3,7 +3,6 @@
 from ._langevin import (  # ruff:ignore[unsorted-imports]
     SimulationResult,
     TimeSpan,
-    sample_results,
     solve_ensemble,
     solve_single,
     solve_ballistic_ensemble,
@@ -42,7 +41,6 @@ __all__ = [
     "plot_phase_space_density",
     "plot_x_evolution",
     "plot_x_histogram",
-    "sample_results",
     "solve_ballistic_ensemble",
     "solve_ensemble",
     "solve_single",
