@@ -23,11 +23,6 @@ class System:
     potential: tuple[int, sp.Expr]
     params: tuple[float, ...] = ()
 
-    @cached_property
-    def kbt(self) -> float:
-        """The kbt of the system."""
-        return 1.0 * self.temperature  # k_B set to 1 for now
-
     @property
     def n_dim(self) -> int:
         """The number of dimensions of the system."""
@@ -67,6 +62,7 @@ class System:
         ]
 
     def with_gamma(self, gamma: float) -> System:
+        """Return the system with exchanged gamma."""
         return System(
             gamma=gamma,
             m=self.m,
@@ -97,6 +93,16 @@ class System:
                 ),
             )
         )
+
+    @property
+    def kbt(self) -> float:
+        """Convert to simulation parameters."""
+        return 1.0 * self.temperature
+
+    @property
+    def sampling_domain(self) -> tuple[float, float]:
+        """The domain over which the equilibrium x-density should be sampled."""
+        return (-np.inf, np.inf)
 
 
 @jax.tree_util.register_dataclass
@@ -195,6 +201,12 @@ class PeriodicSystem1D(System):
             n_dim=self.n_dim,
         )
 
+    @override
+    @property
+    def sampling_domain(self) -> tuple[float, float]:
+        """The domain over which the equilibrium x-density should be sampled."""
+        return (-self.delta_x / 2, self.delta_x / 2)
+
 
 def _get_potential_expr_fcc() -> sp.Expr:
     """Return the potential energy expression for a 2D FCC lattice."""
@@ -251,4 +263,10 @@ class PeriodicSystemFCC(System):
 
 
 def get_diffusion_time(system: System, characteristic_length: float) -> float:
+    """Return the average time for a particle to traverse a characteristic length."""
     return np.sqrt(system.m * characteristic_length / system.kbt)
+
+
+def get_characteristic_periodic_mass(system: PeriodicSystem1D) -> float:
+    """Return the characteristic mass for a 1D periodic system."""
+    return system.kbt * system.delta_x**2 / system.gamma**2

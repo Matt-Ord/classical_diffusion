@@ -3,48 +3,60 @@ import numpy as np
 
 from classical_diffusion.langevin import (
     TimeSpan,
+    breakdown_ballistic_trajectory,
+    get_effective_mass,
+    get_under_barrier_probability_ballistic,
     plot_isf,
+    plot_isf_with_delta_k,
     solve_ballistic_ensemble,
     solve_ensemble,
+    split_escaped_and_trapped,
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.system import (
     PeriodicSystem1D,
+    plot_exact_gaussian_isf,
+    plot_exact_offset_gaussian_isf,
     plot_periodic_potential_1d,
 )
 
 
 def _plot_periodic_system() -> None:
     system = PeriodicSystem1D(
-        gamma=0.1, temperature=1.0, m=1.0, delta_x=5.0, barrier_energy=1.5
+        gamma=0.1,
+        temperature=0.5,
+        m=1.0,
+        delta_x=5,
+        barrier_energy=0.5,
     )
     fig, ax = get_fancy_figure()
     _, _, _ = plot_periodic_potential_1d(system, ax=ax)
     fig.savefig("examples/1d_system.potential.pdf")
 
 
-def _plot_1d_periodic_isf() -> None:
+def _plot_1d_periodic_isf() -> None:  # ruff:ignore[too-many-locals]
     key = jrandom.PRNGKey(100)
 
     system = PeriodicSystem1D(
-        gamma=0.1, temperature=0.5, m=1.0, delta_x=5, barrier_energy=1.5
+        gamma=0.1, temperature=0.5, m=1.0, delta_x=5, barrier_energy=0.5
     )
 
     result = solve_ensemble(
         system,
         TimeSpan(
             t0=0,
-            t1=50 / system.gamma,
+            t1=40 / system.gamma,
             dt=0.01 / system.gamma,
+            dt_step=0.01 / system.gamma,
         ),
-        (np.full((2000, 1), 0.0), np.full((2000, 1), 0.0)),
+        (np.full((20, 1), 0.0), np.full((20, 1), 0.0)),
         _key=key,
     )
 
     fig, ax = get_fancy_figure()
 
-    delta_k = (0.5 * 2 * np.pi / system.delta_x,)
-    _, ax, line_0, _ = plot_isf(
+    delta_k = (0.7 * 2 * np.pi / system.delta_x,)
+    _, ax, line_0, _fill_0 = plot_isf(
         result=result,
         ax=ax,
         delta_k=delta_k,
@@ -55,22 +67,184 @@ def _plot_1d_periodic_isf() -> None:
         system,
         TimeSpan(
             t0=0,
-            t1=4 / system.gamma,
+            t1=10 / system.gamma,
             dt=0.01 / system.gamma,
+            dt_step=0.01 / system.gamma,
         ),
-        (np.full((1,), 0.0), np.full((1,), 0.0)),
-        n_samples=2000,
+        n_trajectories=2000,
         _key=key,
     )
-    _, ax, line_1, _ = plot_isf(result=result, ax=ax, delta_k=delta_k, pairwise=False)
+
+    _, ax, line_1, _fill_1 = plot_isf(
+        result=result, ax=ax, delta_k=delta_k, pairwise=False
+    )
     line_1.set_label("ballistic simulation")
+
+    elastic_result, inelastic_result = breakdown_ballistic_trajectory(
+        result, stride_time=1 / system.gamma
+    )
+
+    _, ax, line_2, _fill_2 = plot_isf(
+        result=elastic_result, ax=ax, delta_k=delta_k, pairwise=False
+    )
+    line_2.set_label("elastic")
+    line_2.set_linestyle(":")
+
+    _, ax, line_3, _fill_3 = plot_isf(
+        result=inelastic_result, ax=ax, delta_k=delta_k, pairwise=False
+    )
+    line_3.set_label("inelastic")
+    line_3.set_linestyle(":")
 
     ax.set_xlim(0, 4 / system.gamma)
     ax.set_ylim(0, 1)
-    ax.legend(handles=[line_0, line_1])
+    ax.legend(handles=[line_0, line_1, line_2, line_3])
     fig.savefig("./examples/1d_system.isf.pdf", dpi=300, bbox_inches="tight")
+
+    delta_k_values = np.linspace(0.1, 2.0, 9) * (0.5 * 2 * np.pi / system.delta_x)
+
+    fig, ax = get_fancy_figure()
+    _, ax = plot_isf_with_delta_k(
+        result=inelastic_result, ax=ax, delta_k_values=delta_k_values, pairwise=False
+    )
+    ax.set_xlim(0, 4 / system.gamma)
+    fig.savefig(
+        "./examples/1d_system.isf.ballistic.inelastic.delta_k.pdf",
+        dpi=300,
+        bbox_inches="tight",
+    )
+
+
+def _plot_effective_mass_isf() -> None:
+    key = jrandom.PRNGKey(100)
+
+    system = PeriodicSystem1D(
+        gamma=0.1,
+        temperature=0.5,
+        m=1.0,
+        delta_x=5,
+        barrier_energy=0.5,
+    )
+
+    fig, ax = get_fancy_figure()
+
+    delta_k = (0.5 * 2 * np.pi / system.delta_x,)
+
+    result = solve_ballistic_ensemble(
+        system,
+        TimeSpan(
+            t0=0,
+            t1=100 / system.gamma,
+            dt=0.01 / system.gamma,
+            dt_step=0.01 / system.gamma,
+        ),
+        n_trajectories=2000,
+        _key=key,
+    )
+
+    elastic_result, _ = breakdown_ballistic_trajectory(
+        result, stride_time=1 / system.gamma
+    )
+
+    _, ax, line_0, _ = plot_isf(
+        result=elastic_result, ax=ax, delta_k=delta_k, pairwise=False
+    )
+    line_0.set_label("elastic")
+
+    _, ax, line_1 = plot_exact_gaussian_isf(
+        system=system, ax=ax, delta_k=delta_k, effective_mass=system.m
+    )
+    line_1.set_label("actual mass")
+    line_1.set_linestyle(":")
+
+    effective_mass = get_effective_mass(result)
+
+    _, ax, line_2 = plot_exact_gaussian_isf(
+        system=system, ax=ax, delta_k=delta_k, effective_mass=effective_mass
+    )
+    line_2.set_label("effective mass")
+    line_2.set_linestyle(":")
+
+    ax.set_xlim(0, 0.3 / system.gamma)
+    ax.set_ylim(0, 1)
+    ax.legend(handles=[line_0, line_1, line_2])
+    fig.savefig(
+        "./examples/1d_system.isf.effective.mass.pdf", dpi=300, bbox_inches="tight"
+    )
+
+
+def _plot_effective_mass_offset_isf() -> None:
+    key = jrandom.PRNGKey(100)
+
+    system = PeriodicSystem1D(
+        gamma=0.1,
+        temperature=0.5,
+        m=1.0,
+        delta_x=5,
+        barrier_energy=0.5,
+    )
+
+    fig, ax = get_fancy_figure()
+
+    result = solve_ballistic_ensemble(
+        system,
+        TimeSpan(
+            t0=0,
+            t1=100 / system.gamma,
+            dt=0.01 / system.gamma,
+            dt_step=0.01 / system.gamma,
+        ),
+        n_trajectories=2000,
+        _key=key,
+    )
+
+    elastic_result, _ = breakdown_ballistic_trajectory(
+        result, stride_time=1 / system.gamma
+    )
+
+    delta_k = (0.5 * 2 * np.pi / system.delta_x,)
+
+    _, ax, line_0, _ = plot_isf(
+        result=elastic_result, ax=ax, delta_k=delta_k, pairwise=False
+    )
+    line_0.set_label("elastic")
+
+    _, ax, line_1 = plot_exact_offset_gaussian_isf(
+        system=system,
+        ax=ax,
+        delta_k=delta_k,
+        effective_mass=system.m,
+        offset=np.average(get_under_barrier_probability_ballistic(result)),
+    )
+    line_1.set_label("actual mass")
+    line_1.set_linestyle(":")
+
+    free_result, _ = split_escaped_and_trapped(result)
+
+    effective_mass = get_effective_mass(free_result)
+
+    _, ax, line_2 = plot_exact_offset_gaussian_isf(
+        system=system,
+        ax=ax,
+        delta_k=delta_k,
+        effective_mass=effective_mass,
+        offset=np.average(get_under_barrier_probability_ballistic(result)),
+    )
+    line_2.set_label("effective mass")
+    line_2.set_linestyle(":")
+
+    ax.set_xlim(0, 1.0 / system.gamma)
+    ax.set_ylim(0, 1)
+    ax.legend(handles=[line_0, line_1, line_2])
+    fig.savefig(
+        "./examples/1d_system.isf.effective.mass.offset.pdf",
+        dpi=300,
+        bbox_inches="tight",
+    )
 
 
 if __name__ == "__main__":
     _plot_periodic_system()
     _plot_1d_periodic_isf()
+    _plot_effective_mass_isf()
+    _plot_effective_mass_offset_isf()
