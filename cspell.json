@@ -10,8 +10,10 @@
         "diffrax",
         "frameon",
         "Heun",
+        "intertial",
         "lambdify",
         "Langevin",
+        "ndindex",
         "pcolormesh",
         "pickler",
         "PRNG",
@@ -24,6 +26,8 @@
         "viridis",
         "visualizable",
         "vmap",
+        "vmax",
+        "vmin",
         "xedges",
         "xlim",
         "yedges",
@@ -47,7 +51,7 @@
         "trange",
         "tqdm",
         "jrandom",
-        "srepr",
+        "srepr"
     ],
     "flagWords": [
         "hte",
