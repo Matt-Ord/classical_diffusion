@@ -693,9 +693,10 @@ def plot_probability_over_barrier(
     return fig, ax
 
 
-def get_effective_mass(result: SimulationResult) -> float:
+# TODO: provide a general direction
+def get_effective_mass(result: SimulationResult, idx: int = 0) -> float:
     """Return the effective mass averaged over a full simulation."""
-    elastic_ps = _get_average_elastic_p(result=result)
+    elastic_ps = _get_average_elastic_p(result=result)[..., idx]
     return (result.system.kbt * result.system.m**2) / np.average(elastic_ps**2, axis=0)
 
 

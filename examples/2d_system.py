@@ -73,6 +73,7 @@ def _plot_2d_periodic_isf() -> None:
 
 
 def _plot_2d_trajectory() -> None:
+    # TODO: add elastic and inelastic trajectories to the plot
     key = jrandom.PRNGKey(100)
     system = PeriodicSystemFCC(
         gamma=0.1, temperature=0.5, m=1.0, delta_x=5, barrier_energy=1.5
