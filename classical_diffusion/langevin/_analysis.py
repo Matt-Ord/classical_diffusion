@@ -120,12 +120,12 @@ def plot_isf(
 
 def plot_isf_with_delta_k(
     result: SimulationResult,
-    delta_k_values: list,
+    delta_k_values: np.ndarray,
     *,
     ax: Axes | None = None,
     measure: Measure = "abs",
     pairwise: bool = True,
-) -> tuple[Figure, Axes, Line2D, PolyCollection]:
+) -> tuple[Figure, Axes]:
     """Plot the ensemble-averaged ISF over time, with a shaded ±1 SEM band.
 
     `time_scale` overrides the result's own characteristic time for
@@ -570,7 +570,7 @@ def get_energy(result: SimulationResult) -> np.ndarray:
 def plot_energy(
     result: SimulationResult, n_trajectories: int, *, ax: Axes, time_scale: float = 1.0
 ) -> tuple[Figure, Axes]:
-    """Plot the enrgy of the system with time."""
+    """Plot the energy of the system with time."""
     fig, ax = get_figure(ax)
     energy = get_energy(result)
     for trajectory in range(n_trajectories):
@@ -587,8 +587,8 @@ def plot_energy(
 
 
 def _partition_result(
-    result: SimulationResult, mask: np.ndarray[np.bool_]
-) -> np.ndarray:
+    result: SimulationResult, mask: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
     return result.x_points[mask], result.p_points[mask]
 
 
@@ -620,7 +620,8 @@ def split_escaped_and_trapped(
     return free, trapped
 
 
-def _under_barrier_probability_convergence(result: SimulationResult) -> np.ndarray:
+def get_evolution_trapped_probability(result: SimulationResult) -> np.ndarray:
+    """Retrun the evolution of the probability of a particle being trapped as sample size increases."""
     energies = get_energy(result)
     is_over_barrier = energies < result.system.barrier_energy
     return np.cumsum(is_over_barrier, axis=-1) / (
@@ -628,7 +629,7 @@ def _under_barrier_probability_convergence(result: SimulationResult) -> np.ndarr
     )
 
 
-def under_barrier_probability_ballistic(result: SimulationResult) -> np.ndarray:
+def get_under_barrier_probability_ballistic(result: SimulationResult) -> np.ndarray:
     """Return the probability of a particle being trapped under barrier."""
     energies = get_energy(result)[:, 0]
     is_over_barrier = energies < result.system.barrier_energy
@@ -638,9 +639,9 @@ def under_barrier_probability_ballistic(result: SimulationResult) -> np.ndarray:
 def plot_probability_over_barrier(
     result: SimulationResult, n_trajectories: int, *, ax: Axes
 ) -> tuple[Figure, Axes]:
-    """Plot the convergance of the probability of a trajectory having sufficient energy to cross barrier."""
+    """Plot the convergence of the probability of a trajectory having sufficient energy to cross barrier."""
     fig, ax = get_figure(ax)
-    probability_evolution = _under_barrier_probability_convergence(result)
+    probability_evolution = get_evolution_trapped_probability(result)
     for trajectory in range(n_trajectories):
         ax.plot(
             result.times,
@@ -654,7 +655,7 @@ def plot_probability_over_barrier(
     return fig, ax
 
 
-def get_effective_mass(result: SimulationResult) -> np.ndarray:
+def get_effective_mass(result: SimulationResult) -> int:
     """Return the effective mass averaged over a full simulation."""
     elastic_ps = get_elastic_p(result=result)[:, -1]
     return (result.system.kbt * result.system.m**2) / np.average(elastic_ps**2, axis=0)
@@ -666,7 +667,7 @@ def plot_effective_mass_periodic_1D(  # ruff:ignore[invalid-function-name]
     barrier_energy: np.ndarray[Any, np.dtype[np.floating]],
     *,
     ax: Axes | None = None,
-) -> tuple[Figure, Axes]:
+) -> tuple[Figure, Axes, QuadMesh]:
     """Plot the effective mass against intertial mass and barrier energy."""
     fig, ax = get_figure(ax)
 
