@@ -201,6 +201,12 @@ class PeriodicSystem1D(System):
             n_dim=self.n_dim,
         )
 
+    @override
+    @property
+    def sampling_domain(self) -> tuple[float, float]:
+        """The domain over which the equilibrium x-density should be sampled."""
+        return (-self.delta_x / 2, self.delta_x / 2)
+
 
 def _get_potential_expr_fcc() -> sp.Expr:
     """Return the potential energy expression for a 2D FCC lattice."""
