@@ -427,19 +427,16 @@ def plot_phase_space_density(
     return fig, ax, mesh
 
 
-def expanding_slope_ensemble(
-    times: np.ndarray[Any, np.dtype[np.floating]],
-    x_points: np.ndarray[Any, np.dtype[np.floating]],
-) -> np.ndarray[Any, np.dtype[np.floating]]:
-    """Compute the expanding slope of x_points over time for an ensemble of trajectories."""
-    n_trajectories, n_timepoints = x_points.shape
-    slopes = np.zeros((n_trajectories, n_timepoints))
+def estimate_elastic_velocity(t: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """Return the gradient of best fit as more data points are added with time."""
+    n = np.arange(1, len(t) + 1)
+    st = np.cumsum(t)
+    stt = np.cumsum(t * t)
+    sy = np.cumsum(y, axis=-1)
+    sty = np.cumsum(y * t[None, :], axis=-1)
 
-    for i in range(n_trajectories):
-        for j in range(1, n_timepoints):
-            slopes[i, j] = (x_points[i, j] - x_points[i, 0]) / (times[j] - times[0])
-    # TODO: replace with whatever this was meant to be!
-    return slopes
+    denom = n * stt - st**2
+    return (n * sty - st * sy) / denom
 
 
 def get_elastic_p(
@@ -447,7 +444,7 @@ def get_elastic_p(
 ) -> np.ndarray[Any, np.dtype[np.floating]]:
     """Return the elastic (ballistic straight-line) momentum estimate per trajectory."""
     x_points = result.x_points[:, idx, :]
-    v_elastic = expanding_slope_ensemble(result.times, x_points)
+    v_elastic = estimate_elastic_velocity(result.times, x_points)
     return v_elastic * result.system.m
 
 
