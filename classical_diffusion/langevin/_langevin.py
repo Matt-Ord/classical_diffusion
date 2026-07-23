@@ -80,21 +80,6 @@ def _get_force_fn(
     return lambda x_array, params: jnp.array(raw_fn(*x_array, *params))
 
 
-def sample_results[S: System](
-    result: SimulationResult[S],
-    *,
-    stride_time: float,
-) -> SimulationResult[S]:
-    """Subsample all trajectories at the parameters' stride, along the saved-time axis."""
-    stride = int(stride_time / (result.times[1] - result.times[0]))
-    return SimulationResult(
-        times=result.times[::stride],
-        x_points=result.x_points[:, :, ::stride],
-        p_points=result.p_points[:, :, ::stride],
-        system=result.system,
-    )
-
-
 @jax.jit
 def _run_deterministic_ensemble_jit(
     system: "CanonicalSystem",  # ruff:ignore[quoted-annotation]

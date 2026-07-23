@@ -8,7 +8,6 @@ import sympy as sp
 from classical_diffusion.langevin import (
     SimulationResult,
 )
-from classical_diffusion.langevin._langevin import sample_results
 from classical_diffusion.plot import get_figure, get_measured_data
 from classical_diffusion.system._system import System
 
@@ -80,12 +79,7 @@ def plot_isf(
     measure: Measure = "abs",
     **kwargs: Unpack[ISFKwargs],
 ) -> tuple[Figure, Axes, Line2D, PolyCollection]:
-    """Plot the ensemble-averaged ISF over time, with a shaded ±1 SEM band.
-
-    `time_scale` overrides the result's own characteristic time for
-    x-axis normalization — pass the same value to multiple calls to
-    compare curves on a shared timescale.
-    """
+    """Plot the ensemble-averaged ISF over time, with a shaded ±1 SEM band."""
     fig, ax = get_figure(ax)
 
     isf = get_isf(result.x_points, **kwargs)
@@ -126,12 +120,7 @@ def plot_isf_with_delta_k(
     measure: Measure = "abs",
     pairwise: bool = True,
 ) -> tuple[Figure, Axes]:
-    """Plot the ensemble-averaged ISF over time, with a shaded ±1 SEM band.
-
-    `time_scale` overrides the result's own characteristic time for
-    x-axis normalization — pass the same value to multiple calls to
-    compare curves on a shared timescale.
-    """
+    """Plot the ensemble-averaged ISF over time, with a shaded ±1 SEM band."""
     fig, ax = get_figure(ax)
 
     cmap = mpl.cm.viridis
@@ -162,7 +151,6 @@ def plot_x_evolution(
     ax: Axes | None = None,
     idx: int = 0,
     n_trajectories: int = 1,
-    time_scale: float = 1.0,
 ) -> tuple[Figure, Axes, list[Line2D]]:
     """Plot x against t for the first n_trajectories trajectories.
 
@@ -177,7 +165,7 @@ def plot_x_evolution(
         msg = f"n_trajectories={n_trajectories} exceeds available trajectories ({result.x_points.shape[0]})"
         raise ValueError(msg)
 
-    scaled_times = result.times / time_scale
+    scaled_times = result.times
 
     lines = []
     for trajectory in range(n_trajectories):
@@ -196,7 +184,6 @@ def plot_p_evolution(
     ax: Axes | None = None,
     idx: int = 0,
     n_trajectories: int = 1,
-    time_scale: float,
 ) -> tuple[Figure, Axes, list[Line2D]]:
     """Plot p against t for the first n_trajectories trajectories.
 
@@ -211,7 +198,7 @@ def plot_p_evolution(
         msg = f"n_trajectories={n_trajectories} exceeds available trajectories ({result.p_points.shape[0]})"
         raise ValueError(msg)
 
-    scaled_times = result.times / time_scale
+    scaled_times = result.times
 
     lines = []
     for trajectory in range(n_trajectories):
@@ -427,8 +414,8 @@ def plot_phase_space_density(
     return fig, ax, mesh
 
 
-def estimate_elastic_velocity(t: np.ndarray, y: np.ndarray) -> np.ndarray:
-    """Return the gradient of best fit as more data points are added with time."""
+def _get_elastic_velocity_estimates(t: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """Return the overall average gradient (velocity) across all provided sample points."""
     n = np.arange(1, len(t) + 1)
     st = np.cumsum(t)
     stt = np.cumsum(t * t)
@@ -439,22 +426,28 @@ def estimate_elastic_velocity(t: np.ndarray, y: np.ndarray) -> np.ndarray:
     return (n * sty - st * sy) / denom
 
 
-def get_elastic_p(
-    result: SimulationResult, *, idx: int = 0
-) -> np.ndarray[Any, np.dtype[np.floating]]:
-    """Return the elastic (ballistic straight-line) momentum estimate per trajectory."""
-    x_points = result.x_points[:, idx, :]
-    v_elastic = estimate_elastic_velocity(result.times, x_points)
-    return v_elastic * result.system.m
+def _get_elastic_p_estimates(
+    result: SimulationResult, *, max_samples: int = 100
+) -> tuple[
+    np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
+]:
+    """Return the elastic (ballistic straight-line) momentum estimate per trajectory across all dimensions."""
+    n_times = len(result.times)
+    n_samples = min(max_samples, n_times)
+    sample_indices = np.linspace(0, n_times - 1, n_samples, dtype=int)
+
+    t_sampled = result.times[sample_indices]
+    x_sampled = result.x_points[:, :, sample_indices]
+
+    v_elastic = _get_elastic_velocity_estimates(t_sampled, x_sampled)
+    return v_elastic * result.system.m, t_sampled
 
 
 def plot_elastic_p(
     result: SimulationResult,
-    stride_time: float,
     *,
     n_trajectories: int,
     ax: Axes | None = None,
-    time_scale: float = 1.0,
 ) -> tuple[Figure, Axes]:
     """Plot convergence of elastic momenta over all trajectories.
 
@@ -469,11 +462,10 @@ def plot_elastic_p(
 
     fig, ax = get_figure(ax)
 
-    sampled_result = sample_results(result, stride_time=stride_time)
-    ps = get_elastic_p(sampled_result)
+    ps, sample_times = _get_elastic_p_estimates(result)
     for trajectory in range(n_trajectories):
         ax.plot(
-            sampled_result.times / time_scale,
+            sample_times,
             ps[trajectory, :],
             label=f"trajectory {trajectory}",
         )
@@ -510,19 +502,49 @@ def plot_initial_p(
     return fig, ax
 
 
+def _get_average_elastic_velocity(
+    t: np.ndarray, x: np.ndarray
+) -> np.ndarray[Any, np.dtype[np.floating]]:
+    """Return the elastic (ballistic straight-line) velocity estimate per trajectory across all dimensions."""
+    n = len(t)
+    st = np.sum(t)
+    stt = np.sum(t * t)
+    sy = np.sum(x, axis=-1)
+    sty = np.sum(x * t, axis=-1)
+
+    denom = n * stt - st**2
+    return (n * sty - st * sy) / denom
+
+
+def _get_average_elastic_p(
+    result: SimulationResult, *, max_samples: int = 100
+) -> np.ndarray[Any, np.dtype[np.floating]]:
+    """Return the elastic (ballistic straight-line) momentum estimate per trajectory across all dimensions."""
+    n_times = len(result.times)
+    n_samples = min(max_samples, n_times)
+    sample_indices = np.linspace(0, n_times - 1, n_samples, dtype=int)
+
+    t_sampled = result.times[sample_indices]
+    x_sampled = result.x_points[:, :, sample_indices]
+
+    v_elastic = _get_average_elastic_velocity(t_sampled, x_sampled)
+    return v_elastic * result.system.m
+
+
 def breakdown_ballistic_trajectory[S: System](
-    result: SimulationResult[S], stride_time: float, idx: int = 0
+    result: SimulationResult[S],
 ) -> tuple[SimulationResult[S], SimulationResult[S]]:
-    """Split a ballistic simulation into its elastic and inelastic components."""
-    sampled_result = sample_results(result, stride_time=stride_time)
-    p_elastic = get_elastic_p(sampled_result)
-    p_final = p_elastic[..., -1:]
-    p_elastic_points = (np.broadcast_to(p_final, result.p_points[:, idx, :].shape))[
-        :, None, :
-    ]
-    x_elastic_points = (
-        p_final * result.times / result.system.m + result.x_points[:, :, 0]
-    )[:, None, :]
+    """Split a ballistic simulation into its elastic and inelastic components across all dimensions."""
+    p_elastic = _get_average_elastic_p(result)
+
+    # Broadcast p_elastic across time steps: (n_trajectories, n_dimensions, n_times)
+    p_elastic_points = np.broadcast_to(p_elastic[..., None], result.p_points.shape)
+
+    # Initial positions x_0: shape (n_trajectories, n_dimensions, 1)
+    x_0 = result.x_points[:, :, :1]
+
+    # Calculate x_elastic(t) = x_0 + (p_elastic / m) * t across all spatial components
+    x_elastic_points = p_elastic[..., None] * result.times / result.system.m + x_0
 
     elastic = SimulationResult(
         times=result.times,
@@ -582,14 +604,14 @@ def get_energy(result: SimulationResult) -> np.ndarray:
 
 
 def plot_energy(
-    result: SimulationResult, n_trajectories: int, *, ax: Axes, time_scale: float = 1.0
+    result: SimulationResult, n_trajectories: int, *, ax: Axes
 ) -> tuple[Figure, Axes]:
     """Plot the energy of the system with time."""
     fig, ax = get_figure(ax)
     energy = get_energy(result)
     for trajectory in range(n_trajectories):
         ax.plot(
-            result.times / time_scale,
+            result.times,
             energy[trajectory, :],
             label=f"trajectory {trajectory}",
         )
@@ -673,7 +695,7 @@ def plot_probability_over_barrier(
 
 def get_effective_mass(result: SimulationResult) -> float:
     """Return the effective mass averaged over a full simulation."""
-    elastic_ps = get_elastic_p(result=result)[:, -1]
+    elastic_ps = _get_average_elastic_p(result=result)
     return (result.system.kbt * result.system.m**2) / np.average(elastic_ps**2, axis=0)
 
 
