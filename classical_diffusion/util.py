@@ -199,15 +199,3 @@ def cached[**P, R](
         )
 
     return _cached
-
-
-def expanding_slope_ensemble(t: np.ndarray, y: np.ndarray) -> np.ndarray:
-    """Return the gradient of best fit as more data points are added with time."""
-    n = np.arange(1, len(t) + 1)
-    st = np.cumsum(t)
-    stt = np.cumsum(t * t)
-    sy = np.cumsum(y, axis=-1)
-    sty = np.cumsum(y * t[None, :], axis=-1)
-
-    denom = n * stt - st**2
-    return (n * sty - st * sy) / denom
