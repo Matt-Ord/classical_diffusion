@@ -138,7 +138,7 @@ def _plot_effective_mass_isf() -> None:
             dt=0.01 / system.gamma,
             dt_step=0.01 / system.gamma,
         ),
-        n_trajectories=1,
+        n_trajectories=2000,
         _key=key,
     )
 
@@ -158,7 +158,6 @@ def _plot_effective_mass_isf() -> None:
     line_1.set_linestyle(":")
 
     effective_mass = get_effective_mass(result)
-    print(effective_mass)
 
     _, ax, line_2 = plot_exact_gaussian_isf(
         system=system, ax=ax, delta_k=delta_k, effective_mass=effective_mass
@@ -195,7 +194,7 @@ def _plot_effective_mass_offset_isf() -> None:
             dt=0.01 / system.gamma,
             dt_step=0.01 / system.gamma,
         ),
-        n_trajectories=1,
+        n_trajectories=2000,
         _key=key,
     )
 
