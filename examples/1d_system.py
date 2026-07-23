@@ -73,20 +73,18 @@ def _plot_1d_periodic_isf() -> None:
         _key=key,
     )
 
-    _, ax, line_1, _fill_1 = plot_isf(
-        result=result, ax=ax, delta_k=delta_k, pairwise=False
-    )
+    _, ax, line_1, _ = plot_isf(result=result, ax=ax, delta_k=delta_k, pairwise=False)
     line_1.set_label("ballistic simulation")
 
     elastic_result, inelastic_result = breakdown_ballistic_trajectory(result)
 
-    _, ax, line_2, _fill_2 = plot_isf(
+    _, ax, line_2, _ = plot_isf(
         result=elastic_result, ax=ax, delta_k=delta_k, pairwise=False
     )
     line_2.set_label("elastic")
     line_2.set_linestyle(":")
 
-    _, ax, line_3, _fill_3 = plot_isf(
+    _, ax, line_3, _ = plot_isf(
         result=inelastic_result, ax=ax, delta_k=delta_k, pairwise=False
     )
     line_3.set_label("inelastic")
@@ -113,7 +111,7 @@ def _plot_1d_inelastic_trends() -> None:
             t1=10 / system.gamma,
             dt=0.01 / system.gamma,
         ),
-        n_samples=2000,
+        n_samples=10000,
         _key=key,
     )
 
