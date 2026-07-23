@@ -1,28 +1,17 @@
 import jax.random as jrandom
 import numpy as np
-from classical_diffusion.langevin.analysis import (
-    get_effective_mass,
-    plot_effective_mass_periodic_1D,
-    split_escaped_and_trapped,
-)
 from tqdm import tqdm
 
 from classical_diffusion.langevin import (
     TimeSpan,
+    get_effective_mass,
+    plot_effective_mass_periodic_1D,
     solve_ballistic_ensemble,
+    split_escaped_and_trapped,
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.system import (
     PeriodicSystem1D,
-)
-from classical_diffusion.system._system import (
-    UnitSystem,
-)
-
-sim_units = UnitSystem(
-    length_factor=1e10,
-    time_factor=1e12,
-    mass_factor=6.02214076e26,
 )
 
 
@@ -45,7 +34,6 @@ def _full_effective_mass_plot() -> None:
             m=inertial_mass[i, j],
             delta_x=5.0,
             barrier_energy=barrier_energy[i, j],
-            units=UnitSystem(),
         )
 
         result = solve_ballistic_ensemble(
@@ -56,7 +44,7 @@ def _full_effective_mass_plot() -> None:
                 dt=0.01 / system.gamma,
                 dt_step=0.01 / system.gamma,
             ),
-            n_trajectories=1000,
+            n_trajectories=10,
             _key=keys[idx],
         )
 
@@ -93,7 +81,6 @@ def _free_effective_mass_plot() -> None:
             m=inertial_mass[i, j],
             delta_x=5.0,
             barrier_energy=barrier_energy[i, j],
-            units=UnitSystem(),
         )
 
         result = solve_ballistic_ensemble(
@@ -104,7 +91,7 @@ def _free_effective_mass_plot() -> None:
                 dt=0.01 / system.gamma,
                 dt_step=0.01 / system.gamma,
             ),
-            n_trajectories=1000,
+            n_trajectories=15,
             _key=keys[idx],
         )
         free_result, _ = split_escaped_and_trapped(result)
@@ -123,5 +110,5 @@ def _free_effective_mass_plot() -> None:
 
 
 if __name__ == "__main__":
-    _free_effective_mass_plot()
     _full_effective_mass_plot()
+    _free_effective_mass_plot()

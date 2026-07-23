@@ -228,7 +228,7 @@ def plot_exact_gaussian_isf(
     return fig, ax, line
 
 
-def plot_exact_offset_gaussian_isf(
+def plot_exact_offset_gaussian_isf(  # ruff:ignore[too-many-arguments]
     system: System,
     effective_mass: float,
     delta_k: tuple[float, ...],

@@ -300,7 +300,7 @@ def _solve_ballistic_ensemble_path[S: System](
     return Path("examples/data") / filename
 
 
-def sample_x_initial(system: System, n_trajectories: int):
+def sample_x_initial(system: System, n_trajectories: int) -> np.ndarray:
     x0, *_ = system.coordinate_symbols
     potential_fn = sp.lambdify(
         (x0, *system.parameter_symbols), system.potential_expr, "numpy"
@@ -309,14 +309,15 @@ def sample_x_initial(system: System, n_trajectories: int):
     params = system.params
 
     class XDensity:
-        def pdf(self, x: float) -> float:
+        @staticmethod
+        def pdf(x: float) -> float:
             return np.exp(-potential_fn(x, *params) / kbt)
 
-    x_sampler = NumericalInversePolynomial(XDensity(), domain=system.sampling_domain)
+    x_sampler = NumericalInversePolynomial(XDensity(), domain=system.sampling_domain)  # ty:ignore[invalid-argument-type]
     return x_sampler.rvs(size=n_trajectories).reshape(n_trajectories, system.n_dim)
 
 
-def sample_p_initial(system: System, n_trajectories: int):
+def sample_p_initial(system: System, n_trajectories: int) -> np.ndarray:
 
     rng = np.random.default_rng()
     p_std = np.sqrt(system.kbt * system.m)

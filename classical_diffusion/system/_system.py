@@ -1,8 +1,7 @@
-import dataclasses
 import zlib
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Any, Self, final, overload, override
+from typing import final, override
 
 import jax
 import numpy as np
@@ -15,100 +14,6 @@ def _hash_sympy_expr(expr: sp.Expr) -> int:
 
 
 @dataclass(frozen=True, kw_only=True)
-class UnitSystem:
-    """A class representing a system of units."""
-
-    time_factor: float = 1.0
-    length_factor: float = 1.0
-    mass_factor: float = 1.0
-
-    @overload
-    def length_into(self, value: float, units: UnitSystem) -> float: ...
-    @overload
-    def length_into[DT: np.dtype[np.number]](
-        self, value: np.ndarray[Any, DT], units: UnitSystem
-    ) -> np.ndarray[Any, DT]: ...
-    def length_into(
-        self, value: float | np.ndarray[Any, np.dtype[np.number]], units: UnitSystem
-    ) -> float | np.ndarray[Any, np.dtype[np.number]]:
-        """Convert a length from SI units to the system's units."""
-        return value * (self.length_factor / units.length_factor)
-
-    @overload
-    def area_into(self, value: float, units: UnitSystem) -> float: ...
-    @overload
-    def area_into[DT: np.dtype[np.number]](
-        self, value: np.ndarray[Any, DT], units: UnitSystem
-    ) -> np.ndarray[Any, DT]: ...
-    def area_into(
-        self, value: float | np.ndarray[Any, np.dtype[np.number]], units: UnitSystem
-    ) -> float | np.ndarray[Any, np.dtype[np.number]]:
-        """Convert an area from SI units to the system's units."""
-        return value * (self.length_factor / units.length_factor) ** 2
-
-    @overload
-    def time_into(self, value: float, units: UnitSystem) -> float: ...
-    @overload
-    def time_into[DT: np.dtype[np.number]](
-        self, value: np.ndarray[Any, DT], units: UnitSystem
-    ) -> np.ndarray[Any, DT]: ...
-    def time_into(
-        self, value: float | np.ndarray[Any, np.dtype[np.number]], units: UnitSystem
-    ) -> float | np.ndarray[Any, np.dtype[np.number]]:
-        """Convert a time from SI units to the system's units."""
-        return value * (self.time_factor / units.time_factor)
-
-    @overload
-    def frequency_into(self, value: float, units: UnitSystem) -> float: ...
-    @overload
-    def frequency_into[DT: np.dtype[np.number]](
-        self, value: np.ndarray[Any, DT], units: UnitSystem
-    ) -> np.ndarray[Any, DT]: ...
-    def frequency_into(
-        self, value: float | np.ndarray[Any, np.dtype[np.number]], units: UnitSystem
-    ) -> float | np.ndarray[Any, np.dtype[np.number]]:
-        """Convert a frequency from SI units to the system's units."""
-        return value * (self.time_factor / units.time_factor) ** -1
-
-    @overload
-    def mass_into(self, value: float, units: UnitSystem) -> float: ...
-    @overload
-    def mass_into[DT: np.dtype[np.number]](
-        self, value: np.ndarray[Any, DT], units: UnitSystem
-    ) -> np.ndarray[Any, DT]: ...
-    def mass_into(
-        self, value: float | np.ndarray[Any, np.dtype[np.number]], units: UnitSystem
-    ) -> float | np.ndarray[Any, np.dtype[np.number]]:
-        """Convert a mass from SI units to the system's units."""
-        return value * (self.mass_factor / units.mass_factor)
-
-    @overload
-    def energy_into(self, value: float, units: UnitSystem) -> float: ...
-    @overload
-    def energy_into[DT: np.dtype[np.number]](
-        self, value: np.ndarray[Any, DT], units: UnitSystem
-    ) -> np.ndarray[Any, DT]: ...
-
-    def energy_into(
-        self, value: float | np.ndarray[Any, np.dtype[np.number]], units: UnitSystem
-    ) -> float | np.ndarray[Any, np.dtype[np.number]]:
-        """Convert energy from SI units to the system's units."""
-        # Kg m^2s^-2
-        self_factor = self.mass_factor * (self.length_factor / self.time_factor) ** 2
-        other_factor = (
-            units.mass_factor * (units.length_factor / units.time_factor) ** 2
-        )
-
-        return value * (self_factor / other_factor)
-
-    @property
-    def boltzmann(self) -> float:
-        """Boltzmann constant in the current units."""
-        si_system = UnitSystem()
-        return si_system.energy_into(1.0, self)
-
-
-@dataclass(frozen=True, kw_only=True)
 class System:
     """Parameters representing a physical system."""
 
@@ -117,7 +22,6 @@ class System:
     m: float
     potential: tuple[int, sp.Expr]
     params: tuple[float, ...] = ()
-    units: UnitSystem
 
     @property
     def n_dim(self) -> int:
@@ -164,7 +68,6 @@ class System:
             m=self.m,
             temperature=self.temperature,
             potential=self.potential,
-            units=self.units,
         )
 
     def as_canonical(self) -> CanonicalSystem:
@@ -175,7 +78,6 @@ class System:
             m=self.m,
             potential=self.potential,
             params=self.params,
-            units=self.units,
         )
 
     def __hash__(self) -> int:
@@ -195,11 +97,7 @@ class System:
     @property
     def kbt(self) -> float:
         """Convert to simulation parameters."""
-        return self.units.boltzmann * self.temperature
-
-    def as_si(self) -> Self:
-        """Return a copy of the parameters in SI units."""
-        return self.with_units(UnitSystem())
+        return 1.0 * self.temperature
 
     @property
     def sampling_domain(self) -> tuple[float, float]:
@@ -214,7 +112,6 @@ class CanonicalSystem(System):
     """Parameters representing a physical system."""
 
     potential: tuple[int, sp.Expr] = field(metadata={"static": True})
-    units: UnitSystem = field(metadata={"static": True})
 
 
 class HarmonicSystem(System):
@@ -222,14 +119,13 @@ class HarmonicSystem(System):
 
     _omega: float
 
-    def __init__(  # ruff:ignore[too-many-arguments]
+    def __init__(
         self,
         *,
         gamma: float,
         temperature: float,
         m: float,
         omega: float,
-        units: UnitSystem,
         n_dim: int = 1,
     ) -> None:
         s0 = sp.Symbol("s0")
@@ -241,7 +137,6 @@ class HarmonicSystem(System):
             m=m,
             potential=(n_dim, potential),
             params=(omega,),
-            units=units,
         )
 
     @property
@@ -257,19 +152,6 @@ class HarmonicSystem(System):
             m=self.m,
             omega=self.omega,
             n_dim=self.n_dim,
-            units=self.units,
-        )
-
-    @override
-    def with_units(self, units: UnitSystem) -> Self:
-        """Return a copy of the parameters with new units."""
-        return dataclasses.replace(
-            self,
-            units=units,
-            lambda_=self.units.frequency_into(self.lambda_, units),
-            lengthscale=self.units.length_into(self.lengthscale, units),
-            omega=self.units.length_into(self.delta_x, units),
-            m=self.units.mass_into(self.m, units),
         )
 
 
@@ -285,7 +167,6 @@ class PeriodicSystem1D(System):
         delta_x: float,
         barrier_energy: float,
         n_dim: int = 1,
-        units: UnitSystem,
     ) -> None:
         s0 = sp.Symbol("s0")
         s1 = sp.Symbol("s1")
@@ -297,7 +178,6 @@ class PeriodicSystem1D(System):
             m=m,
             potential=(n_dim, potential),
             params=(delta_x, barrier_energy),
-            units=units,
         )
 
     @property
@@ -319,49 +199,7 @@ class PeriodicSystem1D(System):
             delta_x=self.delta_x,
             barrier_energy=self.barrier_energy,
             n_dim=self.n_dim,
-            units=self.units,
         )
-
-    @override
-    def with_units(self, units: UnitSystem) -> Self:
-        """Return a copy of the parameters with new units."""
-        return dataclasses.replace(
-            self,
-            units=units,
-            lambda_=self.units.frequency_into(self.lambda_, units),
-            lengthscale=self.units.length_into(self.lengthscale, units),
-            height=self.units.energy_into(self.height, units),
-            delta_x=self.units.length_into(self.delta_x, units),
-            m=self.units.mass_into(self.m, units),
-        )
-
-    @property
-    @override
-    def sampling_domain(self) -> tuple[float, float]:
-        return (-self.delta_x / 2, self.delta_x / 2)
-
-    def to_normalized(self) -> Self:
-        """Return a normalized version of the parameters."""
-        new_units = dataclasses.replace(
-            self.units,
-            length_factor=self.as_si().delta_x,
-            mass_factor=self.as_si().m,
-        )
-        new_units = dataclasses.replace(
-            new_units,
-            time_factor=np.sqrt(
-                new_units.length_factor / (new_units.boltzman * self.temperature)
-            ),
-        )
-        out = self.with_units(new_units)
-
-        assert np.isclose(out.kbt, 1)
-        assert np.isclose(out.m, 1)
-        assert np.isclose(out.delta_x, 1)
-
-        out = dataclasses.replace(out, lengthscale=out.characteristic_length)
-        assert np.isclose(out.dimensionless_m, 1)
-        return out
 
 
 def _get_potential_expr_fcc() -> sp.Expr:
@@ -396,7 +234,6 @@ class PeriodicSystemFCC(System):
         m: float,
         delta_x: float,
         barrier_energy: float,
-        units: UnitSystem,
     ) -> None:
         potential = _get_potential_expr_fcc()
 
@@ -406,7 +243,6 @@ class PeriodicSystemFCC(System):
             m=m,
             potential=(2, potential),
             params=(delta_x, barrier_energy),
-            units=units,
         )
 
     @property
@@ -426,5 +262,5 @@ def get_diffusion_time(system: System, characteristic_length: float) -> float:
 
 
 def get_characteristic_periodic_mass(system: PeriodicSystem1D) -> float:
-    """Return the characteristic mass for a 1D perioidc system."""
+    """Return the characteristic mass for a 1D periodic system."""
     return system.kbt * system.delta_x**2 / system.gamma**2
