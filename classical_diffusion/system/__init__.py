@@ -17,6 +17,7 @@ from ._system import (
     PeriodicSystem1D,
     PeriodicSystemFCC,
     System,
+    UnitSystem,
 )
 
 __all__ = [
@@ -25,6 +26,7 @@ __all__ = [
     "PeriodicSystem1D",
     "PeriodicSystemFCC",
     "System",
+    "UnitSystem",
     "get_characteristic_friction_time",
     "plot_exact_flat_isf",
     "plot_exact_gaussian_isf",

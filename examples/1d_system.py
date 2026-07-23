@@ -28,6 +28,7 @@ def _plot_periodic_system() -> None:
         m=1.0,
         delta_x=5,
         barrier_energy=0.5,
+        units=UnitSystem(),
     )
     fig, ax = get_fancy_figure()
     _, _, _ = plot_periodic_potential_1d(system, ax=ax)

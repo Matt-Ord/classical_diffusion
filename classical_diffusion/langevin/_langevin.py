@@ -1,7 +1,8 @@
+import dataclasses
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 import diffrax as dfx
 import jax
@@ -15,7 +16,7 @@ from classical_diffusion.util import cached, timed
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from classical_diffusion.system import CanonicalSystem, System
+    from classical_diffusion.system import CanonicalSystem, System, UnitSystem
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -52,6 +53,21 @@ class SingleSimulationResult[S: System[Any] = System[Any]]:
     p_points: np.ndarray[Any, np.dtype[np.floating]]
     system: S
 
+    def with_units(self, new_units: UnitSystem) -> Self:
+        """Return the rescaled simulation of the system."""
+        length_factor = new_units.angstrom / self.system.units.angstrom
+        mass_factor = new_units.atomic_mass / self.system.units.atomic_mass
+        energy_factor = new_units.kb / self.system.units.kb
+        time_factor = np.sqrt(length_factor**2 * mass_factor / energy_factor)
+        momentum_factor = mass_factor * length_factor / time_factor
+        return dataclasses.replace(
+            self,
+            times=self.times * time_factor,
+            x_points=self.x_points * length_factor,
+            p_points=self.p_points * momentum_factor,
+            system=self.system.with_system_units(new_units),
+        )
+
 
 @dataclass(frozen=True, kw_only=True)
 class SimulationResult[S: System[Any] = System[Any]]:
@@ -69,6 +85,21 @@ class SimulationResult[S: System[Any] = System[Any]]:
             x_points=self.x_points[idx],
             p_points=self.p_points[idx],
             system=self.system,
+        )
+
+    def with_units(self, new_units: UnitSystem) -> Self:
+        """Return the rescaled simulation of the system."""
+        length_factor = new_units.angstrom / self.system.units.angstrom
+        mass_factor = new_units.atomic_mass / self.system.units.atomic_mass
+        energy_factor = new_units.kb / self.system.units.kb
+        time_factor = np.sqrt(length_factor**2 * mass_factor / energy_factor)
+        momentum_factor = mass_factor * length_factor / time_factor
+        return dataclasses.replace(
+            self,
+            times=self.times * time_factor,
+            x_points=self.x_points * length_factor,
+            p_points=self.p_points * momentum_factor,
+            system=self.system.with_system_units(new_units),
         )
 
 
@@ -338,3 +369,50 @@ def solve_ballistic_ensemble[S: System](
         ),
         _key,
     )
+
+
+def split_escaped_and_trapped(
+    x_points: np.ndarray,
+    p_points: np.ndarray,
+    system: System,
+) -> tuple:
+    """Split result into trajectories trapped within or free to move over the barrier."""
+    energy = get_energy(system, x_points, p_points)
+
+    free_mask = energy > system.barrier_energy
+    free_x_points, free_p_points = x_points[free_mask], p_points[free_mask]
+
+    trapped_mask = energy <= system.barrier_energy
+    trapped_x_points, trapped_p_points = x_points[trapped_mask], p_points[trapped_mask]
+
+    return (free_x_points, free_p_points), (trapped_x_points, trapped_p_points)
+
+
+@cached(_solve_ballistic_ensemble_path)
+def solve_free_ballistic_uniform[S: System](
+    system: S,
+    time_span: TimeSpan,
+    n_trajectories: int,
+    _key: jax.Array,
+) -> tuple[SimulationResult[S], float]:
+    """Take an ensemble of uniformly distributed ballistic trajectories and solve free trajectories in parallel via jax.vmap. Also returns probability of being above the barrier."""
+    proposed_initial_positions = sample_x_initial(
+        system=system, n_trajectories=n_trajectories
+    )
+    proposed_initial_momenta = sample_p_initial(
+        system=system, n_trajectories=n_trajectories
+    )
+
+    (free_x_initial, free_p_initial), _ = split_escaped_and_trapped(
+        proposed_initial_positions, proposed_initial_momenta, system
+    )
+
+    return solve_ensemble.load_or_call_uncached(
+        system.with_gamma(0.0),
+        time_span,
+        (
+            free_x_initial,
+            free_p_initial,
+        ),
+        _key,
+    ), free_x_initial.shape[0] / n_trajectories

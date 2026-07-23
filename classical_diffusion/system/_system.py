@@ -6,11 +6,34 @@ from typing import final, override
 import jax
 import numpy as np
 import sympy as sp
+from scipy.constants import (  # type: ignore[import-untyped]
+    Boltzmann as Boltzmann_si,
+)
+from scipy.constants import (  # type: ignore[import-untyped]
+    angstrom as angstrom_si,
+)
+from scipy.constants import (  # type: ignore[import-untyped]
+    atomic_mass as atomic_mass_si,
+)
 
 
 def _hash_sympy_expr(expr: sp.Expr) -> int:
     stable_string = sp.srepr(expr)
     return zlib.crc32(stable_string.encode("utf-8"))
+
+
+@dataclass(frozen=True, kw_only=True)
+class UnitSystem:
+    """Defines the units used in the scattering calculation."""
+
+    kb: float = Boltzmann_si
+    atomic_mass: float = atomic_mass_si
+    angstrom: float = angstrom_si
+
+    @classmethod
+    def si(cls) -> UnitSystem:
+        """Get the SI units."""
+        return cls()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -22,6 +45,7 @@ class System:
     m: float
     potential: tuple[int, sp.Expr]
     params: tuple[float, ...] = ()
+    units: UnitSystem
 
     @property
     def n_dim(self) -> int:
@@ -68,6 +92,7 @@ class System:
             m=self.m,
             temperature=self.temperature,
             potential=self.potential,
+            units=self.units,
         )
 
     def as_canonical(self) -> CanonicalSystem:
@@ -78,6 +103,7 @@ class System:
             m=self.m,
             potential=self.potential,
             params=self.params,
+            units=self.units,
         )
 
     def __hash__(self) -> int:
@@ -97,7 +123,21 @@ class System:
     @property
     def kbt(self) -> float:
         """Convert to simulation parameters."""
-        return self.temperature
+        return self.units.kb * self.temperature
+
+    def with_system_units(self, new_units: UnitSystem) -> System:
+        """Return the rescaled parameters of the system."""
+        length_factor = new_units.angstrom / self.units.angstrom
+        mass_factor = new_units.atomic_mass / self.units.atomic_mass
+        energy_factor = new_units.kb / self.units.kb
+        time_factor = np.sqrt(length_factor**2 * mass_factor / energy_factor)
+        return System(
+            gamma=self.gamma / time_factor,
+            temperature=self.temperature,
+            m=self.m * mass_factor,
+            units=new_units,
+            potential=self.potential,
+        )
 
     @property
     def sampling_domain(self) -> tuple[float, float]:
@@ -112,6 +152,7 @@ class CanonicalSystem(System):
     """Parameters representing a physical system."""
 
     potential: tuple[int, sp.Expr] = field(metadata={"static": True})
+    units: UnitSystem = field(metadata={"static": True})
 
 
 class HarmonicSystem(System):
@@ -126,6 +167,7 @@ class HarmonicSystem(System):
         temperature: float,
         m: float,
         omega: float,
+        units: UnitSystem,
         n_dim: int = 1,
     ) -> None:
         s0 = sp.Symbol("s0")
@@ -137,6 +179,7 @@ class HarmonicSystem(System):
             m=m,
             potential=(n_dim, potential),
             params=(omega,),
+            units=units,
         )
 
     @property
@@ -152,6 +195,7 @@ class HarmonicSystem(System):
             m=self.m,
             omega=self.omega,
             n_dim=self.n_dim,
+            units=self.units,
         )
 
 
@@ -166,6 +210,7 @@ class PeriodicSystem1D(System):
         m: float,
         delta_x: float,
         barrier_energy: float,
+        units: UnitSystem,
         n_dim: int = 1,
     ) -> None:
         s0 = sp.Symbol("s0")
@@ -178,6 +223,7 @@ class PeriodicSystem1D(System):
             m=m,
             potential=(n_dim, potential),
             params=(delta_x, barrier_energy),
+            units=units,
         )
 
     @property
@@ -199,6 +245,7 @@ class PeriodicSystem1D(System):
             delta_x=self.delta_x,
             barrier_energy=self.barrier_energy,
             n_dim=self.n_dim,
+            units=self.units,
         )
 
     @override
@@ -206,6 +253,31 @@ class PeriodicSystem1D(System):
     def sampling_domain(self) -> tuple[float, float]:
         """The domain over which the equilibrium x-density should be sampled."""
         return (-self.delta_x / 2, self.delta_x / 2)
+
+    def simulation_units(self) -> UnitSystem:
+        """Return the units suited to a simulation of the system."""
+        return UnitSystem(
+            kb=1 / self.temperature,
+            angstrom=self.units.angstrom / self.delta_x,
+            atomic_mass=self.units.atomic_mass / self.m,
+        )
+
+    @override
+    def with_system_units(self, new_units: UnitSystem) -> PeriodicSystem1D:
+        """Return the rescaled parameters of the system."""
+        length_factor = new_units.angstrom / self.units.angstrom
+        mass_factor = new_units.atomic_mass / self.units.atomic_mass
+        energy_factor = new_units.kb / self.units.kb
+        time_factor = np.sqrt(length_factor**2 * mass_factor / energy_factor)
+        return PeriodicSystem1D(
+            gamma=self.gamma / time_factor,
+            temperature=self.temperature,
+            m=self.m * mass_factor,
+            delta_x=self.delta_x * length_factor,
+            barrier_energy=self.barrier_energy * energy_factor,
+            n_dim=self.n_dim,
+            units=new_units,
+        )
 
 
 def _get_potential_expr_fcc() -> sp.Expr:
@@ -232,7 +304,7 @@ def _get_potential_expr_fcc() -> sp.Expr:
 class PeriodicSystemFCC(System):
     """Parameters for the face-centered cubic periodic system."""
 
-    def __init__(
+    def __init__(  # ruff:ignore[too-many-arguments]
         self,
         *,
         gamma: float,
@@ -240,6 +312,7 @@ class PeriodicSystemFCC(System):
         m: float,
         delta_x: float,
         barrier_energy: float,
+        units: UnitSystem,
     ) -> None:
         potential = _get_potential_expr_fcc()
 
@@ -249,6 +322,7 @@ class PeriodicSystemFCC(System):
             m=m,
             potential=(2, potential),
             params=(delta_x, barrier_energy),
+            units=units,
         )
 
     @property

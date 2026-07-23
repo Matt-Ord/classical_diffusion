@@ -6,6 +6,7 @@ from ._langevin import (  # ruff:ignore[unsorted-imports]
     solve_ensemble,
     solve_single,
     solve_ballistic_ensemble,
+    split_escaped_and_trapped,
 )
 
 from ._analysis import (
@@ -19,7 +20,6 @@ from ._analysis import (
     plot_kinetic_probability,
     get_under_barrier_probability_ballistic,
     breakdown_ballistic_trajectory,
-    split_escaped_and_trapped,
     plot_isf_with_delta_k,
     get_effective_mass,
     plot_effective_mass_periodic_1D,

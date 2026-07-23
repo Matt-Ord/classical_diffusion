@@ -12,6 +12,7 @@ from classical_diffusion.langevin import (
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.system import (
     PeriodicSystem1D,
+    UnitSystem,
 )
 from classical_diffusion.util import disabled_timing
 
@@ -26,17 +27,18 @@ def _full_effective_mass_plot() -> None:
     keys = jrandom.split(jrandom.PRNGKey(100), barrier_energy.size)
     effective_mass = np.zeros(barrier_energy.shape)
 
-    # TODO: dont cache a million different simulations
     with disabled_timing():
+        # \ TODO: dont cache everything
         for idx, (i, j) in enumerate(
             tqdm(np.ndindex(barrier_energy.shape), total=barrier_energy.size)
         ):
             system = PeriodicSystem1D(
                 gamma=0.1,
-                temperature=0.5,
+                temperature=3.0,
                 m=inertial_mass[i, j],
                 delta_x=5.0,
                 barrier_energy=barrier_energy[i, j],
+                units=UnitSystem(),
             )
 
             result = solve_ballistic_ensemble(
@@ -46,7 +48,7 @@ def _full_effective_mass_plot() -> None:
                     t1=100 / system.gamma,
                     dt=0.01 / system.gamma,
                 ),
-                n_samples=10,
+                n_samples=2000,
                 _key=keys[idx],
             )
 

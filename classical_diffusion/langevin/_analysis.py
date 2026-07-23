@@ -588,17 +588,17 @@ def plot_2d_trajectory(
     return fig, ax, line
 
 
-def get_energy(result: SimulationResult) -> np.ndarray:
+def get_energy(system, x_points, p_points) -> np.ndarray:
     """Return the energy of the system."""
     potential = sp.lambdify(
-        (*result.system.coordinate_symbols, *result.system.parameter_symbols),
-        result.system.potential_expr,
+        (*system.coordinate_symbols, *system.parameter_symbols),
+        system.potential_expr,
         "numpy",
     )
 
-    potential = potential(result.x_points, *result.system.params).squeeze(axis=1)
+    potential = potential(x_points, *system.params).squeeze(axis=1)
 
-    kinetic = np.sum(result.p_points**2, axis=1) / (2 * result.system.m)
+    kinetic = np.sum(p_points**2, axis=1) / (2 * system.m)
 
     return kinetic + potential
 
@@ -608,7 +608,7 @@ def plot_energy(
 ) -> tuple[Figure, Axes]:
     """Plot the energy of the system with time."""
     fig, ax = get_figure(ax)
-    energy = get_energy(result)
+    energy = get_energy(result.system, result.x_points, result.p_points)
     for trajectory in range(n_trajectories):
         ax.plot(
             result.times,
@@ -660,17 +660,19 @@ def split_escaped_and_trapped(
 
 def get_evolution_trapped_probability(result: SimulationResult) -> np.ndarray:
     """Retrun the evolution of the probability of a particle being trapped as sample size increases."""
-    energies = get_energy(result)
+    energies = get_energy(result.system, result.x_points, result.p_points)
     is_over_barrier = energies < result.system.barrier_energy
     return np.cumsum(is_over_barrier, axis=-1) / (
         np.arange(is_over_barrier.shape[-1]) + 1
     )
 
 
-def get_under_barrier_probability_ballistic(result: SimulationResult) -> np.ndarray:
+def get_under_barrier_probability_ballistic(
+    x_points: np.ndarray, p_points: np.ndarray, barrier_energy: float
+) -> np.ndarray:
     """Return the probability of a particle being trapped under barrier."""
-    energies = get_energy(result)[:, 0]
-    is_over_barrier = energies < result.system.barrier_energy
+    energies = get_energy(x_points, p_points)[:, 0]
+    is_over_barrier = energies < barrier_energy
     return np.sum(is_over_barrier) / is_over_barrier.size
 
 
@@ -687,7 +689,7 @@ def plot_probability_over_barrier(
             label=f"trajectory {trajectory}",
         )
 
-    ax.set_xlabel("time")
+    ax.set_xlabel("trajectories")
     ax.set_ylabel("probability")
 
     return fig, ax
