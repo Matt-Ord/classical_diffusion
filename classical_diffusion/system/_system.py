@@ -122,7 +122,7 @@ class System:
 
     @property
     def kbt(self) -> float:
-        """Convert to simulation parameters."""
+        """Retrurn kbt."""
         return self.units.kb * self.temperature
 
     def with_system_units(self, new_units: UnitSystem) -> System:

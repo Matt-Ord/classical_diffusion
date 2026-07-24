@@ -9,6 +9,7 @@ from classical_diffusion.langevin import (
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.system import (
     HarmonicSystem,
+    UnitSystem,
     plot_exact_flat_isf,
     plot_exact_harmonic_isf,
 )
@@ -17,7 +18,9 @@ from classical_diffusion.system import (
 def _plot_harmonic_isf() -> None:
     key = jrandom.PRNGKey(100)
 
-    system = HarmonicSystem(gamma=0.1, temperature=0.5, m=1.0, omega=1.0)
+    system = HarmonicSystem(
+        gamma=0.1, temperature=0.5, m=1.0, omega=1.0, units=UnitSystem()
+    )
 
     result = solve_ensemble(
         system,
@@ -63,7 +66,9 @@ def _plot_harmonic_isf() -> None:
 def _plot_flat_isf() -> None:
     key = jrandom.PRNGKey(100)
 
-    system = HarmonicSystem(gamma=0.1, temperature=0.5, m=1.0, omega=0)
+    system = HarmonicSystem(
+        gamma=0.1, temperature=0.5, m=1.0, omega=0, units=UnitSystem()
+    )
 
     result = solve_ensemble(
         system,
@@ -101,7 +106,9 @@ def _plot_flat_isf() -> None:
 def _plot_flat_isf_2d() -> None:
     key = jrandom.PRNGKey(100)
 
-    system = HarmonicSystem(gamma=0.1, temperature=0.5, m=1.0, omega=0, n_dim=2)
+    system = HarmonicSystem(
+        gamma=0.1, temperature=0.5, m=1.0, omega=0, n_dim=2, units=UnitSystem()
+    )
 
     result = solve_ensemble(
         system,

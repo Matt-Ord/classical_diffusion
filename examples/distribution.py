@@ -11,7 +11,12 @@ from classical_diffusion.langevin import (
     solve_ensemble,
 )
 from classical_diffusion.plot import get_fancy_figure
-from classical_diffusion.system import HarmonicSystem, PeriodicSystem1D, System
+from classical_diffusion.system import (
+    HarmonicSystem,
+    PeriodicSystem1D,
+    System,
+    UnitSystem,
+)
 
 
 def fold_results[S: System](
@@ -31,7 +36,12 @@ def _plot_xp_distributions_periodic() -> None:
     key = jrandom.PRNGKey(100)
 
     system = PeriodicSystem1D(
-        gamma=0.1, temperature=0.5, m=1.0, delta_x=5, barrier_energy=1.5
+        gamma=0.1,
+        temperature=0.5,
+        m=1.0,
+        delta_x=5,
+        barrier_energy=1.5,
+        units=UnitSystem(),
     )
 
     result = solve_ensemble(
@@ -72,7 +82,9 @@ def _plot_xp_distributions_periodic() -> None:
 def _plot_xp_distributions_harmonic() -> None:
     key = jrandom.PRNGKey(100)
 
-    system = HarmonicSystem(gamma=0.1, temperature=0.5, m=1.0, omega=1.0)
+    system = HarmonicSystem(
+        gamma=0.1, temperature=0.5, m=1.0, omega=1.0, units=UnitSystem()
+    )
 
     result = solve_ensemble(
         system,

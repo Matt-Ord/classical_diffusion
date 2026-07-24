@@ -12,13 +12,19 @@ from classical_diffusion.langevin import (
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.system import (
     PeriodicSystemFCC,
+    UnitSystem,
     plot_periodic_potential_fcc,
 )
 
 
 def _plot_periodic_system() -> None:
     system = PeriodicSystemFCC(
-        gamma=0.1, temperature=1.0, m=1.0, delta_x=5.0, barrier_energy=1.5
+        gamma=0.1,
+        temperature=1.0,
+        m=1.0,
+        delta_x=5.0,
+        barrier_energy=1.5,
+        units=UnitSystem(),
     )
     fig, ax = get_fancy_figure()
     _, _, _ = plot_periodic_potential_fcc(system, ax=ax)
@@ -29,7 +35,12 @@ def _plot_2d_periodic_isf() -> None:
     key = jrandom.PRNGKey(100)
 
     system = PeriodicSystemFCC(
-        gamma=0.1, temperature=0.5, m=1.0, delta_x=5, barrier_energy=1.5
+        gamma=0.1,
+        temperature=0.5,
+        m=1.0,
+        delta_x=5,
+        barrier_energy=1.5,
+        units=UnitSystem(),
     )
 
     result = solve_ensemble(
@@ -76,7 +87,12 @@ def _plot_2d_trajectory() -> None:
     # TODO: add elastic and inelastic trajectories to the plot
     key = jrandom.PRNGKey(100)
     system = PeriodicSystemFCC(
-        gamma=0.1, temperature=0.5, m=1.0, delta_x=5, barrier_energy=1.5
+        gamma=0.1,
+        temperature=0.5,
+        m=1.0,
+        delta_x=5,
+        barrier_energy=1.5,
+        units=UnitSystem(),
     )
 
     result = solve_single(

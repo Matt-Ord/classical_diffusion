@@ -8,8 +8,6 @@ from ._analysis import (
     plot_exact_offset_gaussian_isf,
     plot_periodic_potential_1d,
     plot_periodic_potential_fcc,
-    plot_potential_1d,
-    plot_potential_2d,
 )
 from ._system import (
     CanonicalSystem,
@@ -34,6 +32,4 @@ __all__ = [
     "plot_exact_offset_gaussian_isf",
     "plot_periodic_potential_1d",
     "plot_periodic_potential_fcc",
-    "plot_potential_1d",
-    "plot_potential_2d",
 ]

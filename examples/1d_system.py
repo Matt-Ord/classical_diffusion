@@ -5,16 +5,18 @@ from classical_diffusion.langevin import (
     TimeSpan,
     breakdown_ballistic_trajectory,
     get_effective_mass,
+    get_effective_mass_free,
     get_under_barrier_probability_ballistic,
     plot_isf,
     plot_isf_with_delta_k,
     solve_ballistic_ensemble,
     solve_ensemble,
-    split_escaped_and_trapped,
+    solve_free_ballistic_uniform,
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.system import (
     PeriodicSystem1D,
+    UnitSystem,
     plot_exact_gaussian_isf,
     plot_exact_offset_gaussian_isf,
     plot_periodic_potential_1d,
@@ -39,17 +41,22 @@ def _plot_1d_periodic_isf() -> None:
     key = jrandom.PRNGKey(100)
 
     system = PeriodicSystem1D(
-        gamma=0.1, temperature=0.5, m=1.0, delta_x=5, barrier_energy=0.5
+        gamma=0.1,
+        temperature=0.5,
+        m=1.0,
+        delta_x=5,
+        barrier_energy=0.5,
+        units=UnitSystem(),
     )
 
     result = solve_ensemble(
-        system,
+        system.with_system_units(system.simulation_units()),
         TimeSpan(
             t0=0,
-            t1=40 / system.gamma,
-            dt=0.01 / system.gamma,
+            t1=40,
+            dt=0.01,
         ),
-        (np.full((20, 1), 0.0), np.full((20, 1), 0.0)),
+        (np.full((1, 1), 0.0), np.full((1, 1), 0.0)),
         _key=key,
     )
 
@@ -64,11 +71,11 @@ def _plot_1d_periodic_isf() -> None:
     line_0.set_label("full simulation")
 
     result = solve_ballistic_ensemble(
-        system,
+        system.with_system_units(system.simulation_units()),
         TimeSpan(
             t0=0,
-            t1=10 / system.gamma,
-            dt=0.01 / system.gamma,
+            t1=40,
+            dt=0.01,
         ),
         n_samples=10000,
         _key=key,
@@ -140,6 +147,7 @@ def _plot_effective_mass_isf() -> None:
         m=1.0,
         delta_x=5,
         barrier_energy=0.5,
+        units=UnitSystem(),
     )
 
     fig, ax = get_fancy_figure()
@@ -147,13 +155,13 @@ def _plot_effective_mass_isf() -> None:
     delta_k = (0.5 * 2 * np.pi / system.delta_x,)
 
     result = solve_ballistic_ensemble(
-        system,
+        system.with_system_units(system.simulation_units()),
         TimeSpan(
             t0=0,
-            t1=100 / system.gamma,
-            dt=0.01 / system.gamma,
+            t1=40,
+            dt=0.01,
         ),
-        n_samples=2000,
+        2000,
         _key=key,
     )
 
@@ -193,16 +201,17 @@ def _plot_effective_mass_offset_isf() -> None:
         m=1.0,
         delta_x=5,
         barrier_energy=0.5,
+        units=UnitSystem(),
     )
 
     fig, ax = get_fancy_figure()
 
-    result = solve_ballistic_ensemble(
-        system,
+    result, over_barrier_probability = solve_free_ballistic_uniform(
+        system.with_system_units(system.simulation_units()),
         TimeSpan(
             t0=0,
-            t1=100 / system.gamma,
-            dt=0.01 / system.gamma,
+            t1=40,
+            dt=0.01,
         ),
         n_samples=2000,
         _key=key,
@@ -222,21 +231,25 @@ def _plot_effective_mass_offset_isf() -> None:
         ax=ax,
         delta_k=delta_k,
         effective_mass=system.m,
-        offset=np.average(get_under_barrier_probability_ballistic(result)),
+        offset=np.average(
+            get_under_barrier_probability_ballistic(
+                x_points=result.x_points,
+                p_points=result.p_points,
+                barrier_energy=result.system.barrier_energy,
+            )
+        ),
     )
     line_1.set_label("actual mass")
     line_1.set_linestyle(":")
 
-    free_result, _ = split_escaped_and_trapped(result)
-
-    effective_mass = get_effective_mass(free_result)
+    effective_mass = get_effective_mass_free(result)
 
     _, ax, line_2 = plot_exact_offset_gaussian_isf(
         system=system,
         ax=ax,
         delta_k=delta_k,
         effective_mass=effective_mass,
-        offset=np.average(get_under_barrier_probability_ballistic(result)),
+        offset=over_barrier_probability,
     )
     line_2.set_label("effective mass")
     line_2.set_linestyle(":")

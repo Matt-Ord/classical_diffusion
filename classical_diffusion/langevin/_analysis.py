@@ -702,6 +702,19 @@ def get_effective_mass(result: SimulationResult, idx: int = 0) -> float:
     return (result.system.kbt * result.system.m**2) / np.average(elastic_ps**2, axis=0)
 
 
+def get_effective_mass_free(result: SimulationResult) -> int:
+    """Return the effective mass averaged over a full simulation."""
+    elastic_ps = get_elastic_p(result=result)[:, -1]
+    energy = get_energy(
+        system=result.system, x_points=result.x_points, p_points=result.p_points
+    )
+    print(energy.shape)
+    beta = 1 / result.system.kbt
+    return (result.system.kbt * result.system.m**2) / np.average(
+        elastic_ps**2 * np.exp(-beta * energy), axis=0
+    )
+
+
 def plot_effective_mass_periodic_1D(  # ruff:ignore[invalid-function-name]
     effective_mass: np.ndarray[Any, np.dtype[np.floating]],
     inertial_mass: np.ndarray[Any, np.dtype[np.floating]],

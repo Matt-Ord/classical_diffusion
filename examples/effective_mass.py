@@ -5,9 +5,9 @@ from tqdm import tqdm
 from classical_diffusion.langevin import (
     TimeSpan,
     get_effective_mass,
+    get_effective_mass_free,
     plot_effective_mass_periodic_1D,
     solve_ballistic_ensemble,
-    split_escaped_and_trapped,
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.system import (
@@ -34,7 +34,7 @@ def _full_effective_mass_plot() -> None:
         ):
             system = PeriodicSystem1D(
                 gamma=0.1,
-                temperature=3.0,
+                temperature=5.0,
                 m=inertial_mass[i, j],
                 delta_x=5.0,
                 barrier_energy=barrier_energy[i, j],
@@ -85,6 +85,7 @@ def _free_effective_mass_plot() -> None:
                 m=inertial_mass[i, j],
                 delta_x=5.0,
                 barrier_energy=barrier_energy[i, j],
+                units=UnitSystem(),
             )
 
             result = solve_ballistic_ensemble(
@@ -97,8 +98,8 @@ def _free_effective_mass_plot() -> None:
                 n_samples=15,
                 _key=keys[idx],
             )
-            free_result, _ = split_escaped_and_trapped(result)
-            effective_mass[i, j] = get_effective_mass(free_result) / inertial_mass[i, j]
+
+            effective_mass[i, j] = get_effective_mass_free(result) / inertial_mass[i, j]
 
     fig, ax = get_fancy_figure()
     _, ax, mesh = plot_effective_mass_periodic_1D(
