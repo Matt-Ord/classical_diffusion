@@ -46,11 +46,7 @@ def _plot_xp_distributions_periodic() -> None:
 
     result = solve_ensemble(
         system,
-        TimeSpan(
-            t0=1 / system.gamma,
-            t1=10 / system.gamma,
-            dt=1 / system.gamma,
-        ),
+        TimeSpan(t0=1 / system.gamma, t1=10 / system.gamma, n_steps=1000),
         (np.full((2000, 1), 0.0), np.full((2000, 1), 0.0)),
         _key=key,
     )
@@ -88,11 +84,7 @@ def _plot_xp_distributions_harmonic() -> None:
 
     result = solve_ensemble(
         system,
-        TimeSpan(
-            t0=1 / system.gamma,
-            t1=500 / system.gamma,
-            dt=1 / system.gamma,
-        ),
+        TimeSpan(t0=1 / system.gamma, t1=500 / system.gamma, n_steps=1000),
         (np.full((200, 1), 0.0), np.full((200, 1), 0.0)),
         _key=key,
     )

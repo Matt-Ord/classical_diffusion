@@ -213,7 +213,7 @@ def plot_exact_gaussian_isf(
     """Plot the exact ISF for a 1D flat (potential-free) surface."""
     fig, ax = get_figure(ax)
 
-    times = times if times is not None else np.linspace(0, 30, 1000)
+    times = times if times is not None else np.linspace(0, 1e-12, 1000)
     isf_exact = get_exact_gaussian_isf(
         system=system, effective_mass=effective_mass, delta_k=delta_k, times=times
     )
@@ -240,7 +240,7 @@ def plot_exact_offset_gaussian_isf(  # ruff:ignore[too-many-arguments]
     """Plot the exact ISF for a 1D flat (potential-free) surface."""
     fig, ax = get_figure(ax)
 
-    times = times if times is not None else np.linspace(0, 30, 1000)
+    times = times if times is not None else np.linspace(0, 1e-12, 1000)
     isf_exact = offset + (1 - offset) * get_exact_gaussian_isf(
         system=system, effective_mass=effective_mass, delta_k=delta_k, times=times
     )

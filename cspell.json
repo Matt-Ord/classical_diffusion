@@ -30,6 +30,7 @@
         "vmin",
         "xedges",
         "xlim",
+        "xticks",
         "yedges",
         "ylim",
         "yscale"

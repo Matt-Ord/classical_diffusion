@@ -11,12 +11,20 @@ import numpy as np
 import sympy as sp
 from scipy.stats.sampling import NumericalInversePolynomial
 
+from classical_diffusion.system import (
+    UnitSystem,
+    get_energy,
+)
 from classical_diffusion.util import cached, timed
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from classical_diffusion.system import CanonicalSystem, System, UnitSystem
+    from classical_diffusion.system import (
+        CanonicalSystem,
+        PeriodicSystem1D,
+        System,
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -25,23 +33,15 @@ class TimeSpan:
 
     t0: float
     t1: float
-    dt: float
+    n_steps: int
 
     def __post_init__(self) -> None:
         if self.t1 <= self.t0:
             msg = f"t1 must be greater than t0, got t0={self.t0}, t1={self.t1}"
             raise ValueError(msg)
-        if self.dt <= 0:
-            msg = f"dt must be positive, got dt={self.dt}"
-            raise ValueError(msg)
         if self.n_steps <= 1:
             msg = f"Time span must have at least 2 steps, got n_steps={self.n_steps}"
             raise ValueError(msg)
-
-    @property
-    def n_steps(self) -> int:
-        """The number of steps in the time span."""
-        return int((self.t1 - self.t0) / self.dt) + 1
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -53,11 +53,12 @@ class SingleSimulationResult[S: System[Any] = System[Any]]:
     p_points: np.ndarray[Any, np.dtype[np.floating]]
     system: S
 
-    def with_units(self, new_units: UnitSystem) -> Self:
+    def with_si_units(self) -> Self:
         """Return the rescaled simulation of the system."""
-        length_factor = new_units.angstrom / self.system.units.angstrom
-        mass_factor = new_units.atomic_mass / self.system.units.atomic_mass
-        energy_factor = new_units.kb / self.system.units.kb
+        si_units = UnitSystem()
+        length_factor = si_units.angstrom / self.system.units.angstrom
+        mass_factor = si_units.atomic_mass / self.system.units.atomic_mass
+        energy_factor = si_units.Boltzmann / self.system.units.kb
         time_factor = np.sqrt(length_factor**2 * mass_factor / energy_factor)
         momentum_factor = mass_factor * length_factor / time_factor
         return dataclasses.replace(
@@ -65,7 +66,7 @@ class SingleSimulationResult[S: System[Any] = System[Any]]:
             times=self.times * time_factor,
             x_points=self.x_points * length_factor,
             p_points=self.p_points * momentum_factor,
-            system=self.system.with_system_units(new_units),
+            system=self.system.with_si_units(),
         )
 
 
@@ -87,11 +88,12 @@ class SimulationResult[S: System[Any] = System[Any]]:
             system=self.system,
         )
 
-    def with_units(self, new_units: UnitSystem) -> Self:
+    def with_si_units(self) -> Self:
         """Return the rescaled simulation of the system."""
-        length_factor = new_units.angstrom / self.system.units.angstrom
-        mass_factor = new_units.atomic_mass / self.system.units.atomic_mass
-        energy_factor = new_units.kb / self.system.units.kb
+        si_units = UnitSystem()
+        length_factor = si_units.angstrom / self.system.units.angstrom
+        mass_factor = si_units.atomic_mass / self.system.units.atomic_mass
+        energy_factor = si_units.Boltzmann / self.system.units.Boltzmann
         time_factor = np.sqrt(length_factor**2 * mass_factor / energy_factor)
         momentum_factor = mass_factor * length_factor / time_factor
         return dataclasses.replace(
@@ -99,7 +101,7 @@ class SimulationResult[S: System[Any] = System[Any]]:
             times=self.times * time_factor,
             x_points=self.x_points * length_factor,
             p_points=self.p_points * momentum_factor,
-            system=self.system.with_system_units(new_units),
+            system=self.system.with_si_units(),
         )
 
 
@@ -374,7 +376,7 @@ def solve_ballistic_ensemble[S: System](
 def split_escaped_and_trapped(
     x_points: np.ndarray,
     p_points: np.ndarray,
-    system: System,
+    system: PeriodicSystem1D,
 ) -> tuple:
     """Split result into trajectories trapped within or free to move over the barrier."""
     energy = get_energy(system, x_points, p_points)
@@ -388,26 +390,32 @@ def split_escaped_and_trapped(
     return (free_x_points, free_p_points), (trapped_x_points, trapped_p_points)
 
 
-@cached(_solve_ballistic_ensemble_path)
-def solve_free_ballistic_uniform[S: System](
-    system: S,
+def _solve_free_ballistic_ensemble_path(
+    system: PeriodicSystem1D,
     time_span: TimeSpan,
-    n_trajectories: int,
+    n_samples: int,
+    _key: jax.Array,
+) -> Path:
+    filename = f"free_ballistic_{hash(system)}_{hash(time_span)}_{n_samples}.npz"
+    return Path("examples/data") / filename
+
+
+@cached(_solve_free_ballistic_ensemble_path)
+def solve_free_ballistic_ensemble[S: System](
+    system: PeriodicSystem1D,
+    time_span: TimeSpan,
+    n_samples: int,
     _key: jax.Array,
 ) -> tuple[SimulationResult[S], float]:
     """Take an ensemble of uniformly distributed ballistic trajectories and solve free trajectories in parallel via jax.vmap. Also returns probability of being above the barrier."""
-    proposed_initial_positions = sample_x_initial(
-        system=system, n_trajectories=n_trajectories
-    )
-    proposed_initial_momenta = sample_p_initial(
-        system=system, n_trajectories=n_trajectories
-    )
+    proposed_initial_positions = sample_x_initial(system=system, n_samples=n_samples)
+    proposed_initial_momenta = sample_p_initial(system=system, n_samples=n_samples)
 
     (free_x_initial, free_p_initial), _ = split_escaped_and_trapped(
         proposed_initial_positions, proposed_initial_momenta, system
     )
 
-    return solve_ensemble.load_or_call_uncached(
+    result = solve_ensemble.load_or_call_uncached(
         system.with_gamma(0.0),
         time_span,
         (
@@ -415,4 +423,5 @@ def solve_free_ballistic_uniform[S: System](
             free_p_initial,
         ),
         _key,
-    ), free_x_initial.shape[0] / n_trajectories
+    )
+    return result, free_x_initial.shape[0] / n_samples

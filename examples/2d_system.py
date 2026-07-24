@@ -45,11 +45,7 @@ def _plot_2d_periodic_isf() -> None:
 
     result = solve_ensemble(
         system,
-        TimeSpan(
-            t0=0,
-            t1=50 / system.gamma,
-            dt=0.01 / system.gamma,
-        ),
+        TimeSpan(t0=0, t1=50 / system.gamma, n_steps=1000),
         (np.full((2000, 2), 0.0), np.full((2000, 2), 0.0)),
         _key=key,
     )
@@ -66,11 +62,7 @@ def _plot_2d_periodic_isf() -> None:
 
     result = solve_ballistic_ensemble(
         system,
-        TimeSpan(
-            t0=0,
-            t1=4 / system.gamma,
-            dt=0.01 / system.gamma,
-        ),
+        TimeSpan(t0=0, t1=4 / system.gamma, n_steps=1000),
         n_samples=2000,
         _key=key,
     )
@@ -97,11 +89,7 @@ def _plot_2d_trajectory() -> None:
 
     result = solve_single(
         system,
-        TimeSpan(
-            t0=0,
-            t1=100 / system.gamma,
-            dt=0.01 / system.gamma,
-        ),
+        TimeSpan(t0=0, t1=100 / system.gamma, n_steps=1000),
         (np.full((2,), 0.0), np.full((2,), 0.0)),
         _key=key,
     )

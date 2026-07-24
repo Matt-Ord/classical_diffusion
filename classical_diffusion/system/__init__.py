@@ -16,6 +16,8 @@ from ._system import (
     PeriodicSystemFCC,
     System,
     UnitSystem,
+    get_diffusion_time,
+    get_energy,
 )
 
 __all__ = [
@@ -26,6 +28,8 @@ __all__ = [
     "System",
     "UnitSystem",
     "get_characteristic_friction_time",
+    "get_diffusion_time",
+    "get_energy",
     "plot_exact_flat_isf",
     "plot_exact_gaussian_isf",
     "plot_exact_harmonic_isf",

@@ -24,11 +24,7 @@ def _plot_harmonic_isf() -> None:
 
     result = solve_ensemble(
         system,
-        TimeSpan(
-            t0=0,
-            t1=50 / system.gamma,
-            dt=0.01 / system.gamma,
-        ),
+        TimeSpan(t0=0, t1=50 / system.gamma, n_steps=1000),
         (np.full((200, 1), 0.0), np.full((200, 1), 0.0)),
         _key=key,
     )
@@ -72,11 +68,7 @@ def _plot_flat_isf() -> None:
 
     result = solve_ensemble(
         system,
-        TimeSpan(
-            t0=0,
-            t1=50 / system.gamma,
-            dt=0.01 / system.gamma,
-        ),
+        TimeSpan(t0=0, t1=50 / system.gamma, n_steps=1000),
         (np.full((200, 1), 0.0), np.full((200, 1), 0.0)),
         _key=key,
     )
@@ -112,11 +104,7 @@ def _plot_flat_isf_2d() -> None:
 
     result = solve_ensemble(
         system,
-        TimeSpan(
-            t0=0,
-            t1=50 / system.gamma,
-            dt=0.01 / system.gamma,
-        ),
+        TimeSpan(t0=0, t1=50 / system.gamma, n_steps=1000),
         (np.full((200, 2), 0.0), np.full((200, 2), 0.0)),
         _key=key,
     )

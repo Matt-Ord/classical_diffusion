@@ -43,11 +43,7 @@ def _full_effective_mass_plot() -> None:
 
             result = solve_ballistic_ensemble(
                 system,
-                TimeSpan(
-                    t0=0,
-                    t1=100 / system.gamma,
-                    dt=0.01 / system.gamma,
-                ),
+                TimeSpan(t0=0, t1=100 / system.gamma, n_steps=1000),
                 n_samples=2000,
                 _key=keys[idx],
             )
@@ -90,11 +86,7 @@ def _free_effective_mass_plot() -> None:
 
             result = solve_ballistic_ensemble(
                 system,
-                TimeSpan(
-                    t0=0,
-                    t1=100 / system.gamma,
-                    dt=0.01 / system.gamma,
-                ),
+                TimeSpan(t0=0, t1=100 / system.gamma, n_steps=1000),
                 n_samples=15,
                 _key=keys[idx],
             )

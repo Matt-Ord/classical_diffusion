@@ -5,11 +5,9 @@ import numpy as np
 import scipy
 import sympy as sp
 
-from classical_diffusion.langevin import (
-    SimulationResult,
-)
+from classical_diffusion.langevin import SimulationResult
 from classical_diffusion.plot import get_figure, get_measured_data
-from classical_diffusion.system._system import System
+from classical_diffusion.system import System, get_energy
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -588,27 +586,17 @@ def plot_2d_trajectory(
     return fig, ax, line
 
 
-def get_energy(system, x_points, p_points) -> np.ndarray:
-    """Return the energy of the system."""
-    potential = sp.lambdify(
-        (*system.coordinate_symbols, *system.parameter_symbols),
-        system.potential_expr,
-        "numpy",
-    )
-
-    potential = potential(x_points, *system.params).squeeze(axis=1)
-
-    kinetic = np.sum(p_points**2, axis=1) / (2 * system.m)
-
-    return kinetic + potential
-
-
 def plot_energy(
-    result: SimulationResult, n_trajectories: int, *, ax: Axes
+    result: SimulationResult,
+    n_trajectories: int = 1,
+    *,
+    ax: Axes,
 ) -> tuple[Figure, Axes]:
     """Plot the energy of the system with time."""
     fig, ax = get_figure(ax)
-    energy = get_energy(result.system, result.x_points, result.p_points)
+    energy = get_energy(
+        system=result.system, x_points=result.x_points, p_points=result.p_points
+    )
     for trajectory in range(n_trajectories):
         ax.plot(
             result.times,
@@ -702,13 +690,12 @@ def get_effective_mass(result: SimulationResult, idx: int = 0) -> float:
     return (result.system.kbt * result.system.m**2) / np.average(elastic_ps**2, axis=0)
 
 
-def get_effective_mass_free(result: SimulationResult) -> int:
-    """Return the effective mass averaged over a full simulation."""
-    elastic_ps = get_elastic_p(result=result)[:, -1]
+def get_effective_mass_free(result: SimulationResult) -> float:
+    """Return the effective mass from a weighted average."""
+    elastic_ps = _get_average_elastic_p(result=result)[:, -1]
     energy = get_energy(
         system=result.system, x_points=result.x_points, p_points=result.p_points
-    )
-    print(energy.shape)
+    )[:, 0]
     beta = 1 / result.system.kbt
     return (result.system.kbt * result.system.m**2) / np.average(
         elastic_ps**2 * np.exp(-beta * energy), axis=0
