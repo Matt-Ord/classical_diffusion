@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from classical_diffusion.simulation import TimeSpan
 
 
-class HoppingSimulationResult[L: Lattice[Any]](SimulationResult[L]):
+class HoppingSimulationResult[L: Lattice](SimulationResult[L]):
     def __init__(
         self,
         *,
@@ -27,7 +27,7 @@ class HoppingSimulationResult[L: Lattice[Any]](SimulationResult[L]):
 
     @cached_property
     def x_points(self) -> np.ndarray:
-        return self.system.transform_indices_to_coordinates(self._x_indices)
+        return self.system.x_points_from_indices(self._x_indices)
 
 
 @jax.jit
@@ -100,7 +100,7 @@ def _run_hopping_simulation_jit(
 
 
 @timed
-def solve_ensemble[L: Lattice[Any]](
+def solve_ensemble[L: Lattice = Lattice](
     lattice: L,
     time_span: TimeSpan,
     initial_condition: np.ndarray[tuple[int, int], np.dtype[np.int_]],
@@ -113,12 +113,10 @@ def solve_ensemble[L: Lattice[Any]](
     results = jax.vmap(
         _run_hopping_simulation_jit,
         in_axes=(None, 0, None, 0),
-    )(lattice, initial_condition, times, keys)
-
-    x_indices = np.einsum("ijk->ikj", np.array(results))
+    )(lattice.as_canonical(), initial_condition, times, keys)
 
     return HoppingSimulationResult[L](
         system=lattice,
         times=np.array(times),
-        x_indices=x_indices,
+        x_indices=np.einsum("ijk->ikj", np.array(results)),
     )

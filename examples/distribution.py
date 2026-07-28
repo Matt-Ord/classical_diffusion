@@ -24,7 +24,7 @@ def fold_results(
     """Fold x into first BZ zone."""
     return LangevinSimulationResult(
         system=result.system,
-        times=result.time_points,
+        times=result.times,
         x_points=result.x_points % delta,
         p_points=result.p_points,
     )
