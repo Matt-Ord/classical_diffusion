@@ -19,7 +19,7 @@ class Lattice:
     """Parameters representing a simplified, discrete lattice representing a physical potential."""
 
     lattice_spacing: float
-    diff_time: float
+    hop_time: float
     directions: jnp.ndarray
 
     @property
@@ -30,7 +30,7 @@ class Lattice:
     @property
     def r_hop(self) -> float:
         """Rate of hopping to a new lattice site."""
-        return 1 / self.diff_time
+        return 1 / self.hop_time
 
     # More properties likely required
 
@@ -43,12 +43,12 @@ class Lattice1D(Lattice):
     def __init__(self, lattice_spacing: float, diff_time: float) -> None:
         super().__init__(
             lattice_spacing=lattice_spacing,
-            diff_time=diff_time,
+            hop_time=diff_time,
             directions=jnp.array([[1], [-1]]),
         )
 
     def tree_flatten(self) -> tuple[tuple[float, float, jnp.ndarray], None]:
-        return (self.lattice_spacing, self.diff_time, self.directions), None
+        return (self.lattice_spacing, self.hop_time, self.directions), None
 
     @classmethod
     def tree_unflatten(

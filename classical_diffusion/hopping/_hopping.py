@@ -74,7 +74,7 @@ def _run_inefficient_hopping_simulation(
     position = start_position
     positions = [position]
 
-    1 / lattice.diff_time
+    1 / lattice.hop_time
 
     for _characteristic_time in range(n_steps):
         # Generate a random number to decide whether to hop or not
@@ -85,7 +85,7 @@ def _run_inefficient_hopping_simulation(
             position += hop_direction * lattice.lattice_spacing
         positions.append(position)
 
-    times = np.arange(n_steps) * lattice.diff_time
+    times = np.arange(n_steps) * lattice.hop_time
 
     print(positions)
     return np.array(positions), times
