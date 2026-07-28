@@ -30,13 +30,12 @@ def hopping_isf(
     interpolated_ft = np.mean(np.array(interpolated_fts), axis=0)
     isf = np.fft.ifft(interpolated_ft * np.conj(interpolated_ft))
 
-    return isf[: len(isf) // 2]
+    return isf[: len(isf) // 2] / max(isf)
 
 
 def plot_hopping_isf(
     result: HoppingSimulationResult,
     delta_k: np.ndarray,
-    total_time: int,
     ax: Axes | None = None,
     measure: Measure = "abs",
 ) -> tuple[Figure, Axes, Line2D]:
