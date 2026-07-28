@@ -33,19 +33,22 @@ class SimulationResult[S: Any]:
         _system = system
 
     @property
-    def times(self) -> np.ndarray:
+    def times(self) -> np.ndarray[Any, np.dtype[np.floating]]:
+        """The time points at which the simulation was sampled."""
         return self._times
 
     @property
     def x_points(self) -> np.ndarray[Any, np.dtype[np.floating]]:
+        """The positions of the particles at each time point."""
         return self._x_points
 
     @property
     def system(self) -> S:
+        """The system used for the simulation."""
         return self._system
 
     def __getitem__(self, idx: int) -> SingleSimulationResult[S]:
-        """Return a single trajectory from the ensemble."""
+        """Get a single trajectory from the ensemble."""
         return SingleSimulationResult[S](
             system=self.system,
             times=self._times,
