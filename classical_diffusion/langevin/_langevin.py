@@ -27,7 +27,7 @@ class SingleLangevinSimulationResult(SingleSimulationResult["System[Any]"]):
     p_points: np.ndarray[Any, np.dtype[np.floating]]
 
 
-class LangevinSimulationResult(SimulationResult["System[Any]"]):
+class LangevinSimulationResult[S: System](SimulationResult[S]):
     """Results of a simulation of the periodic Langevin equation."""
 
     _p_points: np.ndarray[Any, np.dtype[np.floating]]
@@ -35,7 +35,7 @@ class LangevinSimulationResult(SimulationResult["System[Any]"]):
     def __init__(
         self,
         *,
-        system: System[Any],
+        system: S,
         x_points: np.ndarray[Any, np.dtype[np.floating]],
         p_points: np.ndarray,
         times: np.ndarray,
@@ -49,7 +49,7 @@ class LangevinSimulationResult(SimulationResult["System[Any]"]):
     def p_points(self) -> np.ndarray[Any, np.dtype[np.floating]]:
         return self._p_points
 
-    def __getitem__(self, idx: int) -> SingleLangevinSimulationResult:
+    def __getitem__(self, idx: int) -> SingleLangevinSimulationResult[S]:
         """Return a single trajectory from the ensemble."""
         return SingleLangevinSimulationResult(
             system=self.system,
