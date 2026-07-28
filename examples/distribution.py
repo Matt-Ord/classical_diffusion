@@ -1,12 +1,12 @@
-from dataclasses import replace
 from typing import Any
 
 import jax.random as jrandom
 import numpy as np
 
 from classical_diffusion.langevin import (
-    SimulationResult,
-    TimeSpan,
+    HarmonicSystem,
+    LangevinSimulationResult,
+    PeriodicSystem1D,
     plot_kinetic_probability,
     plot_p_histogram,
     plot_phase_space_density,
@@ -14,15 +14,20 @@ from classical_diffusion.langevin import (
     solve_ensemble,
 )
 from classical_diffusion.plot import get_fancy_figure
-from classical_diffusion.system import HarmonicSystem, PeriodicSystem1D
+from classical_diffusion.simulation import TimeSpan
 
 
 def fold_results(
-    result: SimulationResult[Any],
+    result: LangevinSimulationResult[Any],
     delta: float,
-) -> SimulationResult[Any]:
+) -> LangevinSimulationResult[Any]:
     """Fold x into first BZ zone."""
-    return replace(result, x_points=result.x_points % delta)
+    return LangevinSimulationResult(
+        system=result.system,
+        times=result.time_points,
+        x_points=result.x_points % delta,
+        p_points=result.p_points,
+    )
 
 
 def _plot_xp_distributions_periodic() -> None:
@@ -35,9 +40,8 @@ def _plot_xp_distributions_periodic() -> None:
     result = solve_ensemble(
         system,
         TimeSpan(
-            t0=1 / system.gamma,
-            t1=10 / system.gamma,
-            dt=1 / system.gamma,
+            t_end=10 / system.gamma,
+            n_steps=1000,
         ),
         (np.full((2000, 1), 0.0), np.full((2000, 1), 0.0)),
         _key=key,
@@ -75,9 +79,8 @@ def _plot_xp_distributions_harmonic() -> None:
     result = solve_ensemble(
         system,
         TimeSpan(
-            t0=1 / system.gamma,
-            t1=500 / system.gamma,
-            dt=1 / system.gamma,
+            t_end=500 / system.gamma,
+            n_steps=5000,
         ),
         (np.full((200, 1), 0.0), np.full((200, 1), 0.0)),
         _key=key,

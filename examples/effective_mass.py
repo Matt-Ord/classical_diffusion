@@ -3,16 +3,13 @@ import numpy as np
 from tqdm import tqdm
 
 from classical_diffusion.langevin import (
-    TimeSpan,
+    PeriodicSystem1D,
     get_effective_mass,
     plot_effective_mass_periodic_1D,
     solve_ballistic_ensemble,
-    split_escaped_and_trapped,
 )
 from classical_diffusion.plot import get_fancy_figure
-from classical_diffusion.system import (
-    PeriodicSystem1D,
-)
+from classical_diffusion.simulation import TimeSpan
 from classical_diffusion.util import disabled_timing
 
 
@@ -42,9 +39,8 @@ def _full_effective_mass_plot() -> None:
             result = solve_ballistic_ensemble(
                 system,
                 TimeSpan(
-                    t0=0,
-                    t1=100 / system.gamma,
-                    dt=0.01 / system.gamma,
+                    t_end=100 / system.gamma,
+                    n_steps=10000,
                 ),
                 n_samples=10,
                 _key=keys[idx],
@@ -88,9 +84,8 @@ def _free_effective_mass_plot() -> None:
             result = solve_ballistic_ensemble(
                 system,
                 TimeSpan(
-                    t0=0,
-                    t1=100 / system.gamma,
-                    dt=0.01 / system.gamma,
+                    t_end=100 / system.gamma,
+                    n_steps=10000,
                 ),
                 n_samples=15,
                 _key=keys[idx],

@@ -1,20 +1,20 @@
 import jax.random as jrandom
 import numpy as np
 
-from classical_diffusion._simulation import TimeSpan
 from classical_diffusion.analysis import plot_isf, plot_x_evolution
-from classical_diffusion.hopping._hopping import _solve_hopping_ensemble
-from classical_diffusion.plot import get_fancy_figure
-from classical_diffusion.system import (
+from classical_diffusion.hopping import (
     Lattice1D,
+    solve_ensemble,
 )
+from classical_diffusion.plot import get_fancy_figure
+from classical_diffusion.simulation import TimeSpan
 
 
 def _plot_1d_hopping_isf() -> None:
 
     lattice = Lattice1D(lattice_spacing=5, hop_time=15)
     total_time = 400
-    results = _solve_hopping_ensemble(
+    results = solve_ensemble(
         lattice=lattice,
         time_span=TimeSpan(t_end=total_time, n_steps=total_time),
         initial_condition=np.full((100, 1), 0.0),
@@ -42,10 +42,8 @@ def _plot_1d_hopping_isf() -> None:
     ax.set_xlim(0, 40)
     ax.set_ylim(0, 1)
 
-    print("saving isf plot")
     fig.savefig("./examples/1d_lattice.isf.pdf")
 
 
 if __name__ == "__main__":
-    print("running")
     _plot_1d_hopping_isf()

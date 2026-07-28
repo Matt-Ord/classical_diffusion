@@ -4,6 +4,8 @@ from ._langevin import (  # ruff:ignore[unsorted-imports]
     solve_ensemble,
     solve_single,
     solve_ballistic_ensemble,
+    LangevinSimulationResult,
+    SingleLangevinSimulationResult,
 )
 
 from ._analysis import (
@@ -18,17 +20,51 @@ from ._analysis import (
     get_effective_mass,
     plot_effective_mass_periodic_1D,
 )
+from ._system import (
+    CanonicalSystem,
+    HarmonicSystem,
+    PeriodicSystem1D,
+    PeriodicSystemFCC,
+    System,
+)
+from ._system_analysis import (
+    get_characteristic_friction_time,
+    plot_exact_flat_isf,
+    plot_exact_gaussian_isf,
+    plot_exact_harmonic_isf,
+    plot_exact_offset_gaussian_isf,
+    plot_periodic_potential_1d,
+    plot_periodic_potential_fcc,
+    plot_potential_1d,
+    plot_potential_2d,
+)
 
 __all__ = [
+    "CanonicalSystem",
+    "HarmonicSystem",
+    "LangevinSimulationResult",
+    "PeriodicSystem1D",
+    "PeriodicSystemFCC",
+    "SingleLangevinSimulationResult",
+    "System",
     "breakdown_ballistic_trajectory",
+    "get_characteristic_friction_time",
     "get_effective_mass",
     "get_under_barrier_probability_ballistic",
     "plot_2d_trajectory",
     "plot_effective_mass_periodic_1D",
     "plot_elastic_p",
+    "plot_exact_flat_isf",
+    "plot_exact_gaussian_isf",
+    "plot_exact_harmonic_isf",
+    "plot_exact_offset_gaussian_isf",
     "plot_kinetic_probability",
     "plot_p_histogram",
+    "plot_periodic_potential_1d",
+    "plot_periodic_potential_fcc",
     "plot_phase_space_density",
+    "plot_potential_1d",
+    "plot_potential_2d",
     "plot_x_histogram",
     "solve_ballistic_ensemble",
     "solve_ensemble",

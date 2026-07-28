@@ -10,14 +10,14 @@ import numpy as np
 import sympy as sp
 from scipy.stats.sampling import NumericalInversePolynomial
 
-from classical_diffusion._simulation import SimulationResult, SingleSimulationResult
+from classical_diffusion.simulation import SimulationResult, SingleSimulationResult
 from classical_diffusion.util import cached, timed
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from classical_diffusion._simulation import TimeSpan
-    from classical_diffusion.system import CanonicalSystem, System
+    from classical_diffusion.langevin import CanonicalSystem, System
+    from classical_diffusion.simulation import TimeSpan
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -48,6 +48,15 @@ class LangevinSimulationResult(SimulationResult["System[Any]"]):
     @property
     def p_points(self) -> np.ndarray[Any, np.dtype[np.floating]]:
         return self._p_points
+
+    def __getitem__(self, idx: int) -> SingleLangevinSimulationResult:
+        """Return a single trajectory from the ensemble."""
+        return SingleLangevinSimulationResult(
+            system=self.system,
+            times=self._times,
+            x_points=self.x_points[idx],
+            p_points=self.p_points[idx],
+        )
 
 
 def _get_force_fn(
@@ -179,7 +188,7 @@ def solve_ensemble[S: System](
         np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
     ],
     _key: jax.Array,
-) -> SimulationResult[S]:
+) -> LangevinSimulationResult[S]:
     """Solve an ensemble of ULD Langevin trajectories in parallel via jax.vmap."""
     xs0_jax = jnp.asarray(initial_conditions[0])
     ps0_jax = jnp.asarray(initial_conditions[1])
@@ -237,7 +246,7 @@ def solve_single[S: System](
         np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
     ],
     _key: jax.Array,
-) -> SingleSimulationResult[S]:
+) -> SingleLangevinSimulationResult[S]:
     """Solve the ULD Langevin equation for a single trajectory via vmap."""
     return solve_ensemble.load_or_call_uncached(
         system,
@@ -305,14 +314,20 @@ def solve_ballistic_ensemble[S: System](
     time_span: TimeSpan,
     n_samples: int,
     _key: jax.Array,
-) -> SimulationResult[S]:
+) -> LangevinSimulationResult[S]:
     """Solve an ensemble of ballistic trajectories in parallel via jax.vmap."""
-    return solve_ensemble.load_or_call_uncached(
-        system.with_gamma(0.0),  # TODO: bug here
+    out = solve_ensemble.load_or_call_uncached(
+        system.with_gamma(0.0),
         time_span,
         (
             sample_x_initial(system=system, n_samples=n_samples),
             sample_p_initial(system=system, n_samples=n_samples),
         ),
         _key,
+    )
+    return LangevinSimulationResult(
+        times=out.times,
+        x_points=out.x_points,
+        p_points=out.p_points,
+        system=system,
     )

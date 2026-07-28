@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
 
-    from classical_diffusion.system import (
+    from classical_diffusion.langevin._system import (
         HarmonicSystem,
         PeriodicSystem1D,
         PeriodicSystemFCC,

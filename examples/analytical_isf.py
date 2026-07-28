@@ -3,15 +3,13 @@ import numpy as np
 
 from classical_diffusion.analysis import plot_isf
 from classical_diffusion.langevin import (
-    TimeSpan,
-    solve_ensemble,
-)
-from classical_diffusion.plot import get_fancy_figure
-from classical_diffusion.system import (
     HarmonicSystem,
     plot_exact_flat_isf,
     plot_exact_harmonic_isf,
+    solve_ensemble,
 )
+from classical_diffusion.plot import get_fancy_figure
+from classical_diffusion.simulation import TimeSpan
 
 
 def _plot_harmonic_isf() -> None:
@@ -22,9 +20,8 @@ def _plot_harmonic_isf() -> None:
     result = solve_ensemble(
         system,
         TimeSpan(
-            t0=0,
-            t1=50 / system.gamma,
-            dt=0.01 / system.gamma,
+            t_end=50 / system.gamma,
+            n_steps=5000,
         ),
         (np.full((200, 1), 0.0), np.full((200, 1), 0.0)),
         _key=key,
@@ -68,9 +65,8 @@ def _plot_flat_isf() -> None:
     result = solve_ensemble(
         system,
         TimeSpan(
-            t0=0,
-            t1=50 / system.gamma,
-            dt=0.01 / system.gamma,
+            t_end=50 / system.gamma,
+            n_steps=5000,
         ),
         (np.full((200, 1), 0.0), np.full((200, 1), 0.0)),
         _key=key,
@@ -106,9 +102,8 @@ def _plot_flat_isf_2d() -> None:
     result = solve_ensemble(
         system,
         TimeSpan(
-            t0=0,
-            t1=50 / system.gamma,
-            dt=0.01 / system.gamma,
+            t_end=50 / system.gamma,
+            n_steps=5000,
         ),
         (np.full((200, 2), 0.0), np.full((200, 2), 0.0)),
         _key=key,
