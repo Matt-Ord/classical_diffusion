@@ -5,9 +5,15 @@ import numpy as np
 import scipy
 import sympy as sp
 
-from classical_diffusion.langevin import SimulationResult
+from classical_diffusion.langevin._langevin import (
+    SimulationResult,
+    SingleSimulationResult,
+)
 from classical_diffusion.plot import get_figure, get_measured_data
-from classical_diffusion.system import System, get_energy
+from classical_diffusion.system import (
+    System,
+    get_energy,
+)
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -16,7 +22,6 @@ if TYPE_CHECKING:
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
 
-    from classical_diffusion.langevin._langevin import SingleSimulationResult
     from classical_diffusion.plot import Measure
 
 
@@ -610,42 +615,6 @@ def plot_energy(
     return fig, ax
 
 
-def _partition_result(
-    result: SimulationResult, mask: np.ndarray[Any, np.dtype[np.bool_]]
-) -> tuple[
-    np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
-]:
-    return result.x_points[mask], result.p_points[mask]
-
-
-def split_escaped_and_trapped(
-    result: SimulationResult,
-) -> tuple[SimulationResult, SimulationResult]:
-    """Split result into trajectories trapped within or free to move over the barrier."""
-    energy = get_energy(result)[:, 0]
-
-    free_x_points, free_p_points = _partition_result(
-        result, energy > result.system.barrier_energy
-    )
-    trapped_x_points, trapped_p_points = _partition_result(
-        result, energy <= result.system.barrier_energy
-    )
-
-    free = SimulationResult(
-        times=result.times,
-        x_points=free_x_points,
-        p_points=free_p_points,
-        system=result.system,
-    )
-    trapped = SimulationResult(
-        times=result.times,
-        x_points=trapped_x_points,
-        p_points=trapped_p_points,
-        system=result.system,
-    )
-    return free, trapped
-
-
 def get_evolution_trapped_probability(result: SimulationResult) -> np.ndarray:
     """Retrun the evolution of the probability of a particle being trapped as sample size increases."""
     energies = get_energy(result.system, result.x_points, result.p_points)
@@ -656,10 +625,10 @@ def get_evolution_trapped_probability(result: SimulationResult) -> np.ndarray:
 
 
 def get_under_barrier_probability_ballistic(
-    x_points: np.ndarray, p_points: np.ndarray, barrier_energy: float
+    system: System, x_points: np.ndarray, p_points: np.ndarray, barrier_energy: float
 ) -> np.ndarray:
     """Return the probability of a particle being trapped under barrier."""
-    energies = get_energy(x_points, p_points)[:, 0]
+    energies = get_energy(system, x_points, p_points)[:, 0]
     is_over_barrier = energies < barrier_energy
     return np.sum(is_over_barrier) / is_over_barrier.size
 
@@ -677,7 +646,7 @@ def plot_probability_over_barrier(
             label=f"trajectory {trajectory}",
         )
 
-    ax.set_xlabel("trajectories")
+    ax.set_xlabel("times")
     ax.set_ylabel("probability")
 
     return fig, ax
@@ -690,20 +659,20 @@ def get_effective_mass(result: SimulationResult, idx: int = 0) -> float:
     return (result.system.kbt * result.system.m**2) / np.average(elastic_ps**2, axis=0)
 
 
-def get_effective_mass_free(result: SimulationResult) -> float:
-    """Return the effective mass from a weighted average."""
+def get_effective_mass_weighted(
+    result: SimulationResult, prob_under_barrier: float
+) -> float:
+    """Return the effective mass, correcting for trapped trajectories analytically."""
     elastic_ps = _get_average_elastic_p(result=result)[:, -1]
-    energy = get_energy(
-        system=result.system, x_points=result.x_points, p_points=result.p_points
-    )[:, 0]
-    beta = 1 / result.system.kbt
-    return (result.system.kbt * result.system.m**2) / np.average(
-        elastic_ps**2 * np.exp(-beta * energy), axis=0
-    )
+    avg_p2_given_escaped = np.average(elastic_ps**2, axis=0)
+
+    prob_escape = 1 - prob_under_barrier
+
+    return (result.system.kbt * result.system.m) / (prob_escape * avg_p2_given_escaped)
 
 
-def plot_effective_mass_periodic_1D(  # ruff:ignore[invalid-function-name]
-    effective_mass: np.ndarray[Any, np.dtype[np.floating]],
+def plot_effective_mass_ratio_periodic_1D(  # ruff:ignore[invalid-function-name]
+    effective_mass_ratio: np.ndarray[Any, np.dtype[np.floating]],
     inertial_mass: np.ndarray[Any, np.dtype[np.floating]],
     barrier_energy: np.ndarray[Any, np.dtype[np.floating]],
     *,
@@ -712,13 +681,10 @@ def plot_effective_mass_periodic_1D(  # ruff:ignore[invalid-function-name]
     """Plot the effective mass against inertial mass and barrier energy."""
     fig, ax = get_figure(ax)
 
-    scaled_inertial_mass = inertial_mass
-    scaled_barrier_energy = barrier_energy
-
     mesh = ax.pcolormesh(
-        scaled_barrier_energy,
-        scaled_inertial_mass,
-        effective_mass,
+        barrier_energy,
+        inertial_mass,
+        effective_mass_ratio,
         shading="auto",
         cmap="viridis",
     )

@@ -1,6 +1,7 @@
 """Representation of a Physical System."""
 
 from ._analysis import (
+    calculate_probability_under_barrier,
     get_characteristic_friction_time,
     plot_exact_flat_isf,
     plot_exact_gaussian_isf,
@@ -27,6 +28,7 @@ __all__ = [
     "PeriodicSystemFCC",
     "System",
     "UnitSystem",
+    "calculate_probability_under_barrier",
     "get_characteristic_friction_time",
     "get_diffusion_time",
     "get_energy",

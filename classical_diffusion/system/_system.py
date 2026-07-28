@@ -52,6 +52,21 @@ class UnitSystem:
         time_factor = np.sqrt(length_factor**2 * mass_factor / energy_factor)
         return value * time_factor
 
+    @overload
+    def mass_into(self, value: float, units: UnitSystem) -> float: ...
+    @overload
+    def mass_into[DT: np.dtype[np.number]](
+        self, value: np.ndarray[Any, DT], units: UnitSystem
+    ) -> np.ndarray[Any, DT]: ...
+    def mass_into(
+        self, value: float | np.ndarray[Any, np.dtype[np.number]], units: UnitSystem
+    ) -> float | np.ndarray[Any, np.dtype[np.number]]:
+        """Convert a time from SI units to the system's units."""
+        mass_factor = self.atomic_mass / units.atomic_mass
+        return value * mass_factor
+
+
+
 
 @dataclass(frozen=True, kw_only=True)
 class System:

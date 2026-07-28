@@ -2,10 +2,14 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import sympy as sp
+from scipy import integrate
+from scipy.optimize import brentq
 
 from classical_diffusion.plot import get_figure
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from matplotlib.axes import Axes
     from matplotlib.collections import QuadMesh
     from matplotlib.figure import Figure
@@ -213,7 +217,7 @@ def plot_exact_gaussian_isf(
     """Plot the exact ISF for a 1D flat (potential-free) surface."""
     fig, ax = get_figure(ax)
 
-    times = times if times is not None else np.linspace(0, 1e-12, 1000)
+    times = times if times is not None else np.linspace(0, 1e-11, 1000)
     isf_exact = get_exact_gaussian_isf(
         system=system, effective_mass=effective_mass, delta_k=delta_k, times=times
     )
@@ -240,7 +244,7 @@ def plot_exact_offset_gaussian_isf(  # ruff:ignore[too-many-arguments]
     """Plot the exact ISF for a 1D flat (potential-free) surface."""
     fig, ax = get_figure(ax)
 
-    times = times if times is not None else np.linspace(0, 1e-12, 1000)
+    times = times if times is not None else np.linspace(0, 1e-11, 1000)
     isf_exact = offset + (1 - offset) * get_exact_gaussian_isf(
         system=system, effective_mass=effective_mass, delta_k=delta_k, times=times
     )
@@ -284,3 +288,65 @@ def get_characteristic_friction_time(system: System) -> float:
     if system.gamma == 0:
         return 1.0
     return 1 / system.gamma
+
+
+def set_up_integral(system: System) -> Callable[[np.ndarray, np.ndarray], np.ndarray]:
+    potential_func = sp.lambdify(system.lambda_symbols, system.potential_expr, "numpy")
+    params = system.params
+
+    def integrand(x: np.ndarray, p: np.ndarray) -> np.ndarray:
+        return np.exp(
+            -1 / system.kbt * (p**2 / (2 * system.m) + potential_func(x, *params))
+        )
+
+    return integrand
+
+
+def calculate_partition_function(system: System) -> float:
+    integrand = set_up_integral(system)
+    z, _ = integrate.dblquad(
+        integrand,
+        -np.inf,
+        np.inf,  # p limits (outer)
+        lambda p: system.sampling_domain[0],  # x lower (inner) — fixed, one period
+        lambda p: system.sampling_domain[1],  # x upper (inner)
+    )
+    return z
+
+
+def get_x_domian_given_p(
+    system: System, barrier_energy: float
+) -> Callable[[float], float]:
+    potential_func = sp.lambdify(system.lambda_symbols, system.potential_expr, "numpy")
+    params = system.params
+
+    def x_t(p: float) -> float:
+        ke = p**2 / (2 * system.m)
+        if ke >= barrier_energy:
+            return 0.0
+        target = barrier_energy - ke  # V(x_t) = this
+        return brentq(
+            lambda x: potential_func(x, *params) - target,
+            0.0,
+            system.sampling_domain[1],
+        )
+
+    return x_t
+
+
+def calculate_probability_under_barrier(system: System, barrier_energy: float) -> float:
+
+    x_t = get_x_domian_given_p(system, barrier_energy)
+    integrand = set_up_integral(system)
+
+    integral_below, _ = integrate.dblquad(
+        integrand,
+        -np.inf,
+        np.inf,
+        lambda p: -x_t(p),
+        x_t,
+    )
+
+    z = calculate_partition_function(system)
+
+    return integral_below / z

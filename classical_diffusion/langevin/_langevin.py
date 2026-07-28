@@ -12,6 +12,7 @@ import sympy as sp
 from scipy.stats.sampling import NumericalInversePolynomial
 
 from classical_diffusion.system import (
+    System,
     UnitSystem,
     get_energy,
 )
@@ -22,9 +23,9 @@ if TYPE_CHECKING:
 
     from classical_diffusion.system import (
         CanonicalSystem,
-        PeriodicSystem1D,
-        System,
     )
+
+rng = np.random.default_rng()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -347,10 +348,43 @@ def sample_p_initial(
     system: System, n_samples: int
 ) -> np.ndarray[Any, np.dtype[np.floating]]:
 
-    rng = np.random.default_rng()
     p_std = np.sqrt(system.kbt * system.m)
 
     return rng.normal(0.0, p_std, size=(n_samples, system.n_dim))
+
+
+def make_free_point_sampler(system: System, barrier_energy: float):
+    x0, *_ = system.coordinate_symbols
+    potential_fn = sp.lambdify(
+        (x0, *system.parameter_symbols), system.potential_expr, "jax"
+    )
+    sigma = jnp.sqrt(system.m * system.kbt)
+    x_lo, x_hi = system.sampling_domain
+
+    def sample_one(key):
+        def cond_fn(state):
+            _, _, _, accepted = state
+            return ~accepted
+
+        def body_fn(state):
+            key, _x, _p, _ = state
+            key, kx, ku, kp = jax.random.split(key, 4)
+
+            x_candidate = jax.random.uniform(kx, minval=x_lo, maxval=x_hi)
+            V = potential_fn(x_candidate, *system.params)
+            x_ok = jax.random.uniform(ku) < jnp.exp(-V / system.kbt)
+
+            p_candidate = jax.random.normal(kp) * sigma
+            energy = p_candidate**2 / (2 * system.m) + V
+
+            accept = x_ok & (energy > barrier_energy)
+            return key, x_candidate, p_candidate, accept
+
+        init = (key, jnp.array(0.0), jnp.array(0.0), jnp.array(False))
+        _, x_final, p_final, _ = jax.lax.while_loop(cond_fn, body_fn, init)
+        return x_final, p_final
+
+    return jax.jit(jax.vmap(sample_one))
 
 
 @cached(_solve_ballistic_ensemble_path)
@@ -373,55 +407,49 @@ def solve_ballistic_ensemble[S: System](
     )
 
 
-def split_escaped_and_trapped(
-    x_points: np.ndarray,
-    p_points: np.ndarray,
-    system: PeriodicSystem1D,
-) -> tuple:
+def split_escaped_and_trapped(result: SimulationResult, barrier_energy: float) -> tuple:
     """Split result into trajectories trapped within or free to move over the barrier."""
-    energy = get_energy(system, x_points, p_points)
+    energy = get_energy(result.system, result.x_points, result.p_points)[:, 0]
 
-    free_mask = energy > system.barrier_energy
-    free_x_points, free_p_points = x_points[free_mask], p_points[free_mask]
-
-    trapped_mask = energy <= system.barrier_energy
-    trapped_x_points, trapped_p_points = x_points[trapped_mask], p_points[trapped_mask]
-
-    return (free_x_points, free_p_points), (trapped_x_points, trapped_p_points)
-
-
-def _solve_free_ballistic_ensemble_path(
-    system: PeriodicSystem1D,
-    time_span: TimeSpan,
-    n_samples: int,
-    _key: jax.Array,
-) -> Path:
-    filename = f"free_ballistic_{hash(system)}_{hash(time_span)}_{n_samples}.npz"
-    return Path("examples/data") / filename
-
-
-@cached(_solve_free_ballistic_ensemble_path)
-def solve_free_ballistic_ensemble[S: System](
-    system: PeriodicSystem1D,
-    time_span: TimeSpan,
-    n_samples: int,
-    _key: jax.Array,
-) -> tuple[SimulationResult[S], float]:
-    """Take an ensemble of uniformly distributed ballistic trajectories and solve free trajectories in parallel via jax.vmap. Also returns probability of being above the barrier."""
-    proposed_initial_positions = sample_x_initial(system=system, n_samples=n_samples)
-    proposed_initial_momenta = sample_p_initial(system=system, n_samples=n_samples)
-
-    (free_x_initial, free_p_initial), _ = split_escaped_and_trapped(
-        proposed_initial_positions, proposed_initial_momenta, system
+    free_mask = energy > barrier_energy
+    free_x_points, free_p_points = (
+        result.x_points[free_mask],
+        result.p_points[free_mask],
     )
 
-    result = solve_ensemble.load_or_call_uncached(
+    trapped_mask = energy <= barrier_energy
+    trapped_x_points, trapped_p_points = (
+        result.x_points[trapped_mask],
+        result.p_points[trapped_mask],
+    )
+
+    free_result = dataclasses.replace(
+        result, x_points=free_x_points, p_points=free_p_points
+    )
+    trapped_result = dataclasses.replace(
+        result, x_points=trapped_x_points, p_points=trapped_p_points
+    )
+
+    return free_result, trapped_result
+
+
+def solve_free_ballistic_ensemble[S: System](
+    system: System,
+    time_span: TimeSpan,
+    n_samples: int,
+    _key: jax.Array,
+    barrier_energy: float,
+) -> SimulationResult[S]:
+    """Take an ensemble of uniformly distributed ballistic trajectories and solve free trajectories in parallel via jax.vmap. Also returns probability of being above the barrier."""
+    sampler = make_free_point_sampler(system, barrier_energy)
+    keys = jax.random.split(jax.random.PRNGKey(0), n_samples)
+    free_x_initial, free_p_initial = sampler(keys)
+    free_x_initial = free_x_initial.reshape(-1, system.n_dim)
+    free_p_initial = free_p_initial.reshape(-1, system.n_dim)
+
+    return solve_ensemble.load_or_call_uncached(
         system.with_gamma(0.0),
         time_span,
-        (
-            free_x_initial,
-            free_p_initial,
-        ),
+        (free_x_initial, free_p_initial),
         _key,
     )
-    return result, free_x_initial.shape[0] / n_samples
