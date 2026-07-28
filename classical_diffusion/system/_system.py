@@ -19,9 +19,7 @@ class Lattice:
     """Parameters representing a simplified, discrete lattice representing a physical potential."""
 
     lattice_spacing: float
-    diff_time: (
-        float  # Average time to traverse one characteristic length (= lattice spacing?)
-    )
+    diff_time: float
     directions: jnp.ndarray
 
     @property
