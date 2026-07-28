@@ -62,11 +62,11 @@ def _run_hopping_simulation_jit(
         destination_key, dt_key, next_key = jax.random.split(rng_key, 3)
 
         # The total rate out of current position is sum of individual rates
-        lattice_sites, lattice_rates = lattice.get_rates(current_site)
-        total_rate = jnp.sum(lattice_rates)
+        hop_sites, hop_rates = lattice.get_rates(current_site)
+        total_rate = jnp.sum(hop_rates)
         next_time = current_time - jnp.log(jax.random.uniform(dt_key)) / total_rate
         next_site = jax.random.choice(
-            destination_key, lattice_sites, p=lattice_rates / total_rate
+            destination_key, hop_sites, p=hop_rates / total_rate
         )
 
         # For each sample time point that has passed in stochastic time till this jump occurred,

@@ -12,11 +12,6 @@ if TYPE_CHECKING:
 class Lattice(ABC):
     """Parameters representing a simplified, discrete lattice representing a physical potential."""
 
-    @property
-    @abstractmethod
-    def dim(self) -> int:
-        """The number of dimensions of the lattice."""
-
     @abstractmethod
     def x_points_from_indices(
         self, indices: np.ndarray[Any, np.dtype[np.int_]]
@@ -60,6 +55,5 @@ class Lattice1D(Lattice):
         jnp.ndarray[Any, jnp.dtype[jnp.float_]],
     ]:
         hop_sites = pos + jnp.array([[1], [-1]])
-        simple_hop_rate = 1 / self.hop_time
-        hop_rates = jnp.array([simple_hop_rate, simple_hop_rate])
+        hop_rates = jnp.array([1 / self.hop_time, 1 / self.hop_time])
         return (hop_sites, hop_rates)
