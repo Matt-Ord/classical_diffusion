@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, Unpack
 
 import matplotlib as mpl
@@ -13,31 +12,9 @@ if TYPE_CHECKING:
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
 
+    from classical_diffusion._simulation import SimulationResult
     from classical_diffusion.langevin._langevin import LangevinSimulationResult
     from classical_diffusion.plot import Measure
-
-
-@dataclass(frozen=True, kw_only=True)
-class SingleSimulationResult:
-    """Results of a simulation of the periodic Langevin equation."""
-
-    times: np.ndarray
-    x_points: np.ndarray[Any, np.dtype[np.floating]]
-
-
-@dataclass(frozen=True, kw_only=True)
-class SimulationResult:
-    """Results of a simulation ensemble."""
-
-    times: np.ndarray
-    x_points: np.ndarray[Any, np.dtype[np.floating]]
-
-    def __getitem__(self, idx: int) -> SingleSimulationResult:
-        """Return a single trajectory from the ensemble."""
-        return SingleSimulationResult(
-            times=self.times,
-            x_points=self.x_points[idx],
-        )
 
 
 def _calculate_total_offsset_multiplications_complex(
@@ -101,14 +78,13 @@ def plot_isf(
     fig, ax = get_figure(ax)
 
     isf = get_isf(result.x_points, **kwargs)
-    print(isf)
+
     n_trajectories = isf.shape[0]
     avg_isf = np.mean(isf, axis=0)
     sem_isf = np.std(isf, axis=0) / np.sqrt(n_trajectories)
 
     avg_data = get_measured_data(avg_isf, measure)
     sem_data = get_measured_data(sem_isf, measure)
-    print(avg_data)
 
     (line,) = ax.plot(result.times, avg_data)
     line.set_label("ISF")

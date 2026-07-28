@@ -1,8 +1,6 @@
 """Langevin Simulations of a Physical System."""
 
 from ._langevin import (  # ruff:ignore[unsorted-imports]
-    SimulationResult,
-    TimeSpan,
     solve_ensemble,
     solve_single,
     solve_ballistic_ensemble,
@@ -22,8 +20,6 @@ from ._analysis import (
 )
 
 __all__ = [
-    "SimulationResult",
-    "TimeSpan",
     "breakdown_ballistic_trajectory",
     "get_effective_mass",
     "get_under_barrier_probability_ballistic",

@@ -10,63 +10,28 @@ import numpy as np
 import sympy as sp
 from scipy.stats.sampling import NumericalInversePolynomial
 
-from classical_diffusion.analysis import SimulationResult, SingleSimulationResult
+from classical_diffusion._simulation import SimulationResult, SingleSimulationResult
 from classical_diffusion.util import cached, timed
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from classical_diffusion._simulation import TimeSpan
     from classical_diffusion.system import CanonicalSystem, System
 
 
 @dataclass(frozen=True, kw_only=True)
-class TimeSpan:
-    """Time-stepping parameters, bundled together."""
-
-    t0: float
-    t1: float
-    dt: float
-
-    def __post_init__(self) -> None:
-        if self.t1 <= self.t0:
-            msg = f"t1 must be greater than t0, got t0={self.t0}, t1={self.t1}"
-            raise ValueError(msg)
-        if self.dt <= 0:
-            msg = f"dt must be positive, got dt={self.dt}"
-            raise ValueError(msg)
-        if self.n_steps <= 1:
-            msg = f"Time span must have at least 2 steps, got n_steps={self.n_steps}"
-            raise ValueError(msg)
-
-    @property
-    def n_steps(self) -> int:
-        """The number of steps in the time span."""
-        return int((self.t1 - self.t0) / self.dt) + 1
-
-
-@dataclass(frozen=True, kw_only=True)
-class SingleLangevinSimulationResult(SingleSimulationResult):
+class SingleLangevinSimulationResult(SingleSimulationResult["System[Any]"]):
     """Results of a single simulation of the periodic Langevin equation."""
 
     p_points: np.ndarray[Any, np.dtype[np.floating]]
-    system: System[Any]
 
 
 @dataclass(frozen=True, kw_only=True)
-class LangevinSimulationResult(SimulationResult):
+class LangevinSimulationResult(SimulationResult["System[Any]"]):
     """Results of a simulation of the periodic Langevin equation."""
 
     p_points: np.ndarray[Any, np.dtype[np.floating]]
-    system: System[Any]
-
-    def __getitem__(self, idx: int) -> SingleLangevinSimulationResult:
-        """Return a single trajectory from the ensemble."""
-        return SingleLangevinSimulationResult(
-            times=self.times,
-            x_points=self.x_points[idx],
-            p_points=self.p_points[idx],
-            system=self.system,
-        )
 
 
 def _get_force_fn(
@@ -205,8 +170,8 @@ def solve_ensemble[S: System](
     n_run = xs0_jax.shape[0]
 
     times = jnp.linspace(
-        time_span.t0,
-        time_span.t1,
+        time_span.t_start,
+        time_span.t_end,
         time_span.n_steps,
         endpoint=True,
     )
@@ -327,7 +292,7 @@ def solve_ballistic_ensemble[S: System](
 ) -> SimulationResult[S]:
     """Solve an ensemble of ballistic trajectories in parallel via jax.vmap."""
     return solve_ensemble.load_or_call_uncached(
-        system.with_gamma(0.0),
+        system.with_gamma(0.0),  # TODO: bug here
         time_span,
         (
             sample_x_initial(system=system, n_samples=n_samples),

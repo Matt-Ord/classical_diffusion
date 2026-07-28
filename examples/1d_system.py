@@ -1,15 +1,13 @@
-import jax.numpy as jnp
 import jax.random as jrandom
 import numpy as np
 
+from classical_diffusion._simulation import TimeSpan
 from classical_diffusion.analysis import (
     plot_isf,
     plot_isf_with_delta_k,
 )
-from classical_diffusion.hopping._analysis import plot_hopping_isf
 from classical_diffusion.hopping._hopping import _solve_hopping_ensemble
 from classical_diffusion.langevin import (
-    TimeSpan,
     breakdown_ballistic_trajectory,
     get_effective_mass,
     get_under_barrier_probability_ballistic,
@@ -32,23 +30,22 @@ def _plot_1d_hopping_isf() -> None:
     total_time = 10000
     results = _solve_hopping_ensemble(
         lattice=lattice,
-        total_time=total_time,
-        initial_position=jnp.array([0.0]),
-        n_samples=100,
-        key=jrandom.PRNGKey(100),
+        time_span=TimeSpan(t_end=total_time, n_steps=total_time),
+        initial_condition=np.full((100, 1), 0.0),
+        key=jrandom.PRNGKey(seed=100),
     )
 
-    print(results.x_points.shape)
     fig, ax = get_fancy_figure()
 
-    delta_k = np.array([0.5 * 2 * np.pi / lattice.lattice_spacing])
-    _, ax, line_0 = plot_hopping_isf(
+    delta_k = (0.5 * 2 * np.pi / lattice.lattice_spacing,)
+    _, ax, line_0, _ = plot_isf(
         result=results,
         delta_k=delta_k,
-        total_time=total_time,
         ax=ax,
     )
     line_0.set_label("Hopping simulation")
+    ax.set_xlim(0, 500)
+    ax.set_ylim(0, 1)
 
     print("saving figure")
     fig.savefig("./examples/1d_lattice.isf.pdf")
@@ -77,9 +74,9 @@ def _plot_1d_periodic_isf() -> None:
     result = solve_ensemble(
         system,
         TimeSpan(
-            t0=0,
-            t1=40 / system.gamma,
-            dt=0.01 / system.gamma,
+            t_start=0,
+            t_end=40 / system.gamma,
+            n_steps=int((40 / system.gamma) / (0.01 / system.gamma)),
         ),
         (np.full((20, 1), 0.0), np.full((20, 1), 0.0)),
         _key=key,
@@ -98,9 +95,9 @@ def _plot_1d_periodic_isf() -> None:
     result = solve_ballistic_ensemble(
         system,
         TimeSpan(
-            t0=0,
-            t1=10 / system.gamma,
-            dt=0.01 / system.gamma,
+            t_start=0,
+            t_end=10 / system.gamma,
+            n_steps=int((10 / system.gamma) / (0.01 / system.gamma)),
         ),
         n_samples=10000,
         _key=key,
@@ -140,9 +137,9 @@ def _plot_1d_inelastic_trends() -> None:
     result = solve_ballistic_ensemble(
         system,
         TimeSpan(
-            t0=0,
-            t1=10 / system.gamma,
-            dt=0.01 / system.gamma,
+            t_start=0,
+            t_end=10 / system.gamma,
+            n_steps=int((10 / system.gamma) / (0.01 / system.gamma)),
         ),
         n_samples=10000,
         _key=key,
@@ -181,9 +178,9 @@ def _plot_effective_mass_isf() -> None:
     result = solve_ballistic_ensemble(
         system,
         TimeSpan(
-            t0=0,
-            t1=100 / system.gamma,
-            dt=0.01 / system.gamma,
+            t_start=0,
+            t_end=100 / system.gamma,
+            n_steps=int((100 / system.gamma) / (0.01 / system.gamma)),
         ),
         n_samples=2000,
         _key=key,
@@ -232,9 +229,9 @@ def _plot_effective_mass_offset_isf() -> None:
     result = solve_ballistic_ensemble(
         system,
         TimeSpan(
-            t0=0,
-            t1=100 / system.gamma,
-            dt=0.01 / system.gamma,
+            t_start=0,
+            t_end=100 / system.gamma,
+            n_steps=int((100 / system.gamma) / (0.01 / system.gamma)),
         ),
         n_samples=2000,
         _key=key,

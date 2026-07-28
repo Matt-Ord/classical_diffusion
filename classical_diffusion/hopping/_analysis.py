@@ -21,9 +21,6 @@ def hopping_isf(
 ) -> np.ndarray:
     """Calculate the average ISF of hopping trajectories with uneven times steps."""
     amplitude = np.exp(-1j * np.dot(positions, delta_k))
-    print("\nHOPPING ISF\n")
-    print(times)
-    print(amplitude)
 
     interpolated_fts = []
     for traj_index in range(len(amplitude)):
