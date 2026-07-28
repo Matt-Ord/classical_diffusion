@@ -1,3 +1,6 @@
+from dataclasses import replace
+from typing import Any
+
 import jax.random as jrandom
 import numpy as np
 
@@ -11,20 +14,15 @@ from classical_diffusion.langevin import (
     solve_ensemble,
 )
 from classical_diffusion.plot import get_fancy_figure
-from classical_diffusion.system import HarmonicSystem, PeriodicSystem1D, System
+from classical_diffusion.system import HarmonicSystem, PeriodicSystem1D
 
 
-def fold_results[S: System](
-    result: SimulationResult[S],
+def fold_results(
+    result: SimulationResult[Any],
     delta: float,
-) -> SimulationResult[S]:
+) -> SimulationResult[Any]:
     """Fold x into first BZ zone."""
-    return SimulationResult(
-        times=result.times,
-        x_points=result.x_points % delta,
-        p_points=result.p_points,
-        system=result.system,
-    )
+    return replace(result, x_points=result.x_points % delta)
 
 
 def _plot_xp_distributions_periodic() -> None:

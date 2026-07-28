@@ -1,0 +1,230 @@
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, Unpack
+
+import matplotlib as mpl
+import numpy as np
+import scipy
+
+from classical_diffusion.plot import get_figure, get_measured_data
+
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+    from matplotlib.collections import PolyCollection
+    from matplotlib.figure import Figure
+    from matplotlib.lines import Line2D
+
+    from classical_diffusion.langevin._langevin import LangevinSimulationResult
+    from classical_diffusion.plot import Measure
+
+
+@dataclass(frozen=True, kw_only=True)
+class SingleSimulationResult:
+    """Results of a simulation of the periodic Langevin equation."""
+
+    times: np.ndarray
+    x_points: np.ndarray[Any, np.dtype[np.floating]]
+
+
+@dataclass(frozen=True, kw_only=True)
+class SimulationResult:
+    """Results of a simulation ensemble."""
+
+    times: np.ndarray
+    x_points: np.ndarray[Any, np.dtype[np.floating]]
+
+    def __getitem__(self, idx: int) -> SingleSimulationResult:
+        """Return a single trajectory from the ensemble."""
+        return SingleSimulationResult(
+            times=self.times,
+            x_points=self.x_points[idx],
+        )
+
+
+def _calculate_total_offsset_multiplications_complex(
+    lhs: np.ndarray,
+    rhs: np.ndarray,
+) -> np.ndarray:
+    # scipy.signal.correlate handles complex numbers and conjugation automatically
+    # Note: correlate(a, b) conjugates the first argument by default
+    return scipy.signal.correlate(lhs, rhs, mode="full")[: lhs.size][::-1]
+
+
+def _time_average[DT: np.floating](
+    time_sum: np.ndarray[Any, np.dtype[DT]],
+) -> np.ndarray[Any, np.dtype[DT]]:
+    """Apply the time-averaging denominator."""
+    size = time_sum.shape[-1]
+    return time_sum / np.arange(1, size + 1)[::-1]
+
+
+def get_isf(
+    positions: np.ndarray[Any, np.dtype[np.floating]],
+    delta_k: tuple[float, ...],
+    *,
+    pairwise: bool = True,
+) -> np.ndarray[Any, np.dtype[np.complex128]]:
+    """Get the restored displacement of a wavepacket."""
+    if not pairwise:
+        phase = np.einsum(
+            "i,...ij->...j",
+            delta_k,
+            positions - positions[..., 0].reshape((*positions.shape[:-1], 1)),
+        )
+        return np.exp(1j * phase)
+
+    scatter = np.exp(-1j * np.einsum("i,...ij->...j", delta_k, positions))
+
+    # convolution_j = \sum_i^N-j e^(ik.x_i+j) e^(-ik.x_i)
+    convolution = np.apply_along_axis(
+        lambda m: _calculate_total_offsset_multiplications_complex(m, m),
+        axis=-1,
+        arr=scatter,
+    )
+    return _time_average(convolution)
+
+
+class ISFKwargs(TypedDict):
+    """Settings controlling how the ISF is computed from trajectory data."""
+
+    delta_k: tuple[float, ...]
+    pairwise: NotRequired[bool]
+
+
+def plot_isf(
+    result: SimulationResult,
+    *,
+    ax: Axes | None = None,
+    measure: Measure = "abs",
+    **kwargs: Unpack[ISFKwargs],
+) -> tuple[Figure, Axes, Line2D, PolyCollection]:
+    """Plot the ensemble-averaged ISF over time, with a shaded ±1 SEM band."""
+    fig, ax = get_figure(ax)
+
+    isf = get_isf(result.x_points, **kwargs)
+    print(isf)
+    n_trajectories = isf.shape[0]
+    avg_isf = np.mean(isf, axis=0)
+    sem_isf = np.std(isf, axis=0) / np.sqrt(n_trajectories)
+
+    avg_data = get_measured_data(avg_isf, measure)
+    sem_data = get_measured_data(sem_isf, measure)
+    print(avg_data)
+
+    (line,) = ax.plot(result.times, avg_data)
+    line.set_label("ISF")
+
+    fill = ax.fill_between(
+        result.times,
+        avg_data - sem_data,
+        avg_data + sem_data,
+        alpha=0.3,
+        label="SEM",
+    )
+    fill.set_color(line.get_color())
+
+    line.set_label("SEM")
+
+    ax.set_title("Intermediate Scattering Function Over Time")
+    ax.set_xlabel("Time / s")
+    ax.set_ylabel("ISF")
+
+    return fig, ax, line, fill
+
+
+def plot_isf_with_delta_k(
+    result: SimulationResult,
+    delta_k_values: np.ndarray[Any, np.dtype[np.floating]],
+    *,
+    ax: Axes | None = None,
+    measure: Measure = "abs",
+    pairwise: bool = True,
+) -> tuple[Figure, Axes]:
+    """Plot the ensemble-averaged ISF over time, with a shaded ±1 SEM band."""
+    fig, ax = get_figure(ax)
+
+    cmap = mpl.cm.viridis
+    norm = mpl.colors.Normalize(
+        vmin=np.min(delta_k_values).item(), vmax=np.max(delta_k_values).item()
+    )
+
+    for dk in delta_k_values:
+        dk_tuple = (dk,)
+        isf = get_isf(result.x_points, delta_k=dk_tuple, pairwise=pairwise)
+        avg_isf = np.mean(isf, axis=0)
+        avg_data = get_measured_data(avg_isf, measure)
+        ax.plot(result.times, avg_data, color=cmap(norm(dk)))
+
+    ax.set_title("Intermediate Scattering Function Over Time")
+    ax.set_xlabel("Time / s")
+    ax.set_ylabel("ISF")
+    fig.colorbar(
+        mpl.cm.ScalarMappable(norm=norm, cmap=cmap), ax=ax, label=r"$\Delta k$"
+    )
+
+    return fig, ax
+
+
+def plot_x_evolution(
+    result: SimulationResult,
+    *,
+    ax: Axes | None = None,
+    idx: int = 0,
+    n_trajectories: int = 1,
+) -> tuple[Figure, Axes, list[Line2D]]:
+    """Plot x against t for the first n_trajectories trajectories.
+
+    Raises
+    ------
+    ValueError
+        If `n_trajectories` exceeds the number of trajectories available in `result`.
+    """
+    fig, ax = get_figure(ax)
+
+    if n_trajectories > result.x_points.shape[0]:
+        msg = f"n_trajectories={n_trajectories} exceeds available trajectories ({result.x_points.shape[0]})"
+        raise ValueError(msg)
+
+    scaled_times = result.times
+
+    lines = []
+    for trajectory in range(n_trajectories):
+        (line,) = ax.plot(scaled_times, result.x_points[trajectory, idx])
+        lines.append(line)
+
+    ax.set_xlabel("$t / characteristic time$")
+    ax.set_ylabel("$x$")
+
+    return fig, ax, lines
+
+
+def plot_p_evolution(
+    result: LangevinSimulationResult,
+    *,
+    ax: Axes | None = None,
+    idx: int = 0,
+    n_trajectories: int = 1,
+) -> tuple[Figure, Axes, list[Line2D]]:
+    """Plot p against t for the first n_trajectories trajectories.
+
+    Raises
+    ------
+    ValueError
+        If `n_trajectories` exceeds the number of trajectories available in `result`.
+    """
+    fig, ax = get_figure(ax)
+
+    if n_trajectories > result.p_points.shape[0]:
+        msg = f"n_trajectories={n_trajectories} exceeds available trajectories ({result.p_points.shape[0]})"
+        raise ValueError(msg)
+
+    scaled_times = result.times
+
+    lines = []
+    for trajectory in range(n_trajectories):
+        (line,) = ax.plot(scaled_times, result.p_points[trajectory, idx])
+        lines.append(line)
+
+    ax.set_xlabel("$t / characteristic time$")
+    ax.set_ylabel("$p$")
+
+    return fig, ax, lines
