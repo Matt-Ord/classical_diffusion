@@ -8,8 +8,8 @@ from classical_diffusion.langevin._langevin import (
     LangevinSimulationResult,
     SingleLangevinSimulationResult,
 )
+from classical_diffusion.langevin._system import System
 from classical_diffusion.plot import get_figure
-from classical_diffusion.system._system import System
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes

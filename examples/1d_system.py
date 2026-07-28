@@ -1,26 +1,24 @@
 import jax.random as jrandom
 import numpy as np
 
-from classical_diffusion._simulation import TimeSpan
 from classical_diffusion.analysis import (
     plot_isf,
     plot_isf_with_delta_k,
     plot_x_evolution,
 )
 from classical_diffusion.langevin import (
+    PeriodicSystem1D,
     breakdown_ballistic_trajectory,
     get_effective_mass,
     get_under_barrier_probability_ballistic,
+    plot_exact_gaussian_isf,
+    plot_exact_offset_gaussian_isf,
+    plot_periodic_potential_1d,
     solve_ballistic_ensemble,
     solve_ensemble,
 )
 from classical_diffusion.plot import get_fancy_figure
-from classical_diffusion.system import (
-    PeriodicSystem1D,
-    plot_exact_gaussian_isf,
-    plot_exact_offset_gaussian_isf,
-    plot_periodic_potential_1d,
-)
+from classical_diffusion.simulation import TimeSpan
 
 
 def _plot_periodic_system() -> None:
@@ -46,7 +44,6 @@ def _plot_1d_periodic_isf() -> None:
     result = solve_ensemble(
         system,
         TimeSpan(
-            t_start=0,
             t_end=40 / system.gamma,
             n_steps=int((40 / system.gamma) / (0.01 / system.gamma)),
         ),
@@ -67,9 +64,8 @@ def _plot_1d_periodic_isf() -> None:
     result = solve_ballistic_ensemble(
         system,
         TimeSpan(
-            t_start=0,
             t_end=10 / system.gamma,
-            n_steps=int((10 / system.gamma) / (0.01 / system.gamma)),
+            n_steps=1000,
         ),
         n_samples=10000,
         _key=key,
@@ -109,9 +105,8 @@ def _plot_1d_inelastic_trends() -> None:
     result = solve_ballistic_ensemble(
         system,
         TimeSpan(
-            t_start=0,
             t_end=10 / system.gamma,
-            n_steps=int((10 / system.gamma) / (0.01 / system.gamma)),
+            n_steps=1000,
         ),
         n_samples=10000,
         _key=key,
@@ -150,9 +145,8 @@ def _plot_effective_mass_isf() -> None:
     result = solve_ballistic_ensemble(
         system,
         TimeSpan(
-            t_start=0,
             t_end=100 / system.gamma,
-            n_steps=int((100 / system.gamma) / (0.01 / system.gamma)),
+            n_steps=10000,
         ),
         n_samples=2000,
         _key=key,
@@ -201,9 +195,8 @@ def _plot_effective_mass_offset_isf() -> None:
     result = solve_ballistic_ensemble(
         system,
         TimeSpan(
-            t_start=0,
             t_end=100 / system.gamma,
-            n_steps=int((100 / system.gamma) / (0.01 / system.gamma)),
+            n_steps=10000,
         ),
         n_samples=2000,
         _key=key,
@@ -264,9 +257,8 @@ def _plot_1d_langevin_trajectory() -> None:
     result = solve_ensemble(
         system,
         TimeSpan(
-            t_start=0,
             t_end=40 / system.gamma,
-            n_steps=int((40 / system.gamma) / (0.01 / system.gamma)),
+            n_steps=4000,
         ),
         (np.full((20, 1), 0.0), np.full((20, 1), 0.0)),
         _key=key,
@@ -283,9 +275,9 @@ def _plot_1d_langevin_trajectory() -> None:
 
 
 if __name__ == "__main__":
-    # _plot_1d_langevin_trajectory()
-    # _plot_periodic_system()
+    _plot_1d_langevin_trajectory()
+    _plot_periodic_system()
     _plot_1d_periodic_isf()
-    # _plot_1d_inelastic_trends()
-    # _plot_effective_mass_isf()
-    # _plot_effective_mass_offset_isf()
+    _plot_1d_inelastic_trends()
+    _plot_effective_mass_isf()
+    _plot_effective_mass_offset_isf()

@@ -5,18 +5,22 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from classical_diffusion._simulation import SimulationResult
-from classical_diffusion.system._system import Lattice
+from classical_diffusion.hopping._system import Lattice
+from classical_diffusion.simulation import SimulationResult
 from classical_diffusion.util import timed
 
 if TYPE_CHECKING:
-    from classical_diffusion._simulation import TimeSpan
+    from classical_diffusion.simulation import TimeSpan
 
 
 class HoppingSimulationResult[L: Lattice[Any]](SimulationResult[L]):
-    _x_indices: np.ndarray
-
-    def __init__(self, *, system: L, x_indices: np.ndarray, times: np.ndarray) -> None:
+    def __init__(
+        self,
+        *,
+        system: L,
+        x_indices: np.ndarray[Any, np.dtype[np.int_]],
+        times: np.ndarray[Any, np.dtype[np.floating]],
+    ) -> None:
         self._system = system
         self._x_indices = x_indices
         self._times = times
@@ -94,12 +98,10 @@ def _run_hopping_simulation_jit(
 
 
 @timed
-def _solve_hopping_ensemble[L: Lattice[Any]](
+def solve_ensemble[L: Lattice[Any]](
     lattice: L,
     time_span: TimeSpan,
-    # The initial index, first index per n_sample, second index is the dimension of the lattice
-    # TODO: discuss using index vs using x coordinates for initial position
-    initial_condition: np.ndarray[tuple[int, int], np.dtype[np.floating]],
+    initial_condition: np.ndarray[tuple[int, int], np.dtype[np.int_]],
     key: jax.Array,
 ) -> HoppingSimulationResult[L]:
     """Solve the hopping ensemble."""

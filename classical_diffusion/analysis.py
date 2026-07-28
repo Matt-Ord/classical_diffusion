@@ -12,9 +12,9 @@ if TYPE_CHECKING:
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
 
-    from classical_diffusion._simulation import SimulationResult
     from classical_diffusion.langevin._langevin import LangevinSimulationResult
     from classical_diffusion.plot import Measure
+    from classical_diffusion.simulation import SimulationResult
 
 
 def _calculate_total_offsset_multiplications_complex(

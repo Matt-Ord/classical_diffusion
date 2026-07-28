@@ -1,11 +1,9 @@
 import zlib
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Any, final, override
+from typing import final, override
 
 import jax
-import jax.numpy as jnp
 import numpy as np
 import sympy as sp
 
@@ -13,68 +11,6 @@ import sympy as sp
 def _hash_sympy_expr(expr: sp.Expr) -> int:
     stable_string = sp.srepr(expr)
     return zlib.crc32(stable_string.encode("utf-8"))
-
-
-@dataclass(frozen=True, kw_only=True)
-class Lattice(ABC):
-    """Parameters representing a simplified, discrete lattice representing a physical potential."""
-
-    lattice_spacing: float
-    hop_time: float
-    directions: jnp.ndarray
-
-    @property
-    def dim(self) -> int:
-        """The number of dimensions of the lattice."""
-        return len(self.directions) // 2
-
-    @abstractmethod
-    def transform_indices_to_coordinates(
-        self, indices: np.ndarray[Any, np.dtype[np.int_]]
-    ) -> np.ndarray[Any, np.dtype[np.floating]]:
-        pass
-
-    @abstractmethod
-    def get_rates(self, pos: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
-        pass
-
-
-@jax.tree_util.register_pytree_node_class
-@dataclass(frozen=True, init=False)
-class Lattice1D(Lattice):
-    """Parameters representing a simplified, discrete 1D lattice representing a physical potential."""
-
-    def __init__(self, lattice_spacing: float, hop_time: float) -> None:
-        super().__init__(
-            lattice_spacing=lattice_spacing,
-            hop_time=hop_time,
-            directions=jnp.array([[1], [-1]]),
-        )
-
-    def transform_indices_to_coordinates(
-        self, indices: np.ndarray[Any, np.dtype[np.int_]]
-    ) -> np.ndarray[Any, np.dtype[np.floating]]:
-        return indices * self.lattice_spacing
-
-    def get_rates(self, pos: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
-        hop_sites = pos + jnp.array(self.directions)
-        simple_hop_rate = 1 / self.hop_time
-        hop_rates = jnp.array([simple_hop_rate, simple_hop_rate])
-        return (hop_sites, hop_rates)
-
-    def tree_flatten(self) -> tuple[tuple[float, float, jnp.ndarray], None]:
-        return (self.lattice_spacing, self.hop_time, self.directions), None
-
-    @classmethod
-    def tree_unflatten(
-        cls, aux_data: None, children: tuple[float, float, jnp.ndarray]
-    ) -> Lattice1D:
-        lattice_spacing, hop_time, directions = children
-        new_object = cls.__new__(cls)
-        super(Lattice1D, new_object).__init__(
-            lattice_spacing=lattice_spacing, hop_time=hop_time, directions=directions
-        )
-        return new_object
 
 
 @dataclass(frozen=True, kw_only=True)
