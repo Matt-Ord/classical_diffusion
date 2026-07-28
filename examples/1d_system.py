@@ -247,7 +247,7 @@ def _plot_effective_mass_offset_isf() -> None:
     """
 
 
-def _plot_1d_langevin_trajectory() -> None:
+def _plot_1d_trajectory() -> None:
     key = jrandom.PRNGKey(100)
 
     system = PeriodicSystem1D(
@@ -266,16 +266,13 @@ def _plot_1d_langevin_trajectory() -> None:
 
     fig, ax = get_fancy_figure()
 
-    _, _, _ = plot_x_evolution(
-        result=result,
-        ax=ax,
-    )
+    _, _, _ = plot_x_evolution(result=result, ax=ax)
 
     fig.savefig("./examples/1d_system.trajectory.pdf")
 
 
 if __name__ == "__main__":
-    _plot_1d_langevin_trajectory()
+    _plot_1d_trajectory()
     _plot_periodic_system()
     _plot_1d_periodic_isf()
     _plot_1d_inelastic_trends()

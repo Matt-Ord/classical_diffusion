@@ -19,6 +19,7 @@ from ._analysis import (
     breakdown_ballistic_trajectory,
     get_effective_mass,
     plot_effective_mass_periodic_1D,
+    split_escaped_and_trapped,
 )
 from ._system import (
     CanonicalSystem,

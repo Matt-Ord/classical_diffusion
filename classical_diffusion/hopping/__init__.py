@@ -8,5 +8,4 @@ __all__ = [
     "Lattice",
     "Lattice1D",
     "solve_ensemble",
-    "solve_hopping_ensemble",
 ]

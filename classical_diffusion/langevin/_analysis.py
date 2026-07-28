@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
 
+    from classical_diffusion.langevin import PeriodicSystem1D
+
 
 def _get_sampled_kinetic_energies[T: LangevinSimulationResult](
     result: T,
@@ -93,7 +95,7 @@ def split_result(
     """Split a simulation result in half along the time axis, each restarting at t=0."""
     xs1, xs2 = np.split(result.x_points, 2, axis=-1)
     ps1, ps2 = np.split(result.p_points, 2, axis=-1)
-    times1, times2 = np.split(result._times, 2)
+    times1, times2 = np.split(result.times, 2)
 
     times1 -= times1[0]
     times2 -= times2[0]
@@ -244,11 +246,11 @@ def _get_elastic_p_estimates(
     np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
 ]:
     """Return the elastic (ballistic straight-line) momentum estimate per trajectory across all dimensions."""
-    n_times = len(result._times)
+    n_times = len(result.times)
     n_samples = min(max_samples, n_times)
     sample_indices = jnp.linspace(0, n_times - 1, n_samples, dtype=int)
 
-    t_sampled = result._times[sample_indices]
+    t_sampled = result.times[sample_indices]
     x_sampled = result.x_points[:, :, sample_indices]
 
     v_elastic = _get_elastic_velocity_estimates(t_sampled, x_sampled)
@@ -332,11 +334,11 @@ def _get_average_elastic_p(
     result: LangevinSimulationResult, *, max_samples: int = 100
 ) -> np.ndarray[Any, np.dtype[np.floating]]:
     """Return the elastic (ballistic straight-line) momentum estimate per trajectory across all dimensions."""
-    n_times = len(result._times)
+    n_times = len(result.times)
     n_samples = min(max_samples, n_times)
     sample_indices = np.linspace(0, n_times - 1, n_samples, dtype=int)
 
-    t_sampled = result._times[sample_indices]
+    t_sampled = result.times[sample_indices]
     x_sampled = result.x_points[:, :, sample_indices]
 
     v_elastic = _get_average_elastic_velocity(t_sampled, x_sampled)
@@ -400,7 +402,9 @@ def plot_2d_trajectory(
     return fig, ax, line
 
 
-def get_energy(result: LangevinSimulationResult) -> jnp.ndarray:
+def get_energy(
+    result: LangevinSimulationResult,
+) -> np.ndarray[Any, np.dtype[np.floating]]:
     """Return the energy of the system."""
     potential = sp.lambdify(
         (*result.system.coordinate_symbols, *result.system.parameter_symbols),
@@ -423,7 +427,7 @@ def plot_energy(
     energy = get_energy(result)
     for trajectory in range(n_trajectories):
         ax.plot(
-            result._times,
+            result.times,
             energy[trajectory, :],
             label=f"trajectory {trajectory}",
         )
@@ -468,7 +472,7 @@ def plot_probability_over_barrier(
     probability_evolution = get_evolution_trapped_probability(result)
     for trajectory in range(n_trajectories):
         ax.plot(
-            result._times,
+            result.times,
             probability_evolution[trajectory, :],
             label=f"trajectory {trajectory}",
         )
@@ -512,3 +516,34 @@ def plot_effective_mass_periodic_1D(  # ruff:ignore[invalid-function-name]
     ax.set_ylabel("Dimenesionless Inertial mass")
 
     return fig, ax, mesh
+
+
+def split_escaped_and_trapped(
+    result: LangevinSimulationResult[PeriodicSystem1D],
+) -> tuple[
+    LangevinSimulationResult[PeriodicSystem1D],
+    LangevinSimulationResult[PeriodicSystem1D],
+]:
+    """Split result into trajectories trapped within or free to move over the barrier."""
+    energy = get_energy(result)[:, 0]
+
+    free_x_points, free_p_points = _partition_result(
+        result, energy > result.system.barrier_energy
+    )
+    trapped_x_points, trapped_p_points = _partition_result(
+        result, energy <= result.system.barrier_energy
+    )
+
+    free = LangevinSimulationResult(
+        times=result.times,
+        x_points=free_x_points,
+        p_points=free_p_points,
+        system=result.system,
+    )
+    trapped = LangevinSimulationResult(
+        times=result.times,
+        x_points=trapped_x_points,
+        p_points=trapped_p_points,
+        system=result.system,
+    )
+    return free, trapped
