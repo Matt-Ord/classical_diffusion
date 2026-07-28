@@ -93,7 +93,7 @@ def split_result(
     """Split a simulation result in half along the time axis, each restarting at t=0."""
     xs1, xs2 = np.split(result.x_points, 2, axis=-1)
     ps1, ps2 = np.split(result.p_points, 2, axis=-1)
-    times1, times2 = np.split(result.times, 2)
+    times1, times2 = np.split(result._times, 2)
 
     times1 -= times1[0]
     times2 -= times2[0]
@@ -244,11 +244,11 @@ def _get_elastic_p_estimates(
     np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
 ]:
     """Return the elastic (ballistic straight-line) momentum estimate per trajectory across all dimensions."""
-    n_times = len(result.times)
+    n_times = len(result._times)
     n_samples = min(max_samples, n_times)
     sample_indices = jnp.linspace(0, n_times - 1, n_samples, dtype=int)
 
-    t_sampled = result.times[sample_indices]
+    t_sampled = result._times[sample_indices]
     x_sampled = result.x_points[:, :, sample_indices]
 
     v_elastic = _get_elastic_velocity_estimates(t_sampled, x_sampled)
@@ -332,11 +332,11 @@ def _get_average_elastic_p(
     result: LangevinSimulationResult, *, max_samples: int = 100
 ) -> np.ndarray[Any, np.dtype[np.floating]]:
     """Return the elastic (ballistic straight-line) momentum estimate per trajectory across all dimensions."""
-    n_times = len(result.times)
+    n_times = len(result._times)
     n_samples = min(max_samples, n_times)
     sample_indices = np.linspace(0, n_times - 1, n_samples, dtype=int)
 
-    t_sampled = result.times[sample_indices]
+    t_sampled = result._times[sample_indices]
     x_sampled = result.x_points[:, :, sample_indices]
 
     v_elastic = _get_average_elastic_velocity(t_sampled, x_sampled)
@@ -423,7 +423,7 @@ def plot_energy(
     energy = get_energy(result)
     for trajectory in range(n_trajectories):
         ax.plot(
-            result.times,
+            result._times,
             energy[trajectory, :],
             label=f"trajectory {trajectory}",
         )
@@ -468,7 +468,7 @@ def plot_probability_over_barrier(
     probability_evolution = get_evolution_trapped_probability(result)
     for trajectory in range(n_trajectories):
         ax.plot(
-            result.times,
+            result._times,
             probability_evolution[trajectory, :],
             label=f"trajectory {trajectory}",
         )

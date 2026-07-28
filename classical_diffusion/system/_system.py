@@ -1,7 +1,8 @@
 import zlib
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import final, override
+from typing import Any, final, override
 
 import jax
 import jax.numpy as jnp
@@ -15,7 +16,7 @@ def _hash_sympy_expr(expr: sp.Expr) -> int:
 
 
 @dataclass(frozen=True, kw_only=True)
-class Lattice:
+class Lattice(ABC):
     """Parameters representing a simplified, discrete lattice representing a physical potential."""
 
     lattice_spacing: float
@@ -27,12 +28,15 @@ class Lattice:
         """The number of dimensions of the lattice."""
         return len(self.directions) // 2
 
-    @property
-    def r_hop(self) -> float:
-        """Rate of hopping to a new lattice site."""
-        return 1 / self.hop_time
+    @abstractmethod
+    def transform_indices_to_coordinates(
+        self, indices: np.ndarray[Any, np.dtype[np.int_]]
+    ) -> np.ndarray[Any, np.dtype[np.floating]]:
+        pass
 
-    # More properties likely required
+    @abstractmethod
+    def get_rates(self, pos: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        pass
 
 
 @jax.tree_util.register_pytree_node_class
@@ -40,12 +44,23 @@ class Lattice:
 class Lattice1D(Lattice):
     """Parameters representing a simplified, discrete 1D lattice representing a physical potential."""
 
-    def __init__(self, lattice_spacing: float, diff_time: float) -> None:
+    def __init__(self, lattice_spacing: float, hop_time: float) -> None:
         super().__init__(
             lattice_spacing=lattice_spacing,
-            hop_time=diff_time,
+            hop_time=hop_time,
             directions=jnp.array([[1], [-1]]),
         )
+
+    def transform_indices_to_coordinates(
+        self, indices: np.ndarray[Any, np.dtype[np.int_]]
+    ) -> np.ndarray[Any, np.dtype[np.floating]]:
+        return indices * self.lattice_spacing
+
+    def get_rates(self, pos: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        hop_sites = pos + jnp.array(self.directions)
+        simple_hop_rate = 1 / self.hop_time
+        hop_rates = jnp.array([simple_hop_rate, simple_hop_rate])
+        return (hop_sites, hop_rates)
 
     def tree_flatten(self) -> tuple[tuple[float, float, jnp.ndarray], None]:
         return (self.lattice_spacing, self.hop_time, self.directions), None
@@ -54,10 +69,10 @@ class Lattice1D(Lattice):
     def tree_unflatten(
         cls, aux_data: None, children: tuple[float, float, jnp.ndarray]
     ) -> Lattice1D:
-        lattice_spacing, diff_time, directions = children
+        lattice_spacing, hop_time, directions = children
         new_object = cls.__new__(cls)
         super(Lattice1D, new_object).__init__(
-            lattice_spacing=lattice_spacing, diff_time=diff_time, directions=directions
+            lattice_spacing=lattice_spacing, hop_time=hop_time, directions=directions
         )
         return new_object
 

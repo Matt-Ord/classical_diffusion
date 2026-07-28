@@ -85,11 +85,11 @@ def plot_isf(
     avg_data = get_measured_data(avg_isf, measure)
     sem_data = get_measured_data(sem_isf, measure)
 
-    (line,) = ax.plot(result.times, avg_data)
+    (line,) = ax.plot(result._times, avg_data)
     line.set_label("ISF")
 
     fill = ax.fill_between(
-        result.times,
+        result._times,
         avg_data - sem_data,
         avg_data + sem_data,
         alpha=0.3,
@@ -127,7 +127,7 @@ def plot_isf_with_delta_k(
         isf = get_isf(result.x_points, delta_k=dk_tuple, pairwise=pairwise)
         avg_isf = np.mean(isf, axis=0)
         avg_data = get_measured_data(avg_isf, measure)
-        ax.plot(result.times, avg_data, color=cmap(norm(dk)))
+        ax.plot(result._times, avg_data, color=cmap(norm(dk)))
 
     ax.set_title("Intermediate Scattering Function Over Time")
     ax.set_xlabel("Time / s")
@@ -159,7 +159,7 @@ def plot_x_evolution(
         msg = f"n_trajectories={n_trajectories} exceeds available trajectories ({result.x_points.shape[0]})"
         raise ValueError(msg)
 
-    scaled_times = result.times
+    scaled_times = result._times
 
     lines = []
     for trajectory in range(n_trajectories):
