@@ -44,7 +44,7 @@ def plot_hopping_isf(
 
     avg_isf = hopping_isf(
         result.x_points,
-        result.times,
+        result._times,
         delta_k,
     )
 
@@ -52,8 +52,8 @@ def plot_hopping_isf(
 
     # Find the interpolated times steps
     start = 0
-    1 / result.lattice.diff_time
-    stop = max(max(traj) for traj in result.times)
+    1 / result.system.hop_time
+    stop = max(max(traj) for traj in result._times)
 
     (line,) = ax.plot(np.linspace(start, stop, len(avg_data)), avg_data)
     line.set_label("ISF")

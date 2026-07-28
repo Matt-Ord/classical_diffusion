@@ -14,19 +14,41 @@ class SingleSimulationResult[S: Any]:
     x_points: np.ndarray[Any, np.dtype[np.floating]]
 
 
-@dataclass(frozen=True, kw_only=True)
 class SimulationResult[S: Any]:
     """Results of a simulation ensemble."""
 
-    times: np.ndarray
-    x_points: np.ndarray[Any, np.dtype[np.floating]]
-    system: S
+    _times: np.ndarray
+    _x_points: np.ndarray[Any, np.dtype[np.floating]]
+    _system: S
+
+    def __init__(
+        self,
+        *,
+        times: np.ndarray,
+        x_points: np.ndarray[Any, np.dtype[np.floating]],
+        system: S,
+    ) -> None:
+        _times = times
+        _x_points = x_points
+        _system = system
+
+    @property
+    def times(self) -> np.ndarray:
+        return self._times
+
+    @property
+    def x_points(self) -> np.ndarray[Any, np.dtype[np.floating]]:
+        return self._x_points
+
+    @property
+    def system(self) -> S:
+        return self._system
 
     def __getitem__(self, idx: int) -> SingleSimulationResult[S]:
         """Return a single trajectory from the ensemble."""
         return SingleSimulationResult[S](
             system=self.system,
-            times=self.times,
+            times=self._times,
             x_points=self.x_points[idx],
         )
 

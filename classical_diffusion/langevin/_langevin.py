@@ -27,11 +27,27 @@ class SingleLangevinSimulationResult(SingleSimulationResult["System[Any]"]):
     p_points: np.ndarray[Any, np.dtype[np.floating]]
 
 
-@dataclass(frozen=True, kw_only=True)
 class LangevinSimulationResult(SimulationResult["System[Any]"]):
     """Results of a simulation of the periodic Langevin equation."""
 
-    p_points: np.ndarray[Any, np.dtype[np.floating]]
+    _p_points: np.ndarray[Any, np.dtype[np.floating]]
+
+    def __init__(
+        self,
+        *,
+        system: System[Any],
+        x_points: np.ndarray[Any, np.dtype[np.floating]],
+        p_points: np.ndarray,
+        times: np.ndarray,
+    ) -> None:
+        self._system = system
+        self._x_points = x_points
+        self._p_points = p_points
+        self._times = times
+
+    @property
+    def p_points(self) -> np.ndarray[Any, np.dtype[np.floating]]:
+        return self._p_points
 
 
 def _get_force_fn(
