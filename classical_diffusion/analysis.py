@@ -78,7 +78,6 @@ def plot_isf(
     fig, ax = get_figure(ax)
 
     isf = get_isf(result.x_points, **kwargs)
-
     n_trajectories = isf.shape[0]
     avg_isf = np.mean(isf, axis=0)
     sem_isf = np.std(isf, axis=0) / np.sqrt(n_trajectories)

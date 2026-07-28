@@ -250,7 +250,9 @@ def _solve_hopping_ensemble_old[L: Lattice[Any]](
     """Solve the hopping ensemble."""
     # Split the key for each sample
     keys = jax.random.split(key, n_samples)
-    max_steps = 10000  # (int(total_time / lattice.diff_time) * 10)  # take average number of steps required and set the limit to be 10 times this
+    max_steps = int(
+        total_time * 1.5
+    )  # take average number of steps required and set the limit to be 10 times this
 
     # Run the simulation for each sample
     results = jax.vmap(

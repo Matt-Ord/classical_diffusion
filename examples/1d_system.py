@@ -16,7 +16,6 @@ from classical_diffusion.langevin import (
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.system import (
-    Lattice1D,
     PeriodicSystem1D,
     plot_exact_gaussian_isf,
     plot_exact_offset_gaussian_isf,
@@ -283,10 +282,8 @@ def _plot_effective_mass_offset_isf() -> None:
 
 
 if __name__ == "__main__":
-    print("running")
-    _plot_1d_hopping_isf()
-    # _plot_periodic_system()
-    # _plot_1d_periodic_isf()
-    # _plot_1d_inelastic_trends()
-    # _plot_effective_mass_isf()
-    # _plot_effective_mass_offset_isf()
+    _plot_periodic_system()
+    _plot_1d_periodic_isf()
+    _plot_1d_inelastic_trends()
+    _plot_effective_mass_isf()
+    _plot_effective_mass_offset_isf()
