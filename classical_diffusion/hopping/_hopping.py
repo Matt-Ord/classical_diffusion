@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from classical_diffusion.hopping._system import Lattice
+from classical_diffusion.hopping._system import CanonicalLattice, Lattice
 from classical_diffusion.simulation import SimulationResult
 from classical_diffusion.util import timed
 
@@ -32,7 +32,7 @@ class HoppingSimulationResult[L: Lattice](SimulationResult[L]):
 
 @jax.jit
 def _run_hopping_simulation_jit(
-    lattice: Lattice,
+    system: CanonicalLattice,
     initial_position: jnp.ndarray,
     sample_times: jnp.ndarray,
     key: jax.Array,
@@ -45,24 +45,24 @@ def _run_hopping_simulation_jit(
     sample_positions = jnp.zeros((n_times, n_dimensions), dtype=initial_position.dtype)
 
     # Outer loop state: (sample_idx, current_time, current_position, sample_positions, rng_key)
-    init_outer_state = (0, jnp.float64(0.0), initial_position, sample_positions, key)
+    init_outer_state = (0, 0.0, initial_position, sample_positions, key)
 
     def outer_condition(
-        state: tuple[int, jnp.ndarray, jnp.ndarray, jnp.ndarray, jax.Array],
+        state: tuple[int, float | jnp.ndarray, jnp.ndarray, jnp.ndarray, jax.Array],
     ) -> bool:
         sample_idx, _, _, _, _ = state
         return sample_idx < n_times
 
     def outer_body(
-        state: tuple[int, jnp.ndarray, jnp.ndarray, jnp.ndarray, jax.Array],
-    ) -> tuple[int, jnp.ndarray, jnp.ndarray, jnp.ndarray, jax.Array]:
+        state: tuple[int, float | jnp.ndarray, jnp.ndarray, jnp.ndarray, jax.Array],
+    ) -> tuple[int, float | jnp.ndarray, jnp.ndarray, jnp.ndarray, jax.Array]:
         sample_idx, current_time, current_site, sample_positions, rng_key = state
 
         # Split key for destination, exponential time step, and next loop state
         destination_key, dt_key, next_key = jax.random.split(rng_key, 3)
 
         # The total rate out of current position is sum of individual rates
-        hop_sites, hop_rates = lattice.get_rates(current_site)
+        hop_sites, hop_rates = system.get_rates(current_site)
         total_rate = jnp.sum(hop_rates)
         next_time = current_time - jnp.log(jax.random.uniform(dt_key)) / total_rate
         next_site = jax.random.choice(
@@ -101,7 +101,7 @@ def _run_hopping_simulation_jit(
 
 @timed
 def solve_ensemble[L: Lattice = Lattice](
-    lattice: L,
+    system: L,
     time_span: TimeSpan,
     initial_condition: np.ndarray[tuple[int, int], np.dtype[np.int_]],
     key: jax.Array,
@@ -113,10 +113,10 @@ def solve_ensemble[L: Lattice = Lattice](
     results = jax.vmap(
         _run_hopping_simulation_jit,
         in_axes=(None, 0, None, 0),
-    )(lattice.as_canonical(), initial_condition, times, keys)
+    )(system.as_canonical(), initial_condition, times, keys)
 
     return HoppingSimulationResult[L](
-        system=lattice,
+        system=system,
         times=np.array(times),
         x_indices=np.einsum("ijk->ikj", np.array(results)),
     )
