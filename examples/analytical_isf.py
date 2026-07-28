@@ -1,9 +1,9 @@
 import jax.random as jrandom
 import numpy as np
 
+from classical_diffusion.analysis import plot_isf
 from classical_diffusion.langevin import (
     TimeSpan,
-    plot_isf,
     solve_ensemble,
 )
 from classical_diffusion.plot import get_fancy_figure

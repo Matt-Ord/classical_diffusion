@@ -10,6 +10,7 @@ import numpy as np
 import sympy as sp
 from scipy.stats.sampling import NumericalInversePolynomial
 
+from classical_diffusion.analysis import SimulationResult, SingleSimulationResult
 from classical_diffusion.util import cached, timed
 
 if TYPE_CHECKING:
@@ -44,27 +45,23 @@ class TimeSpan:
 
 
 @dataclass(frozen=True, kw_only=True)
-class SingleSimulationResult[S: System[Any] = System[Any]]:
-    """Results of a simulation of the periodic Langevin equation."""
+class SingleLangevinSimulationResult(SingleSimulationResult):
+    """Results of a single simulation of the periodic Langevin equation."""
 
-    times: np.ndarray
-    x_points: np.ndarray[Any, np.dtype[np.floating]]
     p_points: np.ndarray[Any, np.dtype[np.floating]]
-    system: S
+    system: System[Any]
 
 
 @dataclass(frozen=True, kw_only=True)
-class SimulationResult[S: System[Any] = System[Any]]:
+class LangevinSimulationResult(SimulationResult):
     """Results of a simulation of the periodic Langevin equation."""
 
-    times: np.ndarray
-    x_points: np.ndarray[Any, np.dtype[np.floating]]
     p_points: np.ndarray[Any, np.dtype[np.floating]]
-    system: S
+    system: System[Any]
 
-    def __getitem__(self, idx: int) -> SingleSimulationResult[S]:
+    def __getitem__(self, idx: int) -> SingleLangevinSimulationResult:
         """Return a single trajectory from the ensemble."""
-        return SingleSimulationResult(
+        return SingleLangevinSimulationResult(
             times=self.times,
             x_points=self.x_points[idx],
             p_points=self.p_points[idx],
@@ -232,7 +229,7 @@ def solve_ensemble[S: System](
     xs_batch = jnp.transpose(xs_batch, (0, 2, 1))
     ps_batch = jnp.transpose(ps_batch, (0, 2, 1))
 
-    return SimulationResult[S](
+    return LangevinSimulationResult(
         times=np.array(times),
         x_points=np.array(xs_batch),
         p_points=np.array(ps_batch),

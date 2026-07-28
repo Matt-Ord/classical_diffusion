@@ -14,6 +14,7 @@ from ._analysis import (
 from ._system import (
     CanonicalSystem,
     HarmonicSystem,
+    Lattice1D,
     PeriodicSystem1D,
     PeriodicSystemFCC,
     System,
@@ -22,6 +23,7 @@ from ._system import (
 __all__ = [
     "CanonicalSystem",
     "HarmonicSystem",
+    "Lattice1D",
     "PeriodicSystem1D",
     "PeriodicSystemFCC",
     "System",

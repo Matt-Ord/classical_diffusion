@@ -1,24 +1,57 @@
+import jax.numpy as jnp
 import jax.random as jrandom
 import numpy as np
 
+from classical_diffusion.analysis import (
+    plot_isf,
+    plot_isf_with_delta_k,
+)
+from classical_diffusion.hopping._analysis import plot_hopping_isf
+from classical_diffusion.hopping._hopping import _solve_hopping_ensemble
 from classical_diffusion.langevin import (
     TimeSpan,
     breakdown_ballistic_trajectory,
     get_effective_mass,
     get_under_barrier_probability_ballistic,
-    plot_isf,
-    plot_isf_with_delta_k,
     solve_ballistic_ensemble,
     solve_ensemble,
-    split_escaped_and_trapped,
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.system import (
+    Lattice1D,
     PeriodicSystem1D,
     plot_exact_gaussian_isf,
     plot_exact_offset_gaussian_isf,
     plot_periodic_potential_1d,
 )
+
+
+def _plot_1d_hopping_isf() -> None:
+
+    lattice = Lattice1D(lattice_spacing=2.5, diff_time=500)
+    total_time = 10000
+    results = _solve_hopping_ensemble(
+        lattice=lattice,
+        total_time=total_time,
+        initial_position=jnp.array([0.0]),
+        n_samples=100,
+        key=jrandom.PRNGKey(100),
+    )
+
+    print(results.x_points.shape)
+    fig, ax = get_fancy_figure()
+
+    delta_k = np.array([0.5 * 2 * np.pi / lattice.lattice_spacing])
+    _, ax, line_0 = plot_hopping_isf(
+        result=results,
+        delta_k=delta_k,
+        total_time=total_time,
+        ax=ax,
+    )
+    line_0.set_label("Hopping simulation")
+
+    print("saving figure")
+    fig.savefig("./examples/1d_lattice.isf.pdf")
 
 
 def _plot_periodic_system() -> None:
@@ -194,7 +227,7 @@ def _plot_effective_mass_offset_isf() -> None:
         barrier_energy=0.5,
     )
 
-    fig, ax = get_fancy_figure()
+    _fig, ax = get_fancy_figure()
 
     result = solve_ballistic_ensemble(
         system,
@@ -226,6 +259,7 @@ def _plot_effective_mass_offset_isf() -> None:
     line_1.set_label("actual mass")
     line_1.set_linestyle(":")
 
+    """
     free_result, _ = split_escaped_and_trapped(result)
 
     effective_mass = get_effective_mass(free_result)
@@ -248,11 +282,14 @@ def _plot_effective_mass_offset_isf() -> None:
         dpi=300,
         bbox_inches="tight",
     )
+    """
 
 
 if __name__ == "__main__":
-    _plot_periodic_system()
-    _plot_1d_periodic_isf()
-    _plot_1d_inelastic_trends()
-    _plot_effective_mass_isf()
-    _plot_effective_mass_offset_isf()
+    print("running")
+    _plot_1d_hopping_isf()
+    # _plot_periodic_system()
+    # _plot_1d_periodic_isf()
+    # _plot_1d_inelastic_trends()
+    # _plot_effective_mass_isf()
+    # _plot_effective_mass_offset_isf()

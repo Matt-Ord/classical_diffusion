@@ -1,10 +1,10 @@
 import jax.random as jrandom
 import numpy as np
 
+from classical_diffusion.analysis import plot_isf
 from classical_diffusion.langevin import (
     TimeSpan,
     plot_2d_trajectory,
-    plot_isf,
     solve_ballistic_ensemble,
     solve_ensemble,
     solve_single,

@@ -4,6 +4,7 @@ from functools import cached_property
 from typing import final, override
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import sympy as sp
 
@@ -11,6 +12,56 @@ import sympy as sp
 def _hash_sympy_expr(expr: sp.Expr) -> int:
     stable_string = sp.srepr(expr)
     return zlib.crc32(stable_string.encode("utf-8"))
+
+
+@dataclass(frozen=True, kw_only=True)
+class Lattice:
+    """Parameters representing a simplified, discrete lattice representing a physical potential."""
+
+    lattice_spacing: float
+    diff_time: (
+        float  # Average time to traverse one characteristic length (= lattice spacing?)
+    )
+    directions: jnp.ndarray
+
+    @property
+    def dim(self) -> int:
+        """The number of dimensions of the lattice."""
+        return len(self.directions) // 2
+
+    @property
+    def r_hop(self) -> float:
+        """Rate of hopping to a new lattice site."""
+        return 1 / self.diff_time
+
+    # More properties likely required
+
+
+@jax.tree_util.register_pytree_node_class
+@dataclass(frozen=True, init=False)
+class Lattice1D(Lattice):
+    """Parameters representing a simplified, discrete 1D lattice representing a physical potential."""
+
+    def __init__(self, lattice_spacing: float, diff_time: float) -> None:
+        super().__init__(
+            lattice_spacing=lattice_spacing,
+            diff_time=diff_time,
+            directions=jnp.array([[1], [-1]]),
+        )
+
+    def tree_flatten(self) -> tuple[tuple[float, float, jnp.ndarray], None]:
+        return (self.lattice_spacing, self.diff_time, self.directions), None
+
+    @classmethod
+    def tree_unflatten(
+        cls, aux_data: None, children: tuple[float, float, jnp.ndarray]
+    ) -> Lattice1D:
+        lattice_spacing, diff_time, directions = children
+        new_object = cls.__new__(cls)
+        super(Lattice1D, new_object).__init__(
+            lattice_spacing=lattice_spacing, diff_time=diff_time, directions=directions
+        )
+        return new_object
 
 
 @dataclass(frozen=True, kw_only=True)
