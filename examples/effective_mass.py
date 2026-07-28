@@ -7,6 +7,7 @@ from classical_diffusion.langevin import (
     get_effective_mass,
     plot_effective_mass_periodic_1D,
     solve_ballistic_ensemble,
+    split_escaped_and_trapped,
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.simulation import TimeSpan
