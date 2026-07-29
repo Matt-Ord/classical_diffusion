@@ -87,6 +87,11 @@ def _run_hopping_simulation_jit(
         # final_state[1] is previous_site, which is the last site visited before exceeding the target time.
         return final_state, final_state[1]
 
+    # On a gpu, if the number of samples >> number of hops, it will be faster to collect
+    # all hops (possibly in a batched manner) and then use search sorted to find all sample
+    # positions in parallel. If the number of hops >> number of samples, there will be no
+    # difference. Here we use an approach which is optimal on the cpu, and significantly
+    # easier to implement.
     _, sample_positions = jax.lax.scan(scan_body, init_state, sample_times)
     return sample_positions
 
