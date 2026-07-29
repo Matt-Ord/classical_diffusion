@@ -37,66 +37,58 @@ def _run_hopping_simulation_jit(
     sample_times: jnp.ndarray,
     key: jax.Array,
 ) -> jnp.ndarray:
-    """Run a hopping simulation and return positions only at specified sample times."""
-    n_times = sample_times.shape[0]
-    n_dimensions = initial_position.shape[0]
+    """Run a hopping simulation and return positions directly at sample times."""
+    max_sample_time = sample_times[-1]
 
-    # The positions sampled at sample_times
-    sample_positions = jnp.zeros((n_times, n_dimensions), dtype=initial_position.dtype)
-
-    # Outer loop state: (sample_idx, current_time, current_position, sample_positions, rng_key)
-    init_outer_state = (0, 0.0, initial_position, sample_positions, key)
-
-    def outer_condition(
-        state: tuple[int, float | jnp.ndarray, jnp.ndarray, jnp.ndarray, jax.Array],
-    ) -> bool:
-        sample_idx, _, _, _, _ = state
-        return sample_idx < n_times
-
-    def outer_body(
-        state: tuple[int, float | jnp.ndarray, jnp.ndarray, jnp.ndarray, jax.Array],
-    ) -> tuple[int, float | jnp.ndarray, jnp.ndarray, jnp.ndarray, jax.Array]:
-        sample_idx, current_time, current_site, sample_positions, rng_key = state
-
-        # Split key for destination, exponential time step, and next loop state
-        destination_key, dt_key, next_key = jax.random.split(rng_key, 3)
-
-        # The total rate out of current position is sum of individual rates
-        hop_sites, hop_rates = system.get_rates(current_site)
-        total_rate = jnp.sum(hop_rates)
-        next_time = current_time - jnp.log(jax.random.uniform(dt_key)) / total_rate
-        next_site = jax.random.choice(
-            destination_key, hop_sites, p=hop_rates / total_rate
-        )
-
-        # For each sample time point that has passed in stochastic time till this jump occurred,
-        # update the positions array to show the location stayed the same
-        def inner_condition(inner_state: tuple[int, jnp.ndarray]) -> jnp.ndarray:
-            idx, _ = inner_state
-            return (idx < n_times) & (sample_times[idx] < next_time)
-
-        def inner_body(inner_state: tuple[int, jnp.ndarray]) -> tuple[int, jnp.ndarray]:
-            idx, positions = inner_state
-            updated_positions = positions.at[idx].set(current_site)
-            return (idx + 1, updated_positions)
-
-        new_sample_idx, updated_sample_positions = jax.lax.while_loop(
-            inner_condition, inner_body, (sample_idx, sample_positions)
-        )
-
-        return (
-            new_sample_idx,
-            next_time,
-            next_site,
-            updated_sample_positions,
-            next_key,
-        )
-
-    _, _, _, final_positions, _ = jax.lax.while_loop(
-        outer_condition, outer_body, init_outer_state
+    # Carry state: (t_prev, site_prev, t_curr, site_curr, rng_key)
+    init_state = (
+        jnp.array(0.0, dtype=sample_times.dtype),
+        initial_position,
+        jnp.array(0.0, dtype=sample_times.dtype),
+        initial_position,
+        key,
     )
 
-    return final_positions
+    def scan_body(
+        carry: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jax.Array],
+        target_time: jnp.ndarray,
+    ) -> tuple[
+        tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jax.Array],
+        jnp.ndarray,
+    ]:
+        def inner_condition(
+            state: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jax.Array],
+        ) -> jnp.ndarray:
+            _, _, current_t, _, _ = state
+            return (current_t <= target_time) & (current_t < max_sample_time)
+
+        def inner_body(
+            state: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jax.Array],
+        ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jax.Array]:
+            _, _, current_t, current_site, rng_key = state
+            destination_key, dt_key, next_key = jax.random.split(rng_key, 3)
+
+            hop_sites, hop_rates = system.get_rates(current_site)
+            total_rate = jnp.sum(hop_rates)
+            dt = (
+                -jnp.log(jax.random.uniform(dt_key, dtype=sample_times.dtype))
+                / total_rate
+            )
+            next_site = jax.random.choice(
+                destination_key, hop_sites, p=hop_rates / total_rate
+            )
+
+            return (current_t, current_site, current_t + dt, next_site, next_key)
+
+        # Take as many steps as needed to reach the target time, but stop if we exceed the last requested sample time.
+        # Note if we already exceeded the target time, this will return the incoming carry state unchanged.
+        final_state = jax.lax.while_loop(inner_condition, inner_body, carry)
+
+        # final_state[1] is previous_site, which is the last site visited before exceeding the target time.
+        return final_state, final_state[1]
+
+    _, sample_positions = jax.lax.scan(scan_body, init_state, sample_times)
+    return sample_positions
 
 
 @timed
@@ -118,5 +110,5 @@ def solve_ensemble[L: Lattice = Lattice](
     return HoppingSimulationResult[L](
         system=system,
         times=np.array(times),
-        x_indices=np.einsum("ijk->ikj", np.array(results)),
+        x_indices=np.array(jnp.transpose(results, (0, 2, 1))),
     )
