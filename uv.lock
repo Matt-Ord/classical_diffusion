@@ -97,8 +97,8 @@ dependencies = [
     { name = "diffrax" },
     { name = "jax" },
     { name = "matplotlib" },
+    { name = "numpy" },
     { name = "sympy" },
-    { name = "tqdm" },
 ]
 
 [package.dev-dependencies]
@@ -107,6 +107,7 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
     { name = "sphinx" },
+    { name = "tqdm" },
     { name = "ty" },
 ]
 
@@ -115,8 +116,8 @@ requires-dist = [
     { name = "diffrax", specifier = ">=0.7.2" },
     { name = "jax", specifier = ">=0.10.2" },
     { name = "matplotlib", specifier = ">=3.11.0" },
+    { name = "numpy", specifier = ">=2.5.1" },
     { name = "sympy", specifier = ">=1.14.0" },
-    { name = "tqdm", specifier = ">=4.68.4" },
 ]
 
 [package.metadata.requires-dev]
@@ -125,6 +126,7 @@ dev = [
     { name = "pytest", specifier = ">=9.0.0,<10.0.0" },
     { name = "ruff" },
     { name = "sphinx", specifier = ">=9.1.0,<10.0.0" },
+    { name = "tqdm", specifier = ">=4.68.4" },
     { name = "ty", specifier = ">=0.0.56" },
 ]
 

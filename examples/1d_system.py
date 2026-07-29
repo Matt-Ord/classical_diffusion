@@ -1,8 +1,13 @@
 import jax.random as jrandom
 import numpy as np
 
+from classical_diffusion.analysis import (
+    plot_isf,
+    plot_isf_with_delta_k,
+    plot_x_evolution,
+)
 from classical_diffusion.langevin import (
-    TimeSpan,
+    PeriodicSystem1D,
     breakdown_ballistic_trajectory,
     get_effective_mass,
     get_full_effective_mass_from_free,
@@ -14,6 +19,7 @@ from classical_diffusion.langevin import (
 )
 from classical_diffusion.langevin._langevin import get_over_barrier_initial_conditions
 from classical_diffusion.plot import get_fancy_figure
+from classical_diffusion.simulation import TimeSpan
 from classical_diffusion.system import (
     PeriodicSystem1D,
     UnitSystem,
@@ -24,6 +30,8 @@ from classical_diffusion.system import (
     plot_exact_gaussian_isf,
     plot_exact_offset_gaussian_isf,
     plot_periodic_potential_1d,
+    solve_ballistic_ensemble,
+    solve_ensemble,
 )
 
 
@@ -58,8 +66,7 @@ def _plot_1d_periodic_isf() -> None:
     result = solve_ensemble(
         normalized_system,
         TimeSpan(
-            t0=0,
-            t1=10e-12
+            t_end=10e-12
             / get_diffusion_time(system=system, characteristic_length=system.delta_x),
             n_steps=1000,
         ),
@@ -80,8 +87,7 @@ def _plot_1d_periodic_isf() -> None:
     result = solve_ballistic_ensemble(
         normalized_system,
         TimeSpan(
-            t0=0,
-            t1=2e-12
+            t_end=2e-12
             / get_diffusion_time(system=system, characteristic_length=system.delta_x),
             n_steps=1000,
         ),
@@ -135,8 +141,7 @@ def _plot_1d_inelastic_trends() -> None:
     result = solve_ballistic_ensemble(
         normalized_system,
         TimeSpan(
-            t0=0,
-            t1=2e-12
+            t_end=2e-12
             / get_diffusion_time(system=system, characteristic_length=system.delta_x),
             n_steps=1000,
         ),
@@ -186,8 +191,7 @@ def _plot_effective_mass_isf() -> None:  # ruff:ignore[too-many-locals]
     result_full = solve_ballistic_ensemble(
         normalized_system,
         TimeSpan(
-            t0=0,
-            t1=normalized_system.units.time_into(5e-12, units=UnitSystem()),
+            t_end=normalized_system.units.time_into(5e-12, units=UnitSystem()),
             n_steps=1000,
         ),
         n_samples=2000,
@@ -215,8 +219,7 @@ def _plot_effective_mass_isf() -> None:  # ruff:ignore[too-many-locals]
     result_free = solve_free_ballistic_ensemble(
         normalized_system,
         TimeSpan(
-            t0=0,
-            t1=normalized_system.units.time_into(5e-12, units=UnitSystem()),
+            t_end=normalized_system.units.time_into(5e-12, units=UnitSystem()),
             n_steps=1000,
         ),
         initial_conditions=initial_conditions,
@@ -282,8 +285,7 @@ def _plot_effective_mass_offset_isf() -> None:  # ruff:ignore[too-many-locals]
     result = solve_ballistic_ensemble(
         normalized_system,
         TimeSpan(
-            t0=0,
-            t1=2e-12
+            t_end=2e-12
             / get_diffusion_time(system=system, characteristic_length=system.delta_x),
             n_steps=1000,
         ),
@@ -371,7 +373,32 @@ def _plot_effective_mass_offset_isf() -> None:  # ruff:ignore[too-many-locals]
     )
 
 
+def _plot_1d_trajectory() -> None:
+    key = jrandom.PRNGKey(100)
+
+    system = PeriodicSystem1D(
+        gamma=0.1, temperature=0.5, m=1.0, delta_x=5, barrier_energy=0.5
+    )
+
+    result = solve_ensemble(
+        system,
+        TimeSpan(
+            t_end=40 / system.gamma,
+            n_steps=4000,
+        ),
+        (np.full((20, 1), 0.0), np.full((20, 1), 0.0)),
+        _key=key,
+    )
+
+    fig, ax = get_fancy_figure()
+
+    _, _, _ = plot_x_evolution(result=result, ax=ax)
+
+    fig.savefig("./examples/1d_system.trajectory.pdf")
+
+
 if __name__ == "__main__":
+    _plot_1d_trajectory()
     _plot_periodic_system()
     _plot_1d_periodic_isf()
     _plot_1d_inelastic_trends()

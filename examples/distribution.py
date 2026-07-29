@@ -1,8 +1,12 @@
+from typing import Any
+
 import jax.random as jrandom
 import numpy as np
 
 from classical_diffusion.langevin import (
-    SimulationResult,
+    HarmonicSystem,
+    LangevinSimulationResult,
+    PeriodicSystem1D,
     TimeSpan,
     plot_kinetic_probability,
     plot_p_histogram,
@@ -14,21 +18,20 @@ from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.system import (
     HarmonicSystem,
     PeriodicSystem1D,
-    System,
     UnitSystem,
 )
 
 
-def fold_results[S: System](
-    result: SimulationResult[S],
+def fold_results(
+    result: LangevinSimulationResult[Any],
     delta: float,
-) -> SimulationResult[S]:
+) -> LangevinSimulationResult[Any]:
     """Fold x into first BZ zone."""
-    return SimulationResult(
+    return LangevinSimulationResult(
+        system=result.system,
         times=result.times,
         x_points=result.x_points % delta,
         p_points=result.p_points,
-        system=result.system,
     )
 
 
@@ -46,7 +49,10 @@ def _plot_xp_distributions_periodic() -> None:
 
     result = solve_ensemble(
         system,
-        TimeSpan(t0=1 / system.gamma, t1=10 / system.gamma, n_steps=1000),
+        TimeSpan(
+            t_end=10 / system.gamma,
+            n_steps=1000,
+        ),
         (np.full((2000, 1), 0.0), np.full((2000, 1), 0.0)),
         _key=key,
     )

@@ -1,15 +1,11 @@
-from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, Unpack, cast
+from typing import TYPE_CHECKING, Any, cast
 
-import matplotlib as mpl
+import jax.numpy as jnp
 import numpy as np
-import scipy
 import sympy as sp
 
-from classical_diffusion.langevin._langevin import (
-    SimulationResult,
-    SingleSimulationResult,
-)
-from classical_diffusion.plot import get_figure, get_measured_data
+from classical_diffusion.langevin._system import System
+from classical_diffusion.plot import get_figure
 from classical_diffusion.system import (
     System,
     get_energy,
@@ -17,204 +13,13 @@ from classical_diffusion.system import (
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
-    from matplotlib.collections import PolyCollection, QuadMesh
+    from matplotlib.collections import QuadMesh
     from matplotlib.container import BarContainer
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
 
-    from classical_diffusion.plot import Measure
 
-
-def _calculate_total_offsset_multiplications_complex(
-    lhs: np.ndarray,
-    rhs: np.ndarray,
-) -> np.ndarray:
-    # scipy.signal.correlate handles complex numbers and conjugation automatically
-    # Note: correlate(a, b) conjugates the first argument by default
-    return scipy.signal.correlate(lhs, rhs, mode="full")[: lhs.size][::-1]
-
-
-def _time_average[DT: np.floating](
-    time_sum: np.ndarray[Any, np.dtype[DT]],
-) -> np.ndarray[Any, np.dtype[DT]]:
-    """Apply the time-averaging denominator."""
-    size = time_sum.shape[-1]
-    return time_sum / np.arange(1, size + 1)[::-1]
-
-
-def get_isf(
-    positions: np.ndarray[Any, np.dtype[np.floating]],
-    delta_k: tuple[float, ...],
-    *,
-    pairwise: bool = True,
-) -> np.ndarray[Any, np.dtype[np.complex128]]:
-    """Get the restored displacement of a wavepacket."""
-    if not pairwise:
-        phase = np.einsum(
-            "i,...ij->...j",
-            delta_k,
-            positions - positions[..., 0].reshape((*positions.shape[:-1], 1)),
-        )
-        return np.exp(1j * phase)
-
-    scatter = np.exp(-1j * np.einsum("i,...ij->...j", delta_k, positions))
-
-    # convolution_j = \sum_i^N-j e^(ik.x_i+j) e^(-ik.x_i)
-    convolution = np.apply_along_axis(
-        lambda m: _calculate_total_offsset_multiplications_complex(m, m),
-        axis=-1,
-        arr=scatter,
-    )
-    return _time_average(convolution)
-
-
-class ISFKwargs(TypedDict):
-    """Settings controlling how the ISF is computed from trajectory data."""
-
-    delta_k: tuple[float, ...]
-    pairwise: NotRequired[bool]
-
-
-def plot_isf(
-    result: SimulationResult,
-    *,
-    ax: Axes | None = None,
-    measure: Measure = "abs",
-    **kwargs: Unpack[ISFKwargs],
-) -> tuple[Figure, Axes, Line2D, PolyCollection]:
-    """Plot the ensemble-averaged ISF over time, with a shaded ±1 SEM band."""
-    fig, ax = get_figure(ax)
-
-    isf = get_isf(result.x_points, **kwargs)
-
-    n_trajectories = isf.shape[0]
-    avg_isf = np.mean(isf, axis=0)
-    sem_isf = np.std(isf, axis=0) / np.sqrt(n_trajectories)
-
-    avg_data = get_measured_data(avg_isf, measure)
-    sem_data = get_measured_data(sem_isf, measure)
-
-    (line,) = ax.plot(result.times, avg_data)
-    line.set_label("ISF")
-
-    fill = ax.fill_between(
-        result.times,
-        avg_data - sem_data,
-        avg_data + sem_data,
-        alpha=0.3,
-        label="SEM",
-    )
-    fill.set_color(line.get_color())
-
-    line.set_label("SEM")
-
-    ax.set_title("Intermediate Scattering Function Over Time")
-    ax.set_xlabel("Time / s")
-    ax.set_ylabel("ISF")
-
-    return fig, ax, line, fill
-
-
-def plot_isf_with_delta_k(
-    result: SimulationResult,
-    delta_k_values: np.ndarray[Any, np.dtype[np.floating]],
-    *,
-    ax: Axes | None = None,
-    measure: Measure = "abs",
-    pairwise: bool = True,
-) -> tuple[Figure, Axes]:
-    """Plot the ensemble-averaged ISF over time, with a shaded ±1 SEM band."""
-    fig, ax = get_figure(ax)
-
-    cmap = mpl.cm.viridis
-    norm = mpl.colors.Normalize(
-        vmin=np.min(delta_k_values).item(), vmax=np.max(delta_k_values).item()
-    )
-
-    for dk in delta_k_values:
-        dk_tuple = (dk,)
-        isf = get_isf(result.x_points, delta_k=dk_tuple, pairwise=pairwise)
-        avg_isf = np.mean(isf, axis=0)
-        avg_data = get_measured_data(avg_isf, measure)
-        ax.plot(result.times, avg_data, color=cmap(norm(dk)))
-
-    ax.set_title("Intermediate Scattering Function Over Time")
-    ax.set_xlabel("Time / s")
-    ax.set_ylabel("ISF")
-    fig.colorbar(
-        mpl.cm.ScalarMappable(norm=norm, cmap=cmap), ax=ax, label=r"$\Delta k$"
-    )
-
-    return fig, ax
-
-
-def plot_x_evolution(
-    result: SimulationResult,
-    *,
-    ax: Axes | None = None,
-    idx: int = 0,
-    n_trajectories: int = 1,
-) -> tuple[Figure, Axes, list[Line2D]]:
-    """Plot x against t for the first n_trajectories trajectories.
-
-    Raises
-    ------
-    ValueError
-        If `n_trajectories` exceeds the number of trajectories available in `result`.
-    """
-    fig, ax = get_figure(ax)
-
-    if n_trajectories > result.x_points.shape[0]:
-        msg = f"n_trajectories={n_trajectories} exceeds available trajectories ({result.x_points.shape[0]})"
-        raise ValueError(msg)
-
-    scaled_times = result.times
-
-    lines = []
-    for trajectory in range(n_trajectories):
-        (line,) = ax.plot(scaled_times, result.x_points[trajectory, idx])
-        lines.append(line)
-
-    ax.set_xlabel("$t / characteristic time$")
-    ax.set_ylabel("$x$")
-
-    return fig, ax, lines
-
-
-def plot_p_evolution(
-    result: SimulationResult,
-    *,
-    ax: Axes | None = None,
-    idx: int = 0,
-    n_trajectories: int = 1,
-) -> tuple[Figure, Axes, list[Line2D]]:
-    """Plot p against t for the first n_trajectories trajectories.
-
-    Raises
-    ------
-    ValueError
-        If `n_trajectories` exceeds the number of trajectories available in `result`.
-    """
-    fig, ax = get_figure(ax)
-
-    if n_trajectories > result.p_points.shape[0]:
-        msg = f"n_trajectories={n_trajectories} exceeds available trajectories ({result.p_points.shape[0]})"
-        raise ValueError(msg)
-
-    scaled_times = result.times
-
-    lines = []
-    for trajectory in range(n_trajectories):
-        (line,) = ax.plot(scaled_times, result.p_points[trajectory, idx])
-        lines.append(line)
-
-    ax.set_xlabel("$t / characteristic time$")
-    ax.set_ylabel("$p$")
-
-    return fig, ax, lines
-
-
-def _get_sampled_kinetic_energies[T: SimulationResult](
+def _get_sampled_kinetic_energies[T: LangevinSimulationResult](
     result: T,
 ) -> np.ndarray[Any, np.dtype[np.float64]]:
     return (np.sum(result.p_points**2, axis=1)) / (
@@ -222,16 +27,18 @@ def _get_sampled_kinetic_energies[T: SimulationResult](
     )
 
 
-def _get_all_kinetic_energies[T: SimulationResult](
+def _get_all_kinetic_energies[T: LangevinSimulationResult](
     result: T | list[T],
 ) -> np.ndarray[Any, np.dtype[np.float64]]:
     result: list[T] = (
-        cast("list[T]", [result]) if isinstance(result, SimulationResult) else result
+        cast("list[T]", [result])
+        if isinstance(result, LangevinSimulationResult)
+        else result
     )
     return np.concatenate([_get_sampled_kinetic_energies(r) for r in result]).ravel()
 
 
-def plot_kinetic_probability[T: SimulationResult](
+def plot_kinetic_probability[T: LangevinSimulationResult](
     result: T | list[T],
     *,
     ax: Axes | None = None,
@@ -280,7 +87,9 @@ def plot_kinetic_probability[T: SimulationResult](
     return fig, ax, (line0, cast("BarContainer", bars))
 
 
-def split_result(result: SimulationResult) -> tuple[SimulationResult, SimulationResult]:
+def split_result(
+    result: LangevinSimulationResult,
+) -> tuple[LangevinSimulationResult, LangevinSimulationResult]:
     """Split a simulation result in half along the time axis, each restarting at t=0."""
     xs1, xs2 = np.split(result.x_points, 2, axis=-1)
     ps1, ps2 = np.split(result.p_points, 2, axis=-1)
@@ -289,16 +98,16 @@ def split_result(result: SimulationResult) -> tuple[SimulationResult, Simulation
     times1 -= times1[0]
     times2 -= times2[0]
 
-    first = SimulationResult(
+    first = LangevinSimulationResult(
         times=times1, x_points=xs1, p_points=ps1, system=result.system
     )
-    second = SimulationResult(
+    second = LangevinSimulationResult(
         times=times2, x_points=xs2, p_points=ps2, system=result.system
     )
     return first, second
 
 
-def x_exact_pdf(result: SimulationResult, *, n_grid: int = 10_000) -> tuple:
+def x_exact_pdf(result: LangevinSimulationResult, *, n_grid: int = 10_000) -> tuple:
     """Return x boltzman pdf for given potential."""
     potential = sp.lambdify(
         (*result.system.coordinate_symbols, *result.system.parameter_symbols),
@@ -319,7 +128,7 @@ def x_exact_pdf(result: SimulationResult, *, n_grid: int = 10_000) -> tuple:
 
 
 def plot_x_histogram(
-    result: SimulationResult,
+    result: LangevinSimulationResult,
     *,
     ax: Axes | None = None,
     bins: int = 100,
@@ -348,7 +157,7 @@ def plot_x_histogram(
     return fig, ax, cast("BarContainer", bars)
 
 
-def p_exact_pdf(result: SimulationResult, *, n_grid: int = 10_000) -> tuple:
+def p_exact_pdf(result: LangevinSimulationResult, *, n_grid: int = 10_000) -> tuple:
     """Return p boltzman pdf."""
     p_grid = np.linspace(result.p_points.min(), result.p_points.max(), n_grid)
     m, kbt = (
@@ -363,7 +172,7 @@ def p_exact_pdf(result: SimulationResult, *, n_grid: int = 10_000) -> tuple:
 
 
 def plot_p_histogram(
-    result: SimulationResult,
+    result: LangevinSimulationResult,
     *,
     ax: Axes | None = None,
     bins: int = 100,
@@ -393,7 +202,7 @@ def plot_p_histogram(
 
 
 def plot_phase_space_density(
-    result: SimulationResult,
+    result: LangevinSimulationResult,
     *,
     ax: Axes | None = None,
     bins: int = 100,
@@ -430,14 +239,14 @@ def _get_elastic_velocity_estimates(t: np.ndarray, y: np.ndarray) -> np.ndarray:
 
 
 def _get_elastic_p_estimates(
-    result: SimulationResult, *, max_samples: int = 100
+    result: LangevinSimulationResult, *, max_samples: int = 100
 ) -> tuple[
     np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
 ]:
     """Return the elastic (ballistic straight-line) momentum estimate per trajectory across all dimensions."""
     n_times = len(result.times)
     n_samples = min(max_samples, n_times)
-    sample_indices = np.linspace(0, n_times - 1, n_samples, dtype=int)
+    sample_indices = jnp.linspace(0, n_times - 1, n_samples, dtype=int)
 
     t_sampled = result.times[sample_indices]
     x_sampled = result.x_points[:, :, sample_indices]
@@ -447,7 +256,7 @@ def _get_elastic_p_estimates(
 
 
 def plot_elastic_p(
-    result: SimulationResult,
+    result: LangevinSimulationResult,
     *,
     n_trajectories: int,
     ax: Axes | None = None,
@@ -480,7 +289,7 @@ def plot_elastic_p(
 
 
 def plot_initial_p(
-    result: SimulationResult, *, n_trajectories: int, ax: Axes | None = None
+    result: LangevinSimulationResult, *, n_trajectories: int, ax: Axes | None = None
 ) -> tuple[Figure, Axes]:
     """Plot convergence of elastic momenta over all trajectories.
 
@@ -520,7 +329,7 @@ def _get_average_elastic_velocity(
 
 
 def _get_average_elastic_p(
-    result: SimulationResult, *, max_samples: int = 100
+    result: LangevinSimulationResult, *, max_samples: int = 100
 ) -> np.ndarray[Any, np.dtype[np.floating]]:
     """Return the elastic (ballistic straight-line) momentum estimate per trajectory across all dimensions."""
     n_times = len(result.times)
@@ -535,8 +344,8 @@ def _get_average_elastic_p(
 
 
 def breakdown_ballistic_trajectory[S: System](
-    result: SimulationResult[S],
-) -> tuple[SimulationResult[S], SimulationResult[S]]:
+    result: LangevinSimulationResult[S],
+) -> tuple[LangevinSimulationResult[S], LangevinSimulationResult[S]]:
     """Split a ballistic simulation into its elastic and inelastic components across all dimensions."""
     p_elastic = _get_average_elastic_p(result)
 
@@ -549,13 +358,13 @@ def breakdown_ballistic_trajectory[S: System](
     # Calculate x_elastic(t) = x_0 + (p_elastic / m) * t across all spatial components
     x_elastic_points = p_elastic[..., None] * result.times / result.system.m + x_0
 
-    elastic = SimulationResult(
+    elastic = LangevinSimulationResult(
         times=result.times,
         x_points=x_elastic_points,
         p_points=p_elastic_points,
         system=result.system,
     )
-    inelastic = SimulationResult(
+    inelastic = LangevinSimulationResult(
         times=result.times,
         x_points=result.x_points - x_elastic_points,
         p_points=result.p_points - p_elastic_points,
@@ -568,7 +377,7 @@ _EXPECTED_NDIM = 2
 
 
 def plot_2d_trajectory(
-    result: SingleSimulationResult, *, ax: Axes | None = None
+    result: SingleLangevinSimulationResult, *, ax: Axes | None = None
 ) -> tuple[Figure, Axes, Line2D]:
     """Plot x against y for 2d trajectory.
 
@@ -591,11 +400,25 @@ def plot_2d_trajectory(
     return fig, ax, line
 
 
+def get_energy(
+    result: LangevinSimulationResult,
+) -> np.ndarray[Any, np.dtype[np.floating]]:
+    """Return the energy of the system."""
+    potential = sp.lambdify(
+        (*result.system.coordinate_symbols, *result.system.parameter_symbols),
+        result.system.potential_expr,
+        "numpy",
+    )
+
+    potential = potential(result.x_points, *result.system.params).squeeze(axis=1)
+
+    kinetic = np.sum(result.p_points**2, axis=1) / (2 * result.system.m)
+
+    return kinetic + potential
+
+
 def plot_energy(
-    result: SimulationResult,
-    n_trajectories: int = 1,
-    *,
-    ax: Axes,
+    result: LangevinSimulationResult, n_trajectories: int, *, ax: Axes
 ) -> tuple[Figure, Axes]:
     """Plot the energy of the system with time."""
     fig, ax = get_figure(ax)
@@ -615,7 +438,15 @@ def plot_energy(
     return fig, ax
 
 
-def get_evolution_trapped_probability(result: SimulationResult) -> np.ndarray:
+def _partition_result(
+    result: LangevinSimulationResult, mask: np.ndarray[Any, np.dtype[np.bool_]]
+) -> tuple[
+    np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
+]:
+    return result.x_points[mask], result.p_points[mask]
+
+
+def get_evolution_trapped_probability(result: LangevinSimulationResult) -> np.ndarray:
     """Retrun the evolution of the probability of a particle being trapped as sample size increases."""
     energies = get_energy(result.system, result.x_points, result.p_points)
     is_over_barrier = energies < result.system.barrier_energy
@@ -634,7 +465,7 @@ def get_under_barrier_probability_ballistic(
 
 
 def plot_probability_over_barrier(
-    result: SimulationResult, n_trajectories: int, *, ax: Axes
+    result: LangevinSimulationResult, n_trajectories: int, *, ax: Axes
 ) -> tuple[Figure, Axes]:
     """Plot the convergence of the probability of a trajectory having sufficient energy to cross barrier."""
     fig, ax = get_figure(ax)
@@ -653,7 +484,7 @@ def plot_probability_over_barrier(
 
 
 # TODO: provide a general direction
-def get_effective_mass(result: SimulationResult, idx: int = 0) -> float:
+def get_effective_mass(result: LangevinSimulationResult, idx: int = 0) -> float:
     """Return the effective mass averaged over a full simulation."""
     elastic_ps = _get_average_elastic_p(result=result)[..., idx]
     return (result.system.kbt * result.system.m**2) / np.average(elastic_ps**2, axis=0)
@@ -694,3 +525,34 @@ def plot_effective_mass_ratio_periodic_1D(  # ruff:ignore[invalid-function-name]
     ax.set_ylabel("Dimenesionless Inertial mass")
 
     return fig, ax, mesh
+
+
+def split_escaped_and_trapped(
+    result: LangevinSimulationResult[PeriodicSystem1D],
+) -> tuple[
+    LangevinSimulationResult[PeriodicSystem1D],
+    LangevinSimulationResult[PeriodicSystem1D],
+]:
+    """Split result into trajectories trapped within or free to move over the barrier."""
+    energy = get_energy(result)[:, 0]
+
+    free_x_points, free_p_points = _partition_result(
+        result, energy > result.system.barrier_energy
+    )
+    trapped_x_points, trapped_p_points = _partition_result(
+        result, energy <= result.system.barrier_energy
+    )
+
+    free = LangevinSimulationResult(
+        times=result.times,
+        x_points=free_x_points,
+        p_points=free_p_points,
+        system=result.system,
+    )
+    trapped = LangevinSimulationResult(
+        times=result.times,
+        x_points=trapped_x_points,
+        p_points=trapped_p_points,
+        system=result.system,
+    )
+    return free, trapped

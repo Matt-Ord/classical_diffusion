@@ -1,10 +1,12 @@
 import jax.random as jrandom
 import numpy as np
 
+from classical_diffusion.analysis import plot_isf
 from classical_diffusion.langevin import (
+    PeriodicSystemFCC,
     TimeSpan,
     plot_2d_trajectory,
-    plot_isf,
+    plot_periodic_potential_fcc,
     solve_ballistic_ensemble,
     solve_ensemble,
     solve_single,
@@ -45,7 +47,10 @@ def _plot_2d_periodic_isf() -> None:
 
     result = solve_ensemble(
         system,
-        TimeSpan(t0=0, t1=50 / system.gamma, n_steps=1000),
+        TimeSpan(
+            t_end=50 / system.gamma,
+            n_steps=5000,
+        ),
         (np.full((2000, 2), 0.0), np.full((2000, 2), 0.0)),
         _key=key,
     )
@@ -62,7 +67,10 @@ def _plot_2d_periodic_isf() -> None:
 
     result = solve_ballistic_ensemble(
         system,
-        TimeSpan(t0=0, t1=4 / system.gamma, n_steps=1000),
+        TimeSpan(
+            t_end=4 / system.gamma,
+            n_steps=400,
+        ),
         n_samples=2000,
         _key=key,
     )
@@ -89,7 +97,10 @@ def _plot_2d_trajectory() -> None:
 
     result = solve_single(
         system,
-        TimeSpan(t0=0, t1=100 / system.gamma, n_steps=1000),
+        TimeSpan(
+            t_end=100 / system.gamma,
+            n_steps=10000,
+        ),
         (np.full((2,), 0.0), np.full((2,), 0.0)),
         _key=key,
     )

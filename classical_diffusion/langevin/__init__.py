@@ -14,7 +14,6 @@ from ._analysis import (
     plot_p_evolution,
     plot_p_histogram,
     plot_phase_space_density,
-    plot_x_evolution,
     plot_x_histogram,
 )
 from ._langevin import (
@@ -33,6 +32,7 @@ __all__ = [
     "SingleSimulationResult",
     "TimeSpan",
     "breakdown_ballistic_trajectory",
+    "get_characteristic_friction_time",
     "get_effective_mass",
     "get_full_effective_mass_from_free",
     "get_under_barrier_probability_ballistic",
@@ -44,8 +44,11 @@ __all__ = [
     "plot_kinetic_probability",
     "plot_p_evolution",
     "plot_p_histogram",
+    "plot_periodic_potential_1d",
+    "plot_periodic_potential_fcc",
     "plot_phase_space_density",
-    "plot_x_evolution",
+    "plot_potential_1d",
+    "plot_potential_2d",
     "plot_x_histogram",
     "solve_ballistic_ensemble",
     "solve_ensemble",

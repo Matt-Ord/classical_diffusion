@@ -7,7 +7,7 @@ from scipy.constants import Boltzmann, hbar
 from tqdm import tqdm
 
 from classical_diffusion.langevin import (
-    TimeSpan,
+    PeriodicSystem1D,
     get_effective_mass,
     get_full_effective_mass_from_free,
     plot_effective_mass_ratio_periodic_1D,
@@ -85,9 +85,8 @@ def _effective_mass_simulation(  # ruff:ignore[too-many-arguments, too-many-loca
             result = solve_free_ballistic_ensemble(
                 normalized_system,
                 TimeSpan(
-                    t0=0,
-                    t1=normalized_system.units.time_into(end_time, units=UnitSystem()),
-                    n_steps=1000,
+                    t_end=100 / system.gamma,
+                    n_steps=10000,
                 ),
                 initial_conditions=initial_conditions,
                 _key=keys[idx],

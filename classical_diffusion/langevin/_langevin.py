@@ -17,6 +17,8 @@ from classical_diffusion.system import (
     make_free_point_sampler,
 )
 from classical_diffusion.util import cached, hash_array, timed
+from classical_diffusion.simulation import SimulationResult, SingleSimulationResult
+from classical_diffusion.util import cached, timed
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -25,12 +27,15 @@ if TYPE_CHECKING:
         CanonicalSystem,
     )
 
+
+    from classical_diffusion.langevin import CanonicalSystem, System
+    from classical_diffusion.simulation import TimeSpan
+
 rng = np.random.default_rng()
 
-
 @dataclass(frozen=True, kw_only=True)
-class TimeSpan:
-    """Time-stepping parameters, bundled together."""
+class SingleLangevinSimulationResult(SingleSimulationResult["System[Any]"]):
+    """Results of a single simulation of the periodic Langevin equation."""
 
     t0: float
     t1: float
@@ -81,12 +86,38 @@ class SimulationResult[S: System[Any] = System[Any]]:
     system: S
 
     def __getitem__(self, idx: int) -> SingleSimulationResult[S]:
+    p_points: np.ndarray[Any, np.dtype[np.floating]]
+
+
+class LangevinSimulationResult[S: System](SimulationResult[S]):
+    """Results of a simulation of the periodic Langevin equation."""
+
+    _p_points: np.ndarray[Any, np.dtype[np.floating]]
+
+    def __init__(
+        self,
+        *,
+        system: S,
+        x_points: np.ndarray[Any, np.dtype[np.floating]],
+        p_points: np.ndarray,
+        times: np.ndarray,
+    ) -> None:
+        self._system = system
+        self._x_points = x_points
+        self._p_points = p_points
+        self._times = times
+
+    @property
+    def p_points(self) -> np.ndarray[Any, np.dtype[np.floating]]:
+        return self._p_points
+
+    def __getitem__(self, idx: int) -> SingleLangevinSimulationResult[S]:
         """Return a single trajectory from the ensemble."""
-        return SingleSimulationResult(
-            times=self.times,
+        return SingleLangevinSimulationResult(
+            system=self.system,
+            times=self._times,
             x_points=self.x_points[idx],
             p_points=self.p_points[idx],
-            system=self.system,
         )
 
     def with_si_units(self) -> Self:
@@ -225,15 +256,15 @@ def solve_ensemble[S: System](
         np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
     ],
     _key: jax.Array,
-) -> SimulationResult[S]:
+) -> LangevinSimulationResult[S]:
     """Solve an ensemble of ULD Langevin trajectories in parallel via jax.vmap."""
     xs0_jax = jnp.asarray(initial_conditions[0])
     ps0_jax = jnp.asarray(initial_conditions[1])
     n_run = xs0_jax.shape[0]
 
     times = jnp.linspace(
-        time_span.t0,
-        time_span.t1,
+        time_span.t_start,
+        time_span.t_end,
         time_span.n_steps,
         endpoint=True,
     )
@@ -256,7 +287,7 @@ def solve_ensemble[S: System](
     xs_batch = jnp.transpose(xs_batch, (0, 2, 1))
     ps_batch = jnp.transpose(ps_batch, (0, 2, 1))
 
-    return SimulationResult[S](
+    return LangevinSimulationResult(
         times=np.array(times),
         x_points=np.array(xs_batch),
         p_points=np.array(ps_batch),
@@ -283,7 +314,7 @@ def solve_single[S: System](
         np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
     ],
     _key: jax.Array,
-) -> SingleSimulationResult[S]:
+) -> SingleLangevinSimulationResult[S]:
     """Solve the ULD Langevin equation for a single trajectory via vmap."""
     return solve_ensemble.load_or_call_uncached(
         system,
@@ -350,9 +381,9 @@ def solve_ballistic_ensemble[S: System](
     time_span: TimeSpan,
     n_samples: int,
     _key: jax.Array,
-) -> SimulationResult[S]:
+) -> LangevinSimulationResult[S]:
     """Solve an ensemble of ballistic trajectories in parallel via jax.vmap."""
-    return solve_ensemble.load_or_call_uncached(
+    out = solve_ensemble.load_or_call_uncached(
         system.with_gamma(0.0),
         time_span,
         (
