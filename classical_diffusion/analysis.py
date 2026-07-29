@@ -95,7 +95,6 @@ def plot_isf(
 
     line.set_label("SEM")
 
-    ax.set_title("Intermediate Scattering Function Over Time")
     ax.set_xlabel("Time / s")
     ax.set_ylabel("ISF")
 
