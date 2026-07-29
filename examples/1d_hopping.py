@@ -1,3 +1,4 @@
+import jax.numpy as jnp
 import jax.random as jrandom
 import numpy as np
 
@@ -5,6 +6,9 @@ from classical_diffusion.analysis import plot_isf, plot_x_evolution
 from classical_diffusion.hopping import (
     Lattice1D,
     solve_ensemble,
+)
+from classical_diffusion.hopping._hopping import (
+    _get_deterministic_isf_slow,
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.simulation import TimeSpan
@@ -45,5 +49,17 @@ def _plot_1d_hopping_isf() -> None:
     fig.savefig("./examples/1d_hopping.isf.log.pdf")
 
 
+def _deterministic_trialling() -> None:
+
+    _isfs, _times = _get_deterministic_isf_slow(
+        Lattice1D(lattice_spacing=5, hop_time=15),
+        jnp.array([10]),
+        TimeSpan(t_end=4000, n_steps=8000),
+        np.pi / 5,
+        jnp.array([5]),
+    )
+
+
 if __name__ == "__main__":
-    _plot_1d_hopping_isf()
+    _deterministic_trialling()
+    # _plot_1d_hopping_isf()

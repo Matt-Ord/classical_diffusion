@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.scipy.linalg import expm
 
 from classical_diffusion.hopping._system import CanonicalLattice, Lattice
 from classical_diffusion.simulation import SimulationResult
@@ -105,7 +106,7 @@ def solve_ensemble[L: Lattice = Lattice](
 ) -> HoppingSimulationResult[L]:
     """Solve the hopping ensemble."""
     keys = jax.random.split(key, initial_condition.shape[0])
-    times = jax.numpy.linspace(time_span.t_start, time_span.t_end, time_span.n_steps)
+    times = jnp.linspace(time_span.t_start, time_span.t_end, time_span.n_steps)
 
     results = jax.vmap(
         _run_hopping_simulation_jit,
@@ -117,3 +118,57 @@ def solve_ensemble[L: Lattice = Lattice](
         times=np.array(times),
         x_indices=np.array(jnp.transpose(results, (0, 2, 1))),
     )
+
+
+def _get_deterministic_isf_slow[L: Lattice[Any]](
+    system: L,
+    finite_lattice_shape: jnp.ndarray,
+    time_span: TimeSpan,
+    delta_k: float,
+    initial_position: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Use deterministic formula to return the ISF, inefficiently."""
+    #
+    # Rate matrix, M
+    # M[a,b] = - rate (b -> a)
+    # M[a,a] = sum_i ( rates a -> i)
+
+    max_lattice_index = jnp.prod(finite_lattice_shape)
+
+    times = jnp.linspace(time_span.t_start, time_span.t_end, time_span.n_steps)
+    initial_p = jnp.full(max_lattice_index, 0.0)
+    initial_p = initial_p.at[
+        np.ravel_multi_index(initial_position, finite_lattice_shape)
+    ].set(1)
+
+    rate_matrix = np.full((max_lattice_index, max_lattice_index), 0.0)
+
+    for site in range(max_lattice_index):
+        hop_sites, hop_rates = system.get_rates(
+            np.unravel_index(site, finite_lattice_shape)
+        )
+        hop_sites = jnp.clip(
+            hop_sites, min=0
+        )  # Remove negative indices as these will wrap around when forming the matrix
+        rate_row = jnp.full(max_lattice_index, 0.0)
+
+        rate_row = rate_row.at[hop_sites[:, 0]].set(-1 * hop_rates)
+        rate_row = rate_row.at[site].set(jnp.sum(hop_rates))
+        rate_matrix[site] = rate_row
+
+    print(jnp.round(rate_matrix, 3))
+
+    # Find probabilities at a given time by solving DE: P(t) = exp(Mt) P(0)
+
+    def solve_single_time(time: jnp.ndarray) -> jnp.ndarray:
+        return jnp.dot(expm(rate_matrix * time), initial_p)
+
+    p_at_each_time = jax.vmap(solve_single_time)(times)
+
+    isfs = jnp.fft.fft(p_at_each_time, axis=-1)
+
+    k_vectors = (
+        jnp.fft.fftfreq(int(max_lattice_index), d=system.lattice_spacing) * 2 * jnp.pi
+    )
+
+    return (isfs[:, jnp.argmin(jnp.abs(k_vectors - delta_k))], times)

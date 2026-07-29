@@ -74,8 +74,15 @@ class Lattice1D(Lattice):
         np.ndarray[Any, np.dtype[np.int_]],
         np.ndarray[Any, np.dtype[np.float64]],
     ]:
-        hop_sites = pos + np.array([[1], [-1]])
-        hop_rates = np.array([1 / self.hop_time, 1 / self.hop_time])
+        hop_sites = pos + np.array([[-2], [-1], [1], [2]])
+        hop_rates = np.array(
+            [
+                0.1 / self.hop_time,
+                1 / self.hop_time,
+                1 / self.hop_time,
+                0.1 / self.hop_time,
+            ]
+        )
         return (hop_sites, hop_rates)
 
     def as_canonical(self) -> CanonicalLattice1D:
