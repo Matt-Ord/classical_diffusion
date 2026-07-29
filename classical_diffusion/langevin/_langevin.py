@@ -1,5 +1,4 @@
 import dataclasses
-import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
@@ -15,8 +14,9 @@ from classical_diffusion.system import (
     System,
     UnitSystem,
     get_energy,
+    make_free_point_sampler,
 )
-from classical_diffusion.util import cached, timed
+from classical_diffusion.util import cached, hash_array, timed
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -206,23 +206,13 @@ def _run_langevin_ensemble_jit(
     return jax.vmap(solve_one, in_axes=(0, 0, 0))(xs0, ps0, keys)
 
 
-def _hash_initial_conditions(initial_conditions: tuple[np.ndarray, np.ndarray]) -> int:
-    chk = 0
-    for arr in initial_conditions:
-        # Chain the CRC32 checksums of the raw float bytes
-        chk = zlib.crc32(arr.tobytes(), chk)  # cspell: disable-line
-        # Include shape just in case the same floats are reshaped
-        chk = zlib.crc32(str(arr.shape).encode(), chk)
-    return chk
-
-
 def _solve_ensemble_path[S: System](
     system: S,
     time_span: TimeSpan,
     initial_conditions: tuple[np.ndarray, np.ndarray],
     _key: jax.Array,
 ) -> Path:
-    filename = f"{hash(system)}_{hash(time_span)}_{_hash_initial_conditions(initial_conditions)}.npz"
+    filename = f"{hash(system)}_{hash(time_span)}_{hash_array(initial_conditions)}.npz"
     return Path("examples/data") / filename
 
 
@@ -280,7 +270,7 @@ def _solve_single_path[S: System](
     initial_condition: tuple[np.ndarray, np.ndarray],
     _key: jax.Array,
 ) -> Path:
-    filename = f"{hash(system)}_{hash(time_span)}_{_hash_initial_conditions(initial_condition)}.npz"
+    filename = f"{hash(system)}_{hash(time_span)}_{hash_array(initial_condition)}.npz"
     return Path("examples/data") / filename
 
 
@@ -353,40 +343,6 @@ def sample_p_initial(
     return rng.normal(0.0, p_std, size=(n_samples, system.n_dim))
 
 
-def make_free_point_sampler(system: System, barrier_energy: float):
-    x0, *_ = system.coordinate_symbols
-    potential_fn = sp.lambdify(
-        (x0, *system.parameter_symbols), system.potential_expr, "jax"
-    )
-    sigma = jnp.sqrt(system.m * system.kbt)
-    x_lo, x_hi = system.sampling_domain
-
-    def sample_one(key):
-        def cond_fn(state):
-            _, _, _, accepted = state
-            return ~accepted
-
-        def body_fn(state):
-            key, _x, _p, _ = state
-            key, kx, ku, kp = jax.random.split(key, 4)
-
-            x_candidate = jax.random.uniform(kx, minval=x_lo, maxval=x_hi)
-            V = potential_fn(x_candidate, *system.params)
-            x_ok = jax.random.uniform(ku) < jnp.exp(-V / system.kbt)
-
-            p_candidate = jax.random.normal(kp) * sigma
-            energy = p_candidate**2 / (2 * system.m) + V
-
-            accept = x_ok & (energy > barrier_energy)
-            return key, x_candidate, p_candidate, accept
-
-        init = (key, jnp.array(0.0), jnp.array(0.0), jnp.array(False))
-        _, x_final, p_final, _ = jax.lax.while_loop(cond_fn, body_fn, init)
-        return x_final, p_final
-
-    return jax.jit(jax.vmap(sample_one))
-
-
 @cached(_solve_ballistic_ensemble_path)
 @timed
 def solve_ballistic_ensemble[S: System](
@@ -434,22 +390,23 @@ def split_escaped_and_trapped(result: SimulationResult, barrier_energy: float) -
 
 
 def solve_free_ballistic_ensemble[S: System](
-    system: System,
-    time_span: TimeSpan,
-    n_samples: int,
-    _key: jax.Array,
-    barrier_energy: float,
+    system: System, time_span: TimeSpan, _key: jax.Array, initial_conditions: tuple
 ) -> SimulationResult[S]:
     """Take an ensemble of uniformly distributed ballistic trajectories and solve free trajectories in parallel via jax.vmap. Also returns probability of being above the barrier."""
+    return solve_ensemble.load_or_call_uncached(
+        system.with_gamma(0.0),
+        time_span,
+        initial_conditions,
+        _key,
+    )
+
+
+def get_over_barrier_initial_conditions(
+    system: System, barrier_energy: float, n_samples: int
+) -> tuple:
     sampler = make_free_point_sampler(system, barrier_energy)
     keys = jax.random.split(jax.random.PRNGKey(0), n_samples)
     free_x_initial, free_p_initial = sampler(keys)
     free_x_initial = free_x_initial.reshape(-1, system.n_dim)
     free_p_initial = free_p_initial.reshape(-1, system.n_dim)
-
-    return solve_ensemble.load_or_call_uncached(
-        system.with_gamma(0.0),
-        time_span,
-        (free_x_initial, free_p_initial),
-        _key,
-    )
+    return free_x_initial, free_p_initial

@@ -1,11 +1,15 @@
 from typing import TYPE_CHECKING, Any
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 import sympy as sp
 from scipy import integrate
 from scipy.optimize import brentq
+from scipy.special import ellipkinc
 
 from classical_diffusion.plot import get_figure
+from classical_diffusion.system._system import get_energy
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -350,3 +354,79 @@ def calculate_probability_under_barrier(system: System, barrier_energy: float) -
     z = calculate_partition_function(system)
 
     return integral_below / z
+
+
+def make_free_point_sampler(system: System, barrier_energy: float) -> Callable:
+    x0, *_ = system.coordinate_symbols
+    potential_fn = sp.lambdify(
+        (x0, *system.parameter_symbols), system.potential_expr, "jax"
+    )
+    sigma = jnp.sqrt(system.m * system.kbt)
+    x_lo, x_hi = system.sampling_domain
+
+    def _sample_one(key: jax.Array) -> tuple:
+        def _cond_fn(state: tuple) -> bool:
+            _, _, _, accepted = state
+            return ~accepted
+
+        def _body_fn(state: tuple) -> tuple:
+            key, _x, _p, _ = state
+            key, kx, ku, kp = jax.random.split(key, 4)
+
+            x_candidate = jax.random.uniform(kx, minval=x_lo, maxval=x_hi)
+            V = potential_fn(x_candidate, *system.params)
+            x_ok = jax.random.uniform(ku) < jnp.exp(-V / system.kbt)
+
+            p_candidate = jax.random.normal(kp) * sigma
+            energy = p_candidate**2 / (2 * system.m) + V
+
+            accept = x_ok & (energy > barrier_energy)
+            return key, x_candidate, p_candidate, accept
+
+        init = (key, jnp.array(0.0), jnp.array(0.0), jnp.array(False))
+        _, x_final, p_final, _ = jax.lax.while_loop(_cond_fn, _body_fn, init)
+        return x_final, p_final
+
+    return jax.jit(jax.vmap(_sample_one))
+
+
+def get_elastic_p_exact_1d_periodic(
+    system: PeriodicSystem1D, x_initial: np.ndarray, p_initial: np.ndarray
+) -> np.ndarray:
+    energy = get_energy(system, x_initial, p_initial)
+    q2 = system.barrier_energy / energy
+    phi0 = np.pi * x_initial[:, 0] / system.delta_x
+    phi = np.pi * (x_initial[:, 0] / system.delta_x + 1)
+    omega = (2 * np.pi / system.delta_x) * np.sqrt(energy / (2 * system.m))
+
+    t = 1 / omega * (ellipkinc(phi, q2) - ellipkinc(phi0, q2))
+    return system.m * system.delta_x / t
+
+
+def get_full_effective_mass_exact_1d_periodic(
+    system: PeriodicSystem1D, initial_conditions: tuple
+) -> float:
+
+    x_initial, p_initial = initial_conditions
+    elastic_ps = get_elastic_p_exact_1d_periodic(
+        system=system, x_initial=x_initial, p_initial=p_initial
+    )
+    avg_p2_given_escaped = np.average(elastic_ps**2, axis=0)
+
+    prob_escape = 1 - calculate_probability_under_barrier(
+        system=system, barrier_energy=system.barrier_energy
+    )
+
+    return (system.kbt * system.m) / (prob_escape * avg_p2_given_escaped)
+
+
+def get_free_effective_mass_exact_1d_periodic(
+    system: PeriodicSystem1D, initial_conditions: tuple
+) -> float:
+
+    x_initial, p_initial = initial_conditions
+    elastic_ps = get_elastic_p_exact_1d_periodic(
+        system=system, x_initial=x_initial, p_initial=p_initial
+    )
+
+    return (system.kbt * system.m) / np.average(elastic_ps**2, axis=0)

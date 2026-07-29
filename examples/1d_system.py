@@ -5,19 +5,22 @@ from classical_diffusion.langevin import (
     TimeSpan,
     breakdown_ballistic_trajectory,
     get_effective_mass,
-    get_effective_mass_weighted,
+    get_full_effective_mass_from_free,
     plot_isf,
     plot_isf_with_delta_k,
     solve_ballistic_ensemble,
     solve_ensemble,
     solve_free_ballistic_ensemble,
 )
+from classical_diffusion.langevin._langevin import get_over_barrier_initial_conditions
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.system import (
     PeriodicSystem1D,
     UnitSystem,
     calculate_probability_under_barrier,
     get_diffusion_time,
+    get_free_effective_mass_exact_1d_periodic,
+    get_full_effective_mass_exact_1d_periodic,
     plot_exact_gaussian_isf,
     plot_exact_offset_gaussian_isf,
     plot_periodic_potential_1d,
@@ -162,7 +165,7 @@ def _plot_1d_inelastic_trends() -> None:
     )
 
 
-def _plot_effective_mass_isf() -> None:
+def _plot_effective_mass_isf() -> None:  # ruff:ignore[too-many-locals]
     key = jrandom.PRNGKey(100)
 
     system = PeriodicSystem1D(
@@ -204,6 +207,11 @@ def _plot_effective_mass_isf() -> None:
     line_1.set_label("actual mass")
     line_1.set_linestyle(":")
 
+    initial_conditions = get_over_barrier_initial_conditions(
+        system=normalized_system,
+        barrier_energy=normalized_system.barrier_energy,
+        n_samples=500,
+    )
     result_free = solve_free_ballistic_ensemble(
         normalized_system,
         TimeSpan(
@@ -211,17 +219,17 @@ def _plot_effective_mass_isf() -> None:
             t1=normalized_system.units.time_into(5e-12, units=UnitSystem()),
             n_steps=1000,
         ),
-        n_samples=2000,
+        initial_conditions=initial_conditions,
         _key=key,
-        barrier_energy=normalized_system.barrier_energy,
     )
 
-    print(normalized_system)
     prob_under_barrier = calculate_probability_under_barrier(
         normalized_system, barrier_energy=normalized_system.barrier_energy
     )
     effective_mass = UnitSystem().mass_into(
-        get_effective_mass_weighted(result_free, prob_under_barrier=prob_under_barrier),
+        get_full_effective_mass_from_free(
+            result_free, prob_under_barrier=prob_under_barrier
+        ),
         units=normalized_system.units,
     )
 
@@ -234,13 +242,28 @@ def _plot_effective_mass_isf() -> None:
     line_2.set_label("effective mass")
     line_2.set_linestyle(":")
 
+    effective_mass_exact = UnitSystem().mass_into(
+        get_full_effective_mass_exact_1d_periodic(
+            system=normalized_system, initial_conditions=initial_conditions
+        ),
+        units=normalized_system.units,
+    )
+    _, ax, line_3 = plot_exact_gaussian_isf(
+        system=system.with_si_units(),
+        ax=ax,
+        delta_k=delta_k,
+        effective_mass=effective_mass_exact,
+    )
+    line_3.set_label("effective mass exact")
+    line_3.set_linestyle(":")
+
     ax.set_xlim(0, 1e-12)
     ax.set_ylim(0, 1)
-    ax.legend(handles=[line_0, line_1, line_2])
+    ax.legend(handles=[line_0, line_1, line_2, line_3])
     fig.savefig("./examples/1d_system.effective_mass.pdf", dpi=300, bbox_inches="tight")
 
 
-def _plot_effective_mass_offset_isf() -> None:
+def _plot_effective_mass_offset_isf() -> None:  # ruff:ignore[too-many-locals]
     key = jrandom.PRNGKey(100)
 
     system = PeriodicSystem1D(
@@ -277,6 +300,11 @@ def _plot_effective_mass_offset_isf() -> None:
     )
     line_0.set_label("elastic")
 
+    initial_conditions = get_over_barrier_initial_conditions(
+        system=normalized_system,
+        barrier_energy=normalized_system.barrier_energy,
+        n_samples=500,
+    )
     result_free = solve_free_ballistic_ensemble(
         normalized_system,
         TimeSpan(
@@ -284,17 +312,12 @@ def _plot_effective_mass_offset_isf() -> None:
             t1=normalized_system.units.time_into(5e-12, units=UnitSystem()),
             n_steps=1000,
         ),
-        n_samples=2000,
+        initial_conditions=initial_conditions,
         _key=key,
-        barrier_energy=normalized_system.barrier_energy,
     )
 
     prob_under_barrier = calculate_probability_under_barrier(
         normalized_system, barrier_energy=normalized_system.barrier_energy
-    )
-    effective_mass = UnitSystem().mass_into(
-        get_effective_mass(result_free),
-        units=normalized_system.units,
     )
 
     _, ax, line_1 = plot_exact_offset_gaussian_isf(
@@ -307,6 +330,11 @@ def _plot_effective_mass_offset_isf() -> None:
     line_1.set_label("actual mass")
     line_1.set_linestyle(":")
 
+    effective_mass = UnitSystem().mass_into(
+        get_effective_mass(result_free),
+        units=normalized_system.units,
+    )
+
     _, ax, line_2 = plot_exact_offset_gaussian_isf(
         system=system,
         ax=ax,
@@ -317,9 +345,25 @@ def _plot_effective_mass_offset_isf() -> None:
     line_2.set_label("effective mass")
     line_2.set_linestyle(":")
 
+    effective_mass_exact = UnitSystem().mass_into(
+        get_free_effective_mass_exact_1d_periodic(
+            normalized_system, initial_conditions
+        ),
+        units=normalized_system.units,
+    )
+    _, ax, line_3 = plot_exact_offset_gaussian_isf(
+        system=system,
+        ax=ax,
+        delta_k=delta_k,
+        effective_mass=effective_mass_exact,
+        offset=prob_under_barrier,
+    )
+    line_3.set_label("effective mass exact")
+    line_3.set_linestyle(":")
+
     ax.set_xlim(0, 2e-12)
     ax.set_ylim(0, 1)
-    ax.legend(handles=[line_0, line_1, line_2])
+    ax.legend(handles=[line_0, line_1, line_2, line_3])
     fig.savefig(
         "./examples/1d_system.effective_mass_offset.pdf",
         dpi=300,

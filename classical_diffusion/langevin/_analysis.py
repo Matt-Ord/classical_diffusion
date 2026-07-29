@@ -659,7 +659,7 @@ def get_effective_mass(result: SimulationResult, idx: int = 0) -> float:
     return (result.system.kbt * result.system.m**2) / np.average(elastic_ps**2, axis=0)
 
 
-def get_effective_mass_weighted(
+def get_full_effective_mass_from_free(
     result: SimulationResult, prob_under_barrier: float
 ) -> float:
     """Return the effective mass, correcting for trapped trajectories analytically."""
@@ -688,7 +688,7 @@ def plot_effective_mass_ratio_periodic_1D(  # ruff:ignore[invalid-function-name]
         shading="auto",
         cmap="viridis",
     )
-    fig.colorbar(mesh, ax=ax, label="effective mass")
+    fig.colorbar(mesh, ax=ax, label="effective mass ratio")
 
     ax.set_xlabel("Dimensionless Barrier energy")
     ax.set_ylabel("Dimenesionless Inertial mass")
