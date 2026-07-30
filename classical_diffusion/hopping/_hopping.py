@@ -2,18 +2,23 @@ import os
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
+from classical_diffusion.plot import get_figure
+
 os.environ["JAX_ENABLE_X64"] = "True"
+import diffrax as dfx
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.scipy.linalg import expm
 
 from classical_diffusion.hopping._system import CanonicalLattice, Lattice
-from classical_diffusion.simulation import SimulationResult
+from classical_diffusion.simulation import SimulationResult, TimeSpan
 from classical_diffusion.util import timed
 
 if TYPE_CHECKING:
-    from classical_diffusion.simulation import TimeSpan
+    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
+    from matplotlib.lines import Line2D
 
 
 class HoppingSimulationResult[L: Lattice](SimulationResult[L]):
@@ -31,6 +36,27 @@ class HoppingSimulationResult[L: Lattice](SimulationResult[L]):
     @cached_property
     def x_points(self) -> np.ndarray:
         return self.system.x_points_from_indices(self._x_indices)
+
+
+class DeterministicSolverResult[L: Lattice]:
+    def __init__(
+        self, *, system: L, times: jnp.ndarray, probability_matrix: jnp.ndarray
+    ) -> None:
+        self._system = system
+        self._times = times
+        self._probability_matrix = probability_matrix
+
+    @property
+    def system(self) -> L:
+        return self._system
+
+    @property
+    def times(self) -> jnp.ndarray:
+        return self._times
+
+    @property
+    def probability_matrix(self) -> jnp.ndarray:
+        return self._probability_matrix
 
 
 @jax.jit
@@ -122,13 +148,13 @@ def solve_ensemble[L: Lattice = Lattice](
     )
 
 
-def _get_deterministic_isf_slow[L: Lattice[Any]](
+@timed
+def get_deterministic_probabilities_slow[L: Lattice[Any]](
     system: L,
     finite_lattice_shape: tuple,
     time_span: TimeSpan,
-    delta_k: float,
     initial_position: jnp.ndarray,
-) -> None:  # tuple[jnp.ndarray, jnp.ndarray]:
+) -> DeterministicSolverResult:
     """Use deterministic formula to return the ISF, inefficiently."""
     #
     # Rate matrix, M
@@ -163,6 +189,119 @@ def _get_deterministic_isf_slow[L: Lattice[Any]](
     def solve_single_time(time: jnp.ndarray) -> jnp.ndarray:
         return jnp.dot(expm(rate_matrix * time), initial_p)
 
-    p_at_each_time = jax.vmap(solve_single_time)(times)
-    p_at_each_time = jnp.clip(p_at_each_time, min=0)
-    p_at_each_time /= jnp.sum(p_at_each_time, axis=-1, keepdims=True)
+    prob_matrix = jax.vmap(solve_single_time)(times)
+    prob_matrix = jnp.clip(prob_matrix, min=0)
+    prob_matrix /= jnp.sum(prob_matrix, axis=-1, keepdims=True)
+
+    return DeterministicSolverResult(
+        system=system, times=times, probability_matrix=prob_matrix
+    )
+
+
+@timed
+def get_deterministic_probabilities[L: Lattice[Any]](
+    system: L,
+    finite_lattice_shape: tuple,
+    time_span: TimeSpan,
+    initial_position: jnp.ndarray,
+) -> DeterministicSolverResult:
+    """Use deterministic formula to return the ISF, inefficiently."""
+    #
+    # Rate matrix, M
+    # M[a,b] = - rate (b -> a)
+    # M[a,a] = sum_i ( rates a -> i)
+
+    max_lattice_index = jnp.prod(jnp.array(finite_lattice_shape))
+    all_sites = jnp.arange(0, max_lattice_index)
+
+    times = jnp.linspace(time_span.t_start, time_span.t_end, time_span.n_steps)
+    initial_p = jnp.full(max_lattice_index, 0.0)
+    initial_p = initial_p.at[
+        jnp.ravel_multi_index(tuple(initial_position), finite_lattice_shape)
+    ].set(1)
+
+    # Find probabilities at a given time with diffrax
+    def vector_field(
+        _t: Any,  # ruff:ignore[any-type]
+        p: jnp.ndarray,
+        _args: Any,  # ruff:ignore[any-type]
+    ) -> jnp.ndarray:
+
+        hop_sites, hop_rates = system.get_rates(all_sites)
+
+        # p[hop_site] has shape (N, 4)
+        # hop_rates    has shape (N, 4)
+        """
+        def dot_product(
+            singles_hop_sites: jnp.ndarray, hop_rates: jnp.ndarray
+        ) -> jnp.ndarray:
+
+            def scan_body(total: float, data: tuple[int, float]) -> float:
+                site, rate = data
+                return total + rate * p[site]
+
+            return jax.lax.scan(scan_body, 0, (singles_hop_sites, hop_rates))
+
+        return jax.vmap(dot_product, in_axes=(0, 0))(hop_sites, hop_rates)
+        """
+        return jnp.sum(hop_rates * p[hop_sites], axis=-1)
+
+    term = dfx.ODETerm(vector_field)
+
+    # Core solver for an initial condition
+    @jax.jit
+    def solve_one(p0: jnp.ndarray) -> jnp.ndarray:
+        sol = dfx.diffeqsolve(
+            term,
+            solver=dfx.Tsit5(),  # cspell: disable-line
+            t0=0,
+            t1=times[-1],
+            dt0=times[1] - times[0],
+            y0=p0,
+            args=None,
+            saveat=dfx.SaveAt(ts=times),
+            stepsize_controller=dfx.PIDController(
+                rtol=1e-6,  # cspell: disable-line
+                atol=1e-8,
+            ),  # cspell: disable-line
+            max_steps=100_000_000,
+        )
+        return sol.ys
+
+    prob_matrix = solve_one(initial_p)
+
+    return DeterministicSolverResult(
+        system=system, times=times, probability_matrix=prob_matrix
+    )
+
+
+@timed
+def _get_deterministic_isf[L: Lattice[Any]](
+    system: L,
+    prob_matrix: jnp.ndarray,
+    delta_k: float,
+) -> jnp.ndarray:
+    distances = system.x_points_from_indices(np.arange(prob_matrix.shape[1]))
+    phase_factors = jnp.exp(1j * delta_k * distances)
+    return jnp.abs(jnp.dot(prob_matrix, phase_factors))
+
+
+@timed
+def plot_deterministic_isf[L: Lattice[Any]](
+    system: L,
+    result: DeterministicSolverResult,
+    delta_k: float,
+    *,
+    ax: Axes | None = None,
+) -> tuple[Figure, Axes, Line2D]:
+    """Plot the ensemble-averaged ISF over time, with a shaded ±1 SEM band."""
+    fig, ax = get_figure(ax)
+
+    isf = _get_deterministic_isf(system, result.probability_matrix, delta_k)
+    (line,) = ax.plot(np.array(result.times), np.array(isf))
+    line.set_label("ISF")
+
+    ax.set_xlabel("Time / s")
+    ax.set_ylabel("ISF")
+
+    return fig, ax, line
