@@ -8,7 +8,8 @@ from classical_diffusion.hopping import (
     solve_ensemble,
 )
 from classical_diffusion.hopping._hopping import (
-    _get_deterministic_isf_slow,
+    get_deterministic_probabilities,
+    plot_deterministic_isf,
 )
 from classical_diffusion.plot import (
     get_fancy_figure,
@@ -54,14 +55,39 @@ def _plot_1d_hopping_isf() -> None:
 def _deterministic_trialling() -> None:
 
     lattice_parameter = 5
-
-    _get_deterministic_isf_slow(
-        Lattice1D(lattice_spacing=lattice_parameter, hop_time=15),
-        (11,),
-        TimeSpan(t_end=4000, n_steps=8000),
-        np.pi / lattice_parameter,
-        jnp.array([5]),
+    system = Lattice1D(lattice_spacing=lattice_parameter, hop_time=15)
+    """
+    get_deterministic_probabilities_slow(
+        system,
+        (101,),
+        TimeSpan(t_end=100, n_steps=200),
+        jnp.array([50]),
     )
+
+    fig, ax = get_fancy_figure()
+    delta_k = 0.5 * 2 * np.pi / system.lattice_spacing
+    _, ax, line_0 = plot_deterministic_isf(system, result, delta_k, ax=ax)
+
+    line_0.set_label("Deterministic Hopping")
+    ax.set_xlim(0, right=25)
+
+    fig.savefig("./examples/1d_hopping.slow_deterministic_isf.pdf")
+    """
+    result = get_deterministic_probabilities(
+        system,
+        (500001,),
+        TimeSpan(t_end=100, n_steps=200),
+        jnp.array([50]),
+    )
+
+    fig, ax = get_fancy_figure()
+    delta_k = 0.5 * 2 * np.pi / system.lattice_spacing
+    _, ax, line_0 = plot_deterministic_isf(system, result, delta_k, ax=ax)
+
+    line_0.set_label("Deterministic Hopping")
+    ax.set_xlim(0, right=50)
+
+    fig.savefig("./examples/1d_hopping.deterministic_isf.pdf")
 
 
 if __name__ == "__main__":
