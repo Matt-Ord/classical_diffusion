@@ -10,7 +10,9 @@ from classical_diffusion.hopping import (
 from classical_diffusion.hopping._hopping import (
     _get_deterministic_isf_slow,
 )
-from classical_diffusion.plot import get_fancy_figure
+from classical_diffusion.plot import (
+    get_fancy_figure,
+)
 from classical_diffusion.simulation import TimeSpan
 
 
@@ -51,11 +53,13 @@ def _plot_1d_hopping_isf() -> None:
 
 def _deterministic_trialling() -> None:
 
-    _isfs, _times = _get_deterministic_isf_slow(
-        Lattice1D(lattice_spacing=5, hop_time=15),
-        jnp.array([10]),
+    lattice_parameter = 5
+
+    _get_deterministic_isf_slow(
+        Lattice1D(lattice_spacing=lattice_parameter, hop_time=15),
+        (11,),
         TimeSpan(t_end=4000, n_steps=8000),
-        np.pi / 5,
+        np.pi / lattice_parameter,
         jnp.array([5]),
     )
 
