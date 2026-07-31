@@ -5,9 +5,12 @@
     "words": [
         "axhline",
         "boltzman",
+        "brentq",
         "cmap",
         "diffeqsolve",
         "diffrax",
+        "ellipk",
+        "ellipkinc",
         "frameon",
         "Heun",
         "intertial",
@@ -17,6 +20,7 @@
         "pcolormesh",
         "pickler",
         "PRNG",
+        "rtol",
         "saveat",
         "savez",
         "sympy",
@@ -33,7 +37,8 @@
         "xticks",
         "yedges",
         "ylim",
-        "yscale"
+        "yscale",
+        "yticks"
     ],
     "ignoreWords": [
         "Phonopy",

@@ -4,12 +4,13 @@ import jax.numpy as jnp
 import numpy as np
 import sympy as sp
 
-from classical_diffusion.langevin._system import System
-from classical_diffusion.plot import get_figure
-from classical_diffusion.system import (
-    System,
+from classical_diffusion.langevin import (
+    LangevinSimulationResult,
+    SingleLangevinSimulationResult,
     get_energy,
 )
+from classical_diffusion.plot import get_figure
+from classical_diffusion.system import PeriodicSystem1D, System
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -141,7 +142,7 @@ def plot_x_histogram(
     fig, ax = get_figure(ax)
 
     _bin_counts, _bin_edges, bars = ax.hist(
-        result.x_points.reshape(-1),
+        result.x_points[1:].reshape(-1),
         bins=bins,
         density=True,
         alpha=1.0,
@@ -211,8 +212,8 @@ def plot_phase_space_density(
     fig, ax = get_figure(ax)
 
     _counts, _xedges, _yedges, mesh = ax.hist2d(
-        result.x_points.reshape(-1),
-        result.p_points.reshape(-1),
+        result.x_points[1:].reshape(-1),
+        result.p_points[1:].reshape(-1),
         bins=bins,
         density=True,
         cmap="viridis",
@@ -358,13 +359,13 @@ def breakdown_ballistic_trajectory[S: System](
     # Calculate x_elastic(t) = x_0 + (p_elastic / m) * t across all spatial components
     x_elastic_points = p_elastic[..., None] * result.times / result.system.m + x_0
 
-    elastic = LangevinSimulationResult(
+    elastic = LangevinSimulationResult[S](
         times=result.times,
         x_points=x_elastic_points,
         p_points=p_elastic_points,
         system=result.system,
     )
-    inelastic = LangevinSimulationResult(
+    inelastic = LangevinSimulationResult[S](
         times=result.times,
         x_points=result.x_points - x_elastic_points,
         p_points=result.p_points - p_elastic_points,
@@ -377,8 +378,11 @@ _EXPECTED_NDIM = 2
 
 
 def plot_2d_trajectory(
-    result: SingleLangevinSimulationResult, *, ax: Axes | None = None
-) -> tuple[Figure, Axes, Line2D]:
+    result: SingleLangevinSimulationResult,
+    *,
+    ax: Axes | None = None,
+    n_trajectories: int = 1,
+) -> tuple[Figure, Axes, list[Line2D]]:
     """Plot x against y for 2d trajectory.
 
     Raises
@@ -388,54 +392,19 @@ def plot_2d_trajectory(
     """
     fig, ax = get_figure(ax)
 
-    if result.x_points.shape[0] != _EXPECTED_NDIM:
+    if result.x_points.shape[1] != _EXPECTED_NDIM:
         msg = "incorrect number of system dimensions, must be 2)"
         raise ValueError(msg)
 
-    (line,) = ax.plot(result.x_points[0], result.x_points[1])
+    lines = []
+    for traj in range(n_trajectories):
+        (line,) = ax.plot(result.x_points[traj, 0, :], result.x_points[traj, 1, :])
+        lines.append(line)
 
     ax.set_xlabel("$x$")
     ax.set_ylabel("$y$")
 
-    return fig, ax, line
-
-
-def get_energy(
-    result: LangevinSimulationResult,
-) -> np.ndarray[Any, np.dtype[np.floating]]:
-    """Return the energy of the system."""
-    potential = sp.lambdify(
-        (*result.system.coordinate_symbols, *result.system.parameter_symbols),
-        result.system.potential_expr,
-        "numpy",
-    )
-
-    potential = potential(result.x_points, *result.system.params).squeeze(axis=1)
-
-    kinetic = np.sum(result.p_points**2, axis=1) / (2 * result.system.m)
-
-    return kinetic + potential
-
-
-def plot_energy(
-    result: LangevinSimulationResult, n_trajectories: int, *, ax: Axes
-) -> tuple[Figure, Axes]:
-    """Plot the energy of the system with time."""
-    fig, ax = get_figure(ax)
-    energy = get_energy(
-        system=result.system, x_points=result.x_points, p_points=result.p_points
-    )
-    for trajectory in range(n_trajectories):
-        ax.plot(
-            result.times,
-            energy[trajectory, :],
-            label=f"trajectory {trajectory}",
-        )
-
-    ax.set_xlabel("time")
-    ax.set_ylabel("energy")
-
-    return fig, ax
+    return fig, ax, lines
 
 
 def _partition_result(
@@ -491,7 +460,7 @@ def get_effective_mass(result: LangevinSimulationResult, idx: int = 0) -> float:
 
 
 def get_full_effective_mass_from_free(
-    result: SimulationResult, prob_under_barrier: float
+    result: LangevinSimulationResult, prob_under_barrier: float
 ) -> float:
     """Return the effective mass, correcting for trapped trajectories analytically."""
     elastic_ps = _get_average_elastic_p(result=result)[:, -1]
@@ -534,7 +503,9 @@ def split_escaped_and_trapped(
     LangevinSimulationResult[PeriodicSystem1D],
 ]:
     """Split result into trajectories trapped within or free to move over the barrier."""
-    energy = get_energy(result)[:, 0]
+    energy = get_energy(
+        system=result.system, x_points=result.x_points, p_points=result.p_points
+    )[:, 0]
 
     free_x_points, free_p_points = _partition_result(
         result, energy > result.system.barrier_energy
@@ -543,13 +514,13 @@ def split_escaped_and_trapped(
         result, energy <= result.system.barrier_energy
     )
 
-    free = LangevinSimulationResult(
+    free = LangevinSimulationResult[PeriodicSystem1D](
         times=result.times,
         x_points=free_x_points,
         p_points=free_p_points,
         system=result.system,
     )
-    trapped = LangevinSimulationResult(
+    trapped = LangevinSimulationResult[PeriodicSystem1D](
         times=result.times,
         x_points=trapped_x_points,
         p_points=trapped_p_points,

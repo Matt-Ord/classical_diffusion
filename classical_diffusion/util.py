@@ -221,7 +221,7 @@ def cached[**P, R](
     return _cached
 
 
-def hash_array(arrays: tuple[np.ndarray]) -> int:
+def hash_array(arrays: tuple[np.ndarray, ...]) -> int:
     chk = 0
     for arr in arrays:
         # Chain the CRC32 checksums of the raw float bytes

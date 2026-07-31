@@ -6,6 +6,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from classical_diffusion.system import UnitSystem
+
 
 class CanonicalLattice(Protocol):
     """Protocol for JAX-compatible canonical PyTree lattices."""
@@ -16,6 +18,8 @@ class CanonicalLattice(Protocol):
 @dataclass(frozen=True, kw_only=True)
 class Lattice(ABC):
     """Parameters representing a simplified, discrete lattice representing a physical potential."""
+
+    units: UnitSystem = UnitSystem()  # ruff:ignore[function-call-in-dataclass-default-argument]
 
     @abstractmethod
     def x_points_from_indices(

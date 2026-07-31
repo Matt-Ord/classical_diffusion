@@ -3,19 +3,17 @@ import numpy as np
 
 from classical_diffusion.analysis import plot_isf
 from classical_diffusion.langevin import (
-    PeriodicSystemFCC,
-    TimeSpan,
+    get_initial_conditions,
     plot_2d_trajectory,
     plot_periodic_potential_fcc,
     solve_ballistic_ensemble,
-    solve_ensemble,
     solve_single,
 )
 from classical_diffusion.plot import get_fancy_figure
+from classical_diffusion.simulation import TimeSpan
 from classical_diffusion.system import (
     PeriodicSystemFCC,
     UnitSystem,
-    plot_periodic_potential_fcc,
 )
 
 
@@ -42,19 +40,18 @@ def _plot_2d_periodic_isf() -> None:
         m=1.0,
         delta_x=5,
         barrier_energy=1.5,
-        units=UnitSystem(),
+        units=UnitSystem(Boltzmann=1.0, angstrom=1.0, atomic_mass=1.0),
     )
 
-    result = solve_ensemble(
+    result = solve_single(
         system,
         TimeSpan(
-            t_end=50 / system.gamma,
-            n_steps=5000,
+            t_end=100 / system.gamma,
+            n_steps=10000,
         ),
-        (np.full((2000, 2), 0.0), np.full((2000, 2), 0.0)),
+        (np.full((2,), 0.0), np.full((2,), 0.0)),
         _key=key,
     )
-
     fig, ax = get_fancy_figure()
 
     delta_k = (0.5 * 2 * np.pi / system.delta_x,)
@@ -65,15 +62,18 @@ def _plot_2d_periodic_isf() -> None:
     )
     line_0.set_label("simulation")
 
+    normalized_system = system.with_normalized_units()
+    initial_conditions = get_initial_conditions(normalized_system, n_samples=100)
     result = solve_ballistic_ensemble(
-        system,
+        normalized_system,
         TimeSpan(
-            t_end=4 / system.gamma,
-            n_steps=400,
+            t_end=normalized_system.units.time_into(10e-12, units=UnitSystem()),
+            n_steps=1000,
         ),
-        n_samples=2000,
+        initial_conditions=initial_conditions,
         _key=key,
     )
+
     _, ax, line_1, _ = plot_isf(result=result, ax=ax, delta_k=delta_k, pairwise=False)
     line_1.set_label("ballistic simulation")
 
@@ -92,7 +92,7 @@ def _plot_2d_trajectory() -> None:
         m=1.0,
         delta_x=5,
         barrier_energy=1.5,
-        units=UnitSystem(),
+        units=UnitSystem(Boltzmann=1.0, angstrom=1.0, atomic_mass=1.0),
     )
 
     result = solve_single(

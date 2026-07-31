@@ -5,11 +5,12 @@ import jax.numpy as jnp
 import numpy as np
 import sympy as sp
 from scipy import integrate
+from scipy.integrate import quad
 from scipy.optimize import brentq
-from scipy.special import ellipkinc
+from scipy.special import ellipk, ellipkinc
+from scipy.stats.sampling import NumericalInversePolynomial
 
 from classical_diffusion.plot import get_figure
-from classical_diffusion.system._system import get_energy
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -19,16 +20,59 @@ if TYPE_CHECKING:
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
 
-    from classical_diffusion.langevin._system import (
+    from classical_diffusion.langevin import LangevinSimulationResult
+    from classical_diffusion.system import (
         HarmonicSystem,
+        PeriodicSquareSystem1D,
+        PeriodicSquareSystem2D,
         PeriodicSystem1D,
         PeriodicSystemFCC,
         System,
     )
 
 
+def get_energy(
+    system: System,
+    x_points: np.ndarray,
+    p_points: np.ndarray,
+) -> np.ndarray[Any, np.dtype[np.floating]]:
+    """Return the energy of the system."""
+    potential = sp.lambdify(
+        (*system.coordinate_symbols, *system.parameter_symbols),
+        system.potential_expr,
+        "numpy",
+    )
+
+    potential = potential(x_points, *system.params).squeeze(axis=1)
+
+    kinetic = np.sum(p_points**2, axis=1) / (2 * system.m)
+
+    return kinetic + potential
+
+
+def plot_energy(
+    result: LangevinSimulationResult, n_trajectories: int = 1, *, ax: Axes
+) -> tuple[Figure, Axes]:
+    """Plot the energy of the system with time."""
+    fig, ax = get_figure(ax)
+    energy = get_energy(
+        system=result.system, x_points=result.x_points, p_points=result.p_points
+    )
+    for trajectory in range(n_trajectories):
+        ax.plot(
+            result.times,
+            energy[trajectory, :],
+            label=f"trajectory {trajectory}",
+        )
+
+    ax.set_xlabel("time")
+    ax.set_ylabel("energy")
+
+    return fig, ax
+
+
 def plot_potential_1d(
-    params: System,
+    system: System,
     start: float,
     end: float,
     *,
@@ -48,8 +92,8 @@ def plot_potential_1d(
     t = np.linspace(0, 1, n_points)
     points = np.array(start) + t[:, np.newaxis] * delta
 
-    potential_func = sp.lambdify(params.lambda_symbols, params.potential_expr, "numpy")
-    potential = np.broadcast_to(potential_func(*points.T, *params.params), (n_points,))
+    potential_func = sp.lambdify(system.lambda_symbols, system.potential_expr, "numpy")
+    potential = np.broadcast_to(potential_func(*points.T, *system.params), (n_points,))
 
     distances = np.linalg.norm(start) + t * np.linalg.norm(delta)
 
@@ -66,6 +110,15 @@ def plot_periodic_potential_1d(
     system: PeriodicSystem1D, *, n_points: int = 1000, ax: Axes | None = None
 ) -> tuple[Figure, Axes, Line2D]:
     """Plot the periodic potential in 1D."""
+    return plot_potential_1d(
+        system, -system.delta_x * 2, system.delta_x * 2, n_points=n_points, ax=ax
+    )
+
+
+def plot_periodic_square_potential_1d(
+    system: PeriodicSquareSystem1D, *, n_points: int = 1000, ax: Axes | None = None
+) -> tuple[Figure, Axes, Line2D]:
+    """Plot the square periodic potential in 1D."""
     return plot_potential_1d(
         system, -system.delta_x * 2, system.delta_x * 2, n_points=n_points, ax=ax
     )
@@ -130,7 +183,26 @@ def plot_periodic_potential_fcc(
     # TODO: fix up  PeriodicParameters2D to make lattice directions explicit # ruff:ignore[line-contains-todo]
     return plot_potential_2d(
         params,
-        (0, 0),
+        (-2 * params.delta_x, -2 * params.delta_x),
+        (
+            2 * params.delta_x,
+            2 * params.delta_x,
+        ),
+        n_points=n_points,
+        ax=ax,
+    )
+
+
+def plot_periodic_potential_square_2d(
+    params: PeriodicSquareSystem2D,
+    *,
+    n_points: tuple[int, int] = (100, 100),
+    ax: Axes | None = None,
+) -> tuple[Figure, Axes, QuadMesh]:
+    """Plot the periodic potential in 2D."""
+    return plot_potential_2d(
+        params,
+        (-2 * params.delta_x, -2 * params.delta_x),
         (
             2 * params.delta_x,
             2 * params.delta_x,
@@ -312,8 +384,8 @@ def calculate_partition_function(system: System) -> float:
         integrand,
         -np.inf,
         np.inf,  # p limits (outer)
-        lambda p: system.sampling_domain[0],  # x lower (inner) — fixed, one period
-        lambda p: system.sampling_domain[1],  # x upper (inner)
+        lambda _p: system.sampling_domain[0],  # x lower (inner) — fixed, one period
+        lambda _p: system.sampling_domain[1],  # x upper (inner)
     )
     return z
 
@@ -357,12 +429,18 @@ def calculate_probability_under_barrier(system: System, barrier_energy: float) -
 
 
 def make_free_point_sampler(system: System, barrier_energy: float) -> Callable:
-    x0, *_ = system.coordinate_symbols
     potential_fn = sp.lambdify(
-        (x0, *system.parameter_symbols), system.potential_expr, "jax"
+        (*system.coordinate_symbols, *system.parameter_symbols),
+        system.potential_expr,
+        "jax",
     )
     sigma = jnp.sqrt(system.m * system.kbt)
     x_lo, x_hi = system.sampling_domain
+
+    grid_1d = jnp.linspace(x_lo, x_hi, 50)
+    grids = jnp.meshgrid(*([grid_1d] * system.n_dim), indexing="ij")
+    v_grid = potential_fn(*[g.ravel() for g in grids], *system.params)
+    pdf_max = jnp.exp(-jnp.min(v_grid) / system.kbt)
 
     def _sample_one(key: jax.Array) -> tuple:
         def _cond_fn(state: tuple) -> bool:
@@ -373,43 +451,122 @@ def make_free_point_sampler(system: System, barrier_energy: float) -> Callable:
             key, _x, _p, _ = state
             key, kx, ku, kp = jax.random.split(key, 4)
 
-            x_candidate = jax.random.uniform(kx, minval=x_lo, maxval=x_hi)
-            V = potential_fn(x_candidate, *system.params)
-            x_ok = jax.random.uniform(ku) < jnp.exp(-V / system.kbt)
+            x_candidate = jax.random.uniform(
+                kx, minval=x_lo, maxval=x_hi, shape=(system.n_dim,)
+            )
+            v = potential_fn(*x_candidate, *system.params)
+            x_ok = jax.random.uniform(ku) < jnp.exp(-v / system.kbt) / pdf_max
 
-            p_candidate = jax.random.normal(kp) * sigma
-            energy = p_candidate**2 / (2 * system.m) + V
+            p_candidate = jax.random.normal(kp, (system.n_dim,)) * sigma
+            energy = jnp.sum(p_candidate**2) / (2 * system.m) + v
 
             accept = x_ok & (energy > barrier_energy)
             return key, x_candidate, p_candidate, accept
 
-        init = (key, jnp.array(0.0), jnp.array(0.0), jnp.array(False))
+        init = (key, jnp.zeros(system.n_dim), jnp.zeros(system.n_dim), jnp.array(False))  # ruff:ignore[boolean-positional-value-in-call]
         _, x_final, p_final, _ = jax.lax.while_loop(_cond_fn, _body_fn, init)
         return x_final, p_final
 
     return jax.jit(jax.vmap(_sample_one))
 
 
-def get_elastic_p_exact_1d_periodic(
-    system: PeriodicSystem1D, x_initial: np.ndarray, p_initial: np.ndarray
-) -> np.ndarray:
-    energy = get_energy(system, x_initial, p_initial)
-    q2 = system.barrier_energy / energy
-    phi0 = np.pi * x_initial[:, 0] / system.delta_x
-    phi = np.pi * (x_initial[:, 0] / system.delta_x + 1)
-    omega = (2 * np.pi / system.delta_x) * np.sqrt(energy / (2 * system.m))
+def make_initial_conditions_sampler(system: System) -> Callable:
 
-    t = 1 / omega * (ellipkinc(phi, q2) - ellipkinc(phi0, q2))
-    return system.m * system.delta_x / t
+    potential_fn = sp.lambdify(
+        (*system.coordinate_symbols, *system.parameter_symbols),
+        system.potential_expr,
+        "jax",
+    )
+
+    x_lo, x_hi = system.sampling_domain
+
+    grid_1d = jnp.linspace(x_lo, x_hi, 50)
+    grids = jnp.meshgrid(*([grid_1d] * system.n_dim), indexing="ij")
+    v_grid = potential_fn(*[g.ravel() for g in grids], *system.params)
+    pdf_max = jnp.exp(-jnp.min(v_grid) / system.kbt)
+
+    def _sample_one(key: jax.Array) -> tuple:
+        def _cond_fn(state: tuple) -> bool:
+            _, _, accepted = state
+            return ~accepted
+
+        def _body_fn(state: tuple) -> tuple:
+            key, _x, _ = state
+            key, kx, ku = jax.random.split(key, 3)
+            x_candidates = jax.random.uniform(
+                kx, minval=x_lo, maxval=x_hi, shape=(system.n_dim,)
+            )
+            v = potential_fn(*x_candidates, *system.params)
+            accept = jax.random.uniform(ku) < jnp.exp(-v / system.kbt) / pdf_max
+
+            return key, x_candidates, accept
+
+        key, p_key = jax.random.split(key, 2)
+        init = (key, jnp.zeros(system.n_dim), jnp.array(False))  # ruff:ignore[boolean-positional-value-in-call]
+        _, x_finals, _ = jax.lax.while_loop(_cond_fn, _body_fn, init)
+        p_std = jnp.sqrt(system.kbt * system.m)
+        p_finals = jax.random.normal(p_key, (system.n_dim,)) * p_std
+
+        return x_finals, p_finals
+
+    return jax.jit(jax.vmap(_sample_one))
+
+
+def period(energy: float, system: PeriodicSystem1D) -> float:
+    omega = (2 * np.pi / system.delta_x) * np.sqrt(energy / (2 * system.m))
+    q2 = system.barrier_energy / energy
+    return 2 * ellipkinc(np.pi, q2) / omega
+
+
+def sample_energy_1d_periodic(
+    system: PeriodicSystem1D, n_samples: int, domain: tuple
+) -> np.ndarray[Any, np.dtype[np.floating]]:
+    kbt = system.kbt
+
+    class EnergyDensity:
+        @staticmethod
+        def pdf(energy: float) -> float:
+            return np.exp(-energy / kbt) * period(energy, system)
+
+        @staticmethod
+        def cdf(energy: float) -> float:
+            msg = "CDF is not implemented for EnergyDensity."
+            raise NotImplementedError(msg)
+
+        @staticmethod
+        def logpdf(energy: float) -> float:
+            return -energy / kbt + np.log(period(energy, system))
+
+    energy_sampler = NumericalInversePolynomial(
+        EnergyDensity(),
+        domain=domain,
+        center=domain[0],
+    )
+    return energy_sampler.rvs(size=n_samples)
+
+
+def get_elastic_p_exact_1d_periodic(
+    system: PeriodicSystem1D, n_samples: int
+) -> np.ndarray:
+    energy = sample_energy_1d_periodic(
+        system=system, n_samples=n_samples, domain=(system.barrier_energy, np.inf)
+    )
+    epsilon = energy / system.barrier_energy
+
+    return (
+        np.pi
+        * np.sqrt(2 * system.barrier_energy * epsilon * system.m)
+        / ellipkinc(np.pi, 1 / epsilon)
+    )
 
 
 def get_full_effective_mass_exact_1d_periodic(
-    system: PeriodicSystem1D, initial_conditions: tuple
+    system: PeriodicSystem1D, n_samples: int
 ) -> float:
 
-    x_initial, p_initial = initial_conditions
     elastic_ps = get_elastic_p_exact_1d_periodic(
-        system=system, x_initial=x_initial, p_initial=p_initial
+        system=system,
+        n_samples=n_samples,
     )
     avg_p2_given_escaped = np.average(elastic_ps**2, axis=0)
 
@@ -417,16 +574,144 @@ def get_full_effective_mass_exact_1d_periodic(
         system=system, barrier_energy=system.barrier_energy
     )
 
-    return (system.kbt * system.m) / (prob_escape * avg_p2_given_escaped)
+    return (system.kbt * system.m**2) / (prob_escape * avg_p2_given_escaped)
 
 
 def get_free_effective_mass_exact_1d_periodic(
-    system: PeriodicSystem1D, initial_conditions: tuple
+    system: PeriodicSystem1D, n_samples: int
 ) -> float:
 
-    x_initial, p_initial = initial_conditions
-    elastic_ps = get_elastic_p_exact_1d_periodic(
-        system=system, x_initial=x_initial, p_initial=p_initial
+    elastic_ps = get_elastic_p_exact_1d_periodic(system=system, n_samples=n_samples)
+
+    return (system.kbt * system.m**2) / np.average(elastic_ps**2, axis=0)
+
+
+def get_full_effective_mass_exact_1d_periodic_directly(
+    system: PeriodicSystem1D,
+) -> float:
+    u0 = system.barrier_energy / (2 * system.kbt)
+
+    def integrand_denominator(epsilon: float) -> float:
+        return np.sqrt(epsilon) / ellipk(1 / epsilon) * np.exp(-2 * u0 * epsilon)
+
+    def integrand_trapped(epsilon: float) -> float:
+        return ellipk(epsilon) * np.exp(-2 * u0 * epsilon)
+
+    def integrand_running(epsilon: float) -> float:
+        return (
+            2 * (1 / np.sqrt(epsilon)) * ellipk(1 / epsilon) * np.exp(-2 * u0 * epsilon)
+        )
+
+    denominator_integral, _ = quad(integrand_denominator, 1, np.inf)
+    trapped_integral, _ = quad(integrand_trapped, 0, 1)
+    running_integral, _ = quad(integrand_running, 1, np.inf)
+
+    partition = 2 * trapped_integral + running_integral
+
+    return system.m * partition / (denominator_integral * 2 * u0 * np.pi**2)
+
+
+def get_free_effective_mass_exact_1d_periodic_directly(
+    system: PeriodicSystem1D,
+) -> float:
+    u0 = system.barrier_energy / (2 * system.kbt)
+
+    def integrand_denominator(epsilon: float) -> float:
+        return np.sqrt(epsilon) / ellipk(1 / epsilon) * np.exp(-2 * u0 * epsilon)
+
+    def integrand_running(epsilon: float) -> float:
+        return (
+            2 * (1 / np.sqrt(epsilon)) * ellipk(1 / epsilon) * np.exp(-2 * u0 * epsilon)
+        )
+
+    denominator_integral, _ = quad(integrand_denominator, 1, np.inf)
+    running_integral, _ = quad(integrand_running, 1, np.inf)
+
+    partition = running_integral
+
+    return system.m * partition / (denominator_integral * 2 * u0 * np.pi**2)
+
+
+def get_elastic_p_exact_1d_square_periodic(
+    system: PeriodicSystem1D, n_samples: int
+) -> np.ndarray:
+    energy = sample_energy_1d_periodic(
+        system=system, n_samples=n_samples, domain=(system.barrier_energy, np.inf)
+    )
+    epsilon = energy / system.barrier_energy
+
+    return np.sqrt(8 * system.barrier_energy * system.m * (epsilon**2 - epsilon)) / (
+        np.sqrt(epsilon) + np.sqrt(epsilon - 1)
     )
 
-    return (system.kbt * system.m) / np.average(elastic_ps**2, axis=0)
+
+def get_full_effective_mass_exact_1d_square_periodic(
+    system: PeriodicSystem1D, n_samples: int
+) -> float:
+
+    elastic_ps = get_elastic_p_exact_1d_square_periodic(
+        system=system,
+        n_samples=n_samples,
+    )
+    avg_p2_given_escaped = np.average(elastic_ps**2, axis=0)
+
+    prob_escape = 1 - calculate_probability_under_barrier(
+        system=system, barrier_energy=system.barrier_energy
+    )
+
+    return (system.kbt * system.m**2) / (prob_escape * avg_p2_given_escaped)
+
+
+def get_free_effective_mass_exact_1d_square_periodic(
+    system: PeriodicSystem1D, n_samples: int
+) -> float:
+
+    elastic_ps = get_elastic_p_exact_1d_square_periodic(
+        system=system, n_samples=n_samples
+    )
+
+    return (system.kbt * system.m**2) / np.average(elastic_ps**2, axis=0)
+
+
+def get_full_effective_mass_exact_1d_square_periodic_directly(
+    system: PeriodicSystem1D,
+) -> float:
+
+    u0 = system.barrier_energy / (2 * system.kbt)
+
+    def integrand(epsilon: float) -> np.ndarray:
+        return (
+            np.exp(-2 * u0 * epsilon)
+            * np.sqrt(epsilon**2 - epsilon)
+            / (np.sqrt(epsilon) - np.sqrt(epsilon + 1))
+        )
+
+    integral, _ = quad(integrand, 1, np.inf)
+    dimensionless_factor = np.sqrt(np.pi / u0**3) * np.exp(u0) / np.cosh(u0)
+
+    return system.m * dimensionless_factor / integral
+
+
+def add_periodic_grid(
+    system: PeriodicSquareSystem2D,
+    x_range: tuple,
+    y_range: tuple,
+    ax: Axes | None = None,
+) -> tuple[Figure, Axes]:
+    """Draw gridlines matching the periodic cell boundaries, centered on (0,0)."""
+    fig, ax = get_figure(ax)
+    period = system.delta_x
+
+    n_start = int(np.floor((x_range[0] + period / 2) / period))
+    n_end = int(np.ceil((x_range[1] + period / 2) / period))
+    x_lines = (np.arange(n_start, n_end + 1) - 0.5) * period
+
+    n_start = int(np.floor((y_range[0] + period / 2) / period))
+    n_end = int(np.ceil((y_range[1] + period / 2) / period))
+    y_lines = (np.arange(n_start, n_end + 1) - 0.5) * period
+
+    ax.set_xticks(x_lines, minor=True)
+    ax.set_yticks(y_lines, minor=True)
+    ax.grid(which="minor", color="white", linestyle="-", linewidth=0.5, alpha=0.6)
+
+    return fig, ax

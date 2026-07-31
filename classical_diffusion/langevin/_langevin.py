@@ -1,7 +1,7 @@
 import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Self, override
 
 import diffrax as dfx
 import jax
@@ -10,61 +10,38 @@ import numpy as np
 import sympy as sp
 from scipy.stats.sampling import NumericalInversePolynomial
 
-from classical_diffusion.system import (
-    System,
-    UnitSystem,
-    get_energy,
+from classical_diffusion.langevin import (
     make_free_point_sampler,
+    make_initial_conditions_sampler,
 )
-from classical_diffusion.util import cached, hash_array, timed
 from classical_diffusion.simulation import SimulationResult, SingleSimulationResult
-from classical_diffusion.util import cached, timed
+from classical_diffusion.system import System, UnitSystem
+from classical_diffusion.util import cached, hash_array, timed
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from classical_diffusion.simulation import TimeSpan
     from classical_diffusion.system import (
         CanonicalSystem,
     )
 
-
-    from classical_diffusion.langevin import CanonicalSystem, System
-    from classical_diffusion.simulation import TimeSpan
-
 rng = np.random.default_rng()
+
 
 @dataclass(frozen=True, kw_only=True)
 class SingleLangevinSimulationResult(SingleSimulationResult["System[Any]"]):
     """Results of a single simulation of the periodic Langevin equation."""
 
-    t0: float
-    t1: float
-    n_steps: int
-
-    def __post_init__(self) -> None:
-        if self.t1 <= self.t0:
-            msg = f"t1 must be greater than t0, got t0={self.t0}, t1={self.t1}"
-            raise ValueError(msg)
-        if self.n_steps <= 1:
-            msg = f"Time span must have at least 2 steps, got n_steps={self.n_steps}"
-            raise ValueError(msg)
-
-
-@dataclass(frozen=True, kw_only=True)
-class SingleSimulationResult[S: System[Any] = System[Any]]:
-    """Results of a simulation of the periodic Langevin equation."""
-
-    times: np.ndarray
-    x_points: np.ndarray[Any, np.dtype[np.floating]]
     p_points: np.ndarray[Any, np.dtype[np.floating]]
-    system: S
 
+    @override
     def with_si_units(self) -> Self:
         """Return the rescaled simulation of the system."""
         si_units = UnitSystem()
         length_factor = si_units.angstrom / self.system.units.angstrom
         mass_factor = si_units.atomic_mass / self.system.units.atomic_mass
-        energy_factor = si_units.Boltzmann / self.system.units.kb
+        energy_factor = si_units.Boltzmann / self.system.units.Boltzmann
         time_factor = np.sqrt(length_factor**2 * mass_factor / energy_factor)
         momentum_factor = mass_factor * length_factor / time_factor
         return dataclasses.replace(
@@ -74,19 +51,6 @@ class SingleSimulationResult[S: System[Any] = System[Any]]:
             p_points=self.p_points * momentum_factor,
             system=self.system.with_si_units(),
         )
-
-
-@dataclass(frozen=True, kw_only=True)
-class SimulationResult[S: System[Any] = System[Any]]:
-    """Results of a simulation of the periodic Langevin equation."""
-
-    times: np.ndarray
-    x_points: np.ndarray[Any, np.dtype[np.floating]]
-    p_points: np.ndarray[Any, np.dtype[np.floating]]
-    system: S
-
-    def __getitem__(self, idx: int) -> SingleSimulationResult[S]:
-    p_points: np.ndarray[Any, np.dtype[np.floating]]
 
 
 class LangevinSimulationResult[S: System](SimulationResult[S]):
@@ -120,6 +84,7 @@ class LangevinSimulationResult[S: System](SimulationResult[S]):
             p_points=self.p_points[idx],
         )
 
+    @override
     def with_si_units(self) -> Self:
         """Return the rescaled simulation of the system."""
         si_units = UnitSystem()
@@ -128,11 +93,11 @@ class LangevinSimulationResult[S: System](SimulationResult[S]):
         energy_factor = si_units.Boltzmann / self.system.units.Boltzmann
         time_factor = np.sqrt(length_factor**2 * mass_factor / energy_factor)
         momentum_factor = mass_factor * length_factor / time_factor
-        return dataclasses.replace(
-            self,
+
+        return type(self)(
             times=self.times * time_factor,
             x_points=self.x_points * length_factor,
-            p_points=self.p_points * momentum_factor,
+            p_points=self._p_points * momentum_factor,
             system=self.system.with_si_units(),
         )
 
@@ -240,7 +205,7 @@ def _run_langevin_ensemble_jit(
 def _solve_ensemble_path[S: System](
     system: S,
     time_span: TimeSpan,
-    initial_conditions: tuple[np.ndarray, np.ndarray],
+    initial_conditions: tuple[np.ndarray, ...],
     _key: jax.Array,
 ) -> Path:
     filename = f"{hash(system)}_{hash(time_span)}_{hash_array(initial_conditions)}.npz"
@@ -252,9 +217,7 @@ def _solve_ensemble_path[S: System](
 def solve_ensemble[S: System](
     system: S,
     time_span: TimeSpan,
-    initial_conditions: tuple[
-        np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
-    ],
+    initial_conditions: tuple[np.ndarray, ...],
     _key: jax.Array,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of ULD Langevin trajectories in parallel via jax.vmap."""
@@ -301,7 +264,7 @@ def _solve_single_path[S: System](
     initial_condition: tuple[np.ndarray, np.ndarray],
     _key: jax.Array,
 ) -> Path:
-    filename = f"{hash(system)}_{hash(time_span)}_{hash_array(initial_condition)}.npz"
+    filename = f"{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{hash_array(initial_condition)}.npz"
     return Path("examples/data") / filename
 
 
@@ -330,14 +293,14 @@ def solve_single[S: System](
 def _solve_ballistic_ensemble_path[S: System](
     system: S,
     time_span: TimeSpan,
-    n_samples: int,
+    initial_conditions: tuple,
     _key: jax.Array,
 ) -> Path:
-    filename = f"{hash(system)}_{hash(time_span)}_{n_samples}.npz"
+    filename = f"{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{hash_array(initial_conditions)}.npz"
     return Path("examples/data") / filename
 
 
-def sample_x_initial(
+def sample_x_initial_1d(
     system: System, n_samples: int
 ) -> np.ndarray[Any, np.dtype[np.floating]]:
     x0, *_ = system.coordinate_symbols
@@ -365,7 +328,7 @@ def sample_x_initial(
     return x_sampler.rvs(size=n_samples).reshape(n_samples, system.n_dim)
 
 
-def sample_p_initial(
+def sample_p_initial_1d(
     system: System, n_samples: int
 ) -> np.ndarray[Any, np.dtype[np.floating]]:
 
@@ -379,51 +342,10 @@ def sample_p_initial(
 def solve_ballistic_ensemble[S: System](
     system: S,
     time_span: TimeSpan,
-    n_samples: int,
+    initial_conditions: tuple,
     _key: jax.Array,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of ballistic trajectories in parallel via jax.vmap."""
-    out = solve_ensemble.load_or_call_uncached(
-        system.with_gamma(0.0),
-        time_span,
-        (
-            sample_x_initial(system=system, n_samples=n_samples),
-            sample_p_initial(system=system, n_samples=n_samples),
-        ),
-        _key,
-    )
-
-
-def split_escaped_and_trapped(result: SimulationResult, barrier_energy: float) -> tuple:
-    """Split result into trajectories trapped within or free to move over the barrier."""
-    energy = get_energy(result.system, result.x_points, result.p_points)[:, 0]
-
-    free_mask = energy > barrier_energy
-    free_x_points, free_p_points = (
-        result.x_points[free_mask],
-        result.p_points[free_mask],
-    )
-
-    trapped_mask = energy <= barrier_energy
-    trapped_x_points, trapped_p_points = (
-        result.x_points[trapped_mask],
-        result.p_points[trapped_mask],
-    )
-
-    free_result = dataclasses.replace(
-        result, x_points=free_x_points, p_points=free_p_points
-    )
-    trapped_result = dataclasses.replace(
-        result, x_points=trapped_x_points, p_points=trapped_p_points
-    )
-
-    return free_result, trapped_result
-
-
-def solve_free_ballistic_ensemble[S: System](
-    system: System, time_span: TimeSpan, _key: jax.Array, initial_conditions: tuple
-) -> SimulationResult[S]:
-    """Take an ensemble of uniformly distributed ballistic trajectories and solve free trajectories in parallel via jax.vmap. Also returns probability of being above the barrier."""
     return solve_ensemble.load_or_call_uncached(
         system.with_gamma(0.0),
         time_span,
@@ -436,6 +358,15 @@ def get_over_barrier_initial_conditions(
     system: System, barrier_energy: float, n_samples: int
 ) -> tuple:
     sampler = make_free_point_sampler(system, barrier_energy)
+    keys = jax.random.split(jax.random.PRNGKey(0), n_samples)
+    free_x_initial, free_p_initial = sampler(keys)
+    free_x_initial = free_x_initial.reshape(-1, system.n_dim)
+    free_p_initial = free_p_initial.reshape(-1, system.n_dim)
+    return free_x_initial, free_p_initial
+
+
+def get_initial_conditions(system: System, n_samples: int) -> tuple:
+    sampler = make_initial_conditions_sampler(system)
     keys = jax.random.split(jax.random.PRNGKey(0), n_samples)
     free_x_initial, free_p_initial = sampler(keys)
     free_x_initial = free_x_initial.reshape(-1, system.n_dim)

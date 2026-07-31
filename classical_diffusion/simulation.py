@@ -1,8 +1,10 @@
+import dataclasses
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any, Self
 
-if TYPE_CHECKING:
-    import numpy as np
+import numpy as np
+
+from classical_diffusion.system import UnitSystem
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -12,6 +14,21 @@ class SingleSimulationResult[S: Any]:
     system: S
     times: np.ndarray
     x_points: np.ndarray[Any, np.dtype[np.floating]]
+
+    def with_si_units(self) -> Self:
+        """Return the rescaled simulation of the system."""
+        si_units = UnitSystem()
+        length_factor = si_units.angstrom / self.system.units.angstrom
+        mass_factor = si_units.atomic_mass / self.system.units.atomic_mass
+        energy_factor = si_units.Boltzmann / self.system.units.kb
+        time_factor = np.sqrt(length_factor**2 * mass_factor / energy_factor)
+        mass_factor * length_factor / time_factor
+        return dataclasses.replace(
+            self,
+            times=self.times * time_factor,
+            x_points=self.x_points * length_factor,
+            system=self.system.with_si_units(),
+        )
 
 
 class SimulationResult[S: Any]:
@@ -53,6 +70,19 @@ class SimulationResult[S: Any]:
             system=self.system,
             times=self._times,
             x_points=self.x_points[idx],
+        )
+
+    def with_si_units(self) -> Self:
+        """Return the rescaled simulation of the system."""
+        si_units = UnitSystem()
+        length_factor = si_units.angstrom / self.system.units.angstrom
+        mass_factor = si_units.atomic_mass / self.system.units.atomic_mass
+        energy_factor = si_units.Boltzmann / self.system.units.Boltzmann
+        time_factor = np.sqrt(length_factor**2 * mass_factor / energy_factor)
+        return type(self)(
+            times=self.times * time_factor,
+            x_points=self.x_points * length_factor,
+            system=self.system.with_si_units(),
         )
 
 

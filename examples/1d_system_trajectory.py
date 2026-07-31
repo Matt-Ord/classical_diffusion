@@ -1,17 +1,14 @@
 import jax.random as jrandom
 import matplotlib.pyplot as plt
 
+from classical_diffusion.analysis import plot_p_evolution, plot_x_evolution
 from classical_diffusion.langevin import (
-    TimeSpan,
+    get_initial_conditions,
     plot_energy,
-    plot_p_evolution,
-    plot_x_evolution,
     solve_ballistic_ensemble,
 )
-from classical_diffusion.system import (
-    PeriodicSystem1D,
-    UnitSystem,
-)
+from classical_diffusion.simulation import TimeSpan
+from classical_diffusion.system import PeriodicSystem1D, UnitSystem
 
 key = jrandom.PRNGKey(100)
 
@@ -25,14 +22,15 @@ system = PeriodicSystem1D(
 )
 
 normalized_system = system.with_normalized_units()
+initial_conditions = get_initial_conditions(normalized_system, n_samples=1)
+
 result = solve_ballistic_ensemble(
     normalized_system,
     TimeSpan(
-        t0=0,
-        t1=normalized_system.units.time_into(5e-12, units=UnitSystem()),
+        t_end=normalized_system.units.time_into(5e-12, units=UnitSystem()),
         n_steps=1000,
     ),
-    n_samples=1,
+    initial_conditions,
     _key=key,
 )
 
@@ -42,6 +40,7 @@ _, ax0, _ = plot_x_evolution(result.with_si_units(), ax=axes[0])
 _, ax1, _ = plot_p_evolution(result.with_si_units(), ax=axes[1])
 
 _, ax2 = plot_energy(result, ax=axes[2])
+ax2.set_ylabel("Energy / kbt")
 
 
 axes[0].set_xticks([])

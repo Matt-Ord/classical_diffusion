@@ -3,14 +3,13 @@ import numpy as np
 
 from classical_diffusion.analysis import plot_isf
 from classical_diffusion.langevin import (
-    HarmonicSystem,
-    UnitSystem,
     plot_exact_flat_isf,
     plot_exact_harmonic_isf,
     solve_ensemble,
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.simulation import TimeSpan
+from classical_diffusion.system import HarmonicSystem, UnitSystem
 
 
 def _plot_harmonic_isf() -> None:
