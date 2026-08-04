@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from functools import cached_property
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import diffrax as dfx
 import jax
@@ -9,14 +9,8 @@ import numpy as np
 from diffrax import Tsit5
 
 from classical_diffusion.hopping._system import CanonicalLattice, Lattice
-from classical_diffusion.plot import get_figure
 from classical_diffusion.simulation import SimulationResult, TimeSpan
 from classical_diffusion.util import timed
-
-if TYPE_CHECKING:
-    from matplotlib.axes import Axes
-    from matplotlib.figure import Figure
-    from matplotlib.lines import Line2D
 
 
 class HoppingSimulationResult[L: Lattice](SimulationResult[L]):
@@ -169,18 +163,13 @@ def _get_deterministic_probabilities_jit[L: Lattice[Any]](
 
 
 @timed
-def get_deterministic_probabilities[L: Lattice](
+def get_ensemble_probabilities[L: Lattice](
     system: L,
     shape: tuple[int, ...],
     time_span: TimeSpan,
     initial_position: int,
 ) -> DeterministicSolverResult:
-    """Use deterministic formula to return the ISF, inefficiently."""
-    #
-    # Rate matrix, M
-    # M[a,b] = - rate (b -> a)
-    # M[a,a] = sum_i ( rates a -> i)
-
+    """Use a deterministic PDE to find the ensemble probabilities at all times."""
     times = jnp.linspace(time_span.t_start, time_span.t_end, time_span.n_steps)
 
     initial_p = jnp.full(np.prod(shape), 0.0, dtype=jnp.float32)
@@ -193,35 +182,3 @@ def get_deterministic_probabilities[L: Lattice](
     return DeterministicSolverResult(
         system=system, times=times, probabilities=np.array(sol)
     )
-
-
-@timed
-def _get_deterministic_isf[L: Lattice](
-    system: L,
-    probabilities: jnp.ndarray[tuple[int], jnp.dtype[jnp.float32]],
-    delta_k: float,
-) -> np.ndarray:
-    distances = system.x_points_from_indices(np.arange(probabilities.shape[1]))
-    phase_factors = np.exp(1j * delta_k * distances)
-    return np.abs(np.dot(probabilities, phase_factors))
-
-
-@timed
-def plot_deterministic_isf[L: Lattice[Any]](
-    system: L,
-    result: DeterministicSolverResult,
-    delta_k: float,
-    *,
-    ax: Axes | None = None,
-) -> tuple[Figure, Axes, Line2D]:
-    """Plot the ensemble-averaged ISF over time, with a shaded ±1 SEM band."""
-    fig, ax = get_figure(ax)
-
-    isf = _get_deterministic_isf(system, result.probabilities, delta_k)
-    (line,) = ax.plot(np.array(result.times), np.array(isf))
-    line.set_label("ISF")
-
-    ax.set_xlabel("Time / s")
-    ax.set_ylabel("ISF")
-
-    return fig, ax, line

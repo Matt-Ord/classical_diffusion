@@ -4,11 +4,9 @@ import numpy as np
 from classical_diffusion.analysis import plot_isf, plot_x_evolution
 from classical_diffusion.hopping import (
     Lattice1D,
-    solve_ensemble,
-)
-from classical_diffusion.hopping._hopping import (
-    get_deterministic_probabilities,
+    get_ensemble_probabilities,
     plot_deterministic_isf,
+    solve_ensemble,
 )
 from classical_diffusion.plot import (
     get_fancy_figure,
@@ -55,7 +53,7 @@ def _plot_1d_deterministic_isf() -> None:
 
     system = Lattice1D(lattice_spacing=5, hop_time=15)
 
-    result = get_deterministic_probabilities(
+    result = get_ensemble_probabilities(
         system,
         (500001,),
         TimeSpan(t_end=25, n_steps=200),
