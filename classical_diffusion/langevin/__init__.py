@@ -6,6 +6,7 @@ from ._langevin import (  # ruff:ignore[unsorted-imports]
     solve_ballistic_ensemble,
     LangevinSimulationResult,
     SingleLangevinSimulationResult,
+    solve_overdamped_ensemble,
 )
 
 from ._analysis import (
@@ -69,6 +70,7 @@ __all__ = [
     "plot_x_histogram",
     "solve_ballistic_ensemble",
     "solve_ensemble",
+    "solve_overdamped_ensemble",
     "solve_single",
     "split_escaped_and_trapped",
 ]
