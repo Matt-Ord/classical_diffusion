@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
@@ -6,7 +7,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from diffrax import Tsit5
-from jax.scipy.linalg import expm
 
 from classical_diffusion.hopping._system import CanonicalLattice, Lattice
 from classical_diffusion.plot import get_figure
@@ -36,29 +36,11 @@ class HoppingSimulationResult[L: Lattice](SimulationResult[L]):
         return self.system.x_points_from_indices(self._x_indices)
 
 
+@dataclass(frozen=True, kw_only=True)
 class DeterministicSolverResult[L: Lattice]:
-    def __init__(
-        self,
-        *,
-        system: L,
-        times: jnp.ndarray[tuple[int], jnp.dtype[jnp.float64]],
-        probability_matrix: jnp.ndarray[tuple[int], jnp.dtype[jnp.float64]],
-    ) -> None:
-        self._system = system
-        self._times = times
-        self._probability_matrix = probability_matrix
-
-    @property
-    def system(self) -> L:
-        return self._system
-
-    @property
-    def times(self) -> jnp.ndarray[tuple[int], jnp.dtype[jnp.float64]]:
-        return self._times
-
-    @property
-    def probability_matrix(self) -> jnp.ndarray[tuple[int], jnp.dtype[jnp.float64]]:
-        return self._probability_matrix
+    system: L
+    times: jnp.ndarray[tuple[int], jnp.dtype[jnp.float64]]
+    probabilities: jnp.ndarray[tuple[int], jnp.dtype[jnp.float64]]
 
 
 @jax.jit
@@ -150,58 +132,8 @@ def solve_ensemble[L: Lattice = Lattice](
     )
 
 
-@timed
-def get_deterministic_probabilities_slow[L: Lattice[Any]](
-    system: L,
-    finite_lattice_shape: tuple,
-    time_span: TimeSpan,
-    initial_position: jnp.ndarray,
-) -> DeterministicSolverResult:
-    """Use deterministic formula to return the ISF, inefficiently."""
-    #
-    # Rate matrix, M
-    # M[a,b] = - rate (b -> a)
-    # M[a,a] = sum_i ( rates a -> i)
-
-    max_lattice_index = jnp.prod(jnp.array(finite_lattice_shape))
-
-    times = jnp.linspace(time_span.t_start, time_span.t_end, time_span.n_steps)
-    initial_p = jnp.full(max_lattice_index, 0.0)
-    initial_p = initial_p.at[
-        jnp.ravel_multi_index(tuple(initial_position), finite_lattice_shape)
-    ].set(1)
-
-    rate_matrix = jnp.full((max_lattice_index, max_lattice_index), 0.0)
-
-    for site in range(max_lattice_index):
-        hop_sites, hop_rates = system.get_rates(
-            jnp.unravel_index(site, finite_lattice_shape)
-        )
-        hop_sites = jnp.clip(
-            hop_sites, min=0
-        )  # Remove negative indices as these will wrap around when forming the matrix
-        rate_row = jnp.full(max_lattice_index, 0.0)
-
-        rate_row = rate_row.at[hop_sites[:, 0]].set(hop_rates)
-        rate_row = rate_row.at[site].set(-jnp.sum(hop_rates))
-        rate_matrix = rate_matrix.at[site].set(rate_row)
-
-    # Find probabilities at a given time by solving DE: P(t) = exp(Mt) P(0)
-
-    def solve_single_time(time: jnp.ndarray) -> jnp.ndarray:
-        return jnp.dot(expm(rate_matrix * time), initial_p)
-
-    prob_matrix = jax.vmap(solve_single_time)(times)
-    prob_matrix = jnp.clip(prob_matrix, min=0)
-    prob_matrix /= jnp.sum(prob_matrix, axis=-1, keepdims=True)
-
-    return DeterministicSolverResult(
-        system=system, times=times, probability_matrix=prob_matrix
-    )
-
-
 @jax.jit
-def get_deterministic_probabilities_jit[L: Lattice[Any]](
+def _get_deterministic_probabilities_jit[L: Lattice[Any]](
     initial_p: jnp.ndarray[tuple[int], jnp.dtype[jnp.float32]],
     times: jnp.ndarray,
     hop_sites: jnp.ndarray[tuple[int], jnp.dtype[jnp.int_]],
@@ -256,22 +188,22 @@ def get_deterministic_probabilities[L: Lattice](
 
     hop_sites, hop_rates = system.get_rates(jnp.arange(np.prod(shape)))
 
-    sol = get_deterministic_probabilities_jit(initial_p, times, hop_sites, hop_rates)
+    sol = _get_deterministic_probabilities_jit(initial_p, times, hop_sites, hop_rates)
 
     return DeterministicSolverResult(
-        system=system, times=times, probability_matrix=np.array(sol)
+        system=system, times=times, probabilities=np.array(sol)
     )
 
 
 @timed
 def _get_deterministic_isf[L: Lattice](
     system: L,
-    prob_matrix: jnp.ndarray,
+    probabilities: jnp.ndarray[tuple[int], jnp.dtype[jnp.float32]],
     delta_k: float,
 ) -> np.ndarray:
-    distances = system.x_points_from_indices(np.arange(prob_matrix.shape[1]))
+    distances = system.x_points_from_indices(np.arange(probabilities.shape[1]))
     phase_factors = np.exp(1j * delta_k * distances)
-    return np.abs(np.dot(prob_matrix, phase_factors))
+    return np.abs(np.dot(probabilities, phase_factors))
 
 
 @timed
@@ -285,7 +217,7 @@ def plot_deterministic_isf[L: Lattice[Any]](
     """Plot the ensemble-averaged ISF over time, with a shaded ±1 SEM band."""
     fig, ax = get_figure(ax)
 
-    isf = _get_deterministic_isf(system, result.probability_matrix, delta_k)
+    isf = _get_deterministic_isf(system, result.probabilities, delta_k)
     (line,) = ax.plot(np.array(result.times), np.array(isf))
     line.set_label("ISF")
 
