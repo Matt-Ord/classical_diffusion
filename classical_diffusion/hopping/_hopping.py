@@ -6,7 +6,7 @@ import diffrax as dfx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from diffrax import Tsit5
+from diffrax import Tsit5  # cspell: disable-line
 
 from classical_diffusion.hopping._system import CanonicalLattice, Lattice
 from classical_diffusion.simulation import SimulationResult, TimeSpan
@@ -143,10 +143,8 @@ def _get_deterministic_probabilities_jit[L: Lattice[Any]](
     ) -> jnp.ndarray:
         return jnp.sum(hop_rates * p[hop_sites], axis=-1) - p * total_outgoing_rates
 
-    term = dfx.ODETerm(vector_field)
-
     return dfx.diffeqsolve(
-        term,
+        term=dfx.ODETerm(vector_field),
         solver=Tsit5(),  # cspell: disable-line
         t0=0,
         t1=times[-1],
@@ -155,9 +153,9 @@ def _get_deterministic_probabilities_jit[L: Lattice[Any]](
         args=None,
         saveat=dfx.SaveAt(ts=times),
         stepsize_controller=dfx.PIDController(
-            rtol=1e-6,
+            rtol=1e-6,  # cspell: disable-line
             atol=1e-8,
-        ),  # cspell: disable-line
+        ),
         max_steps=100_000_000,
     ).ys
 
