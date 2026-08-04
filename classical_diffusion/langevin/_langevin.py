@@ -339,10 +339,7 @@ def _run_overdamped_ensemble_jit(
 ) -> jnp.ndarray:
     gamma = jnp.broadcast_to(system.gamma, (system.n_dim,))
     force_fn = _get_force_fn(system)
-
-    # Diffusion matrix for diagonal noise: sqrt(2 * kB * T / gamma)
-    std = jnp.sqrt(2.0 * system.kbt / gamma)
-    diff_matrix = jnp.diag(std)
+    diffusion_matrix = jnp.diag(jnp.sqrt(2.0 * system.kbt / gamma))
 
     def solve_one(x0: jnp.ndarray, key: jax.Array) -> jnp.ndarray:
         bm = dfx.VirtualBrownianTree(
@@ -358,7 +355,7 @@ def _run_overdamped_ensemble_jit(
         drift_term = dfx.ODETerm(
             lambda _t, x, _args: force_fn(x, system.params) / gamma
         )
-        diffusion_term = dfx.ControlTerm(lambda _t, _x, _args: diff_matrix, bm)
+        diffusion_term = dfx.ControlTerm(lambda _t, _x, _args: diffusion_matrix, bm)
         terms = dfx.MultiTerm(drift_term, diffusion_term)
 
         sol = dfx.diffeqsolve(
