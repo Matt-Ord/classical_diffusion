@@ -1,4 +1,3 @@
-import jax.numpy as jnp
 import jax.random as jrandom
 import numpy as np
 
@@ -52,16 +51,15 @@ def _plot_1d_hopping_isf() -> None:
     fig.savefig("./examples/1d_hopping.isf.log.pdf")
 
 
-def _deterministic_trialling() -> None:
+def _plot_1d_deterministic_isf() -> None:
 
-    lattice_parameter = 5
-    system = Lattice1D(lattice_spacing=lattice_parameter, hop_time=15)
-    """
-    get_deterministic_probabilities_slow(
+    system = Lattice1D(lattice_spacing=5, hop_time=15)
+
+    result = get_deterministic_probabilities(
         system,
-        (101,),
-        TimeSpan(t_end=100, n_steps=200),
-        jnp.array([50]),
+        (500001,),
+        TimeSpan(t_end=25, n_steps=200),
+        500,
     )
 
     fig, ax = get_fancy_figure()
@@ -70,26 +68,14 @@ def _deterministic_trialling() -> None:
 
     line_0.set_label("Deterministic Hopping")
     ax.set_xlim(0, right=25)
+    ax.set_ylim(0, 1)
 
-    fig.savefig("./examples/1d_hopping.slow_deterministic_isf.pdf")
-    """
-    result = get_deterministic_probabilities(
-        system,
-        (500001,),
-        TimeSpan(t_end=100, n_steps=200),
-        jnp.array([50]),
-    )
+    fig.savefig("./examples/1d_hopping.isf.deterministic.pdf")
 
-    fig, ax = get_fancy_figure()
-    delta_k = 0.5 * 2 * np.pi / system.lattice_spacing
-    _, ax, line_0 = plot_deterministic_isf(system, result, delta_k, ax=ax)
-
-    line_0.set_label("Deterministic Hopping")
-    ax.set_xlim(0, right=50)
-
-    fig.savefig("./examples/1d_hopping.deterministic_isf.pdf")
+    ax.set_yscale("symlog", linthresh=1e-4)
+    fig.savefig("./examples/1d_hopping.isf.deterministic.log.pdf")
 
 
 if __name__ == "__main__":
-    _deterministic_trialling()
-    # _plot_1d_hopping_isf()
+    _plot_1d_deterministic_isf()
+    _plot_1d_hopping_isf()

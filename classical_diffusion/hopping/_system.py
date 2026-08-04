@@ -6,6 +6,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from classical_diffusion.util import timed
+
 
 class CanonicalLattice(Protocol):
     """Protocol for JAX-compatible canonical PyTree lattices."""
@@ -68,20 +70,25 @@ class Lattice1D(Lattice):
     ) -> np.ndarray[Any, np.dtype[np.floating]]:
         return indices * self.lattice_spacing
 
+    @timed
     def get_rates(
         self, positions: np.ndarray[Any, np.dtype[np.int_]]
     ) -> tuple[
         np.ndarray[Any, np.dtype[np.int_]],
         np.ndarray[Any, np.dtype[np.float64]],
     ]:
-        delta_site = np.array([-2, -1, 1, 2])
+        delta_site = np.array([-4, -3, -2, -1, 1, 2, 3, 4])
         hop_sites = positions[:, np.newaxis] + delta_site[np.newaxis, :]
         single_hop_rates = np.array(
             [
-                0.1 / self.hop_time,
+                0.125 / self.hop_time,
+                0.25 / self.hop_time,
+                0.5 / self.hop_time,
                 1 / self.hop_time,
                 1 / self.hop_time,
-                0.1 / self.hop_time,
+                0.5 / self.hop_time,
+                0.25 / self.hop_time,
+                0.125 / self.hop_time,
             ]
         )
         hop_rates = np.tile(single_hop_rates, (len(positions), 1))
