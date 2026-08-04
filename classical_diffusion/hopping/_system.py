@@ -27,10 +27,10 @@ class Lattice(ABC):
 
     @abstractmethod
     def get_rates(
-        self, positions: jnp.ndarray[Any, jnp.dtype[jnp.int_]]
+        self, positions: np.ndarray[Any, np.dtype[np.int_]]
     ) -> tuple[
-        jnp.ndarray[Any, jnp.dtype[jnp.int_]],
-        jnp.ndarray[Any, jnp.dtype[jnp.float_]],
+        np.ndarray[Any, np.dtype[np.int_]],
+        np.ndarray[Any, np.dtype[np.float64]],
     ]:
         pass
 
