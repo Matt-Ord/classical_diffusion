@@ -98,7 +98,6 @@ dependencies = [
     { name = "jax" },
     { name = "matplotlib" },
     { name = "numpy" },
-    { name = "optimistix" },
     { name = "sympy" },
 ]
 
@@ -118,7 +117,6 @@ requires-dist = [
     { name = "jax", specifier = ">=0.10.2" },
     { name = "matplotlib", specifier = ">=3.11.0" },
     { name = "numpy", specifier = ">=2.5.1" },
-    { name = "optimistix", specifier = ">=0.1.0" },
     { name = "sympy", specifier = ">=1.14.0" },
 ]
 

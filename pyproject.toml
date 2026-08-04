@@ -9,7 +9,6 @@ dependencies = [
     "jax>=0.10.2",
     "matplotlib>=3.11.0",
     "numpy>=2.5.1",
-    "optimistix>=0.1.0",
     "sympy>=1.14.0",
 ]
 
