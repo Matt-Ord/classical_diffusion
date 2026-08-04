@@ -2,6 +2,7 @@ from typing import Any
 
 import jax.random as jrandom
 import numpy as np
+from matplotlib.animation import ArtistAnimation
 
 from classical_diffusion.langevin import (
     HarmonicSystem,
@@ -10,6 +11,7 @@ from classical_diffusion.langevin import (
     plot_kinetic_probability,
     plot_p_histogram,
     plot_phase_space_density,
+    plot_x_distribution,
     plot_x_histogram,
     solve_ensemble,
 )
@@ -71,6 +73,54 @@ def _plot_xp_distributions_periodic() -> None:
     fig.savefig("examples/distribution.1d_periodic.phase_space.folded.pdf", dpi=1000)
 
 
+def sample_results(
+    result: LangevinSimulationResult[Any], step: int
+) -> LangevinSimulationResult[Any]:
+    """Sample the results of a Langevin simulation."""
+    return LangevinSimulationResult(
+        system=result.system,
+        times=result.times[::step],
+        x_points=result.x_points[..., ::step],
+        p_points=result.p_points[..., ::step],
+    )
+
+
+def _plot_x_distribution_spread() -> None:
+    key = jrandom.PRNGKey(100)
+
+    system = PeriodicSystem1D(
+        gamma=0.5, temperature=0.5, m=1.0, delta_x=5, barrier_energy=2
+    )
+
+    result = solve_ensemble(
+        system,
+        TimeSpan(t_end=100 / system.gamma, n_steps=100),
+        (np.full((4000, 1), 0.0), np.full((4000, 1), 0.0)),
+        _key=key,
+    )
+
+    fig, ax = get_fancy_figure()
+
+    x_points = np.linspace(-2 * system.delta_x, 2 * system.delta_x, 1000)
+    _, ax, lines = plot_x_distribution(result=result, x_points=x_points, ax=ax)
+    ax.set_ylim(0, 0.5)
+
+    anim = ArtistAnimation(fig, [[c] for c in lines])
+    anim.save(
+        "examples/distribution.1d_periodic.x_spread.gif",
+        writer="pillow",
+        dpi=200,
+        fps=30,
+    )
+
+    fig, ax = get_fancy_figure()
+    result = sample_results(result, step=10)
+    _, ax, lines = plot_x_distribution(result=result, x_points=x_points, ax=ax)
+    ax.set_ylim(0, 0.5)
+
+    fig.savefig("examples/distribution.1d_periodic.x_spread.pdf")
+
+
 def _plot_xp_distributions_harmonic() -> None:
     key = jrandom.PRNGKey(100)
 
@@ -123,4 +173,5 @@ if __name__ == "__main__":
     #
     # In the periodic system, the x distribution is folded into the first Brillouin zone.
     _plot_xp_distributions_periodic()
+    _plot_x_distribution_spread()
     _plot_xp_distributions_harmonic()

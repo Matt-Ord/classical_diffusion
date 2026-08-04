@@ -59,7 +59,7 @@ def plot_periodic_potential_1d(
 ) -> tuple[Figure, Axes, Line2D]:
     """Plot the periodic potential in 1D."""
     return plot_potential_1d(
-        system, -system.delta_x * 2, system.delta_x * 2, n_points=n_points, ax=ax
+        system, 0, 3 * system.delta_x * 2, n_points=n_points, ax=ax
     )
 
 

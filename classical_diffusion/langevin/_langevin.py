@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True, kw_only=True)
-class SingleLangevinSimulationResult(SingleSimulationResult["System[Any]"]):
+class SingleLangevinSimulationResult[S: System](SingleSimulationResult[S]):
     """Results of a single simulation of the periodic Langevin equation."""
 
     p_points: np.ndarray[Any, np.dtype[np.floating]]

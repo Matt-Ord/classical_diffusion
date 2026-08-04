@@ -33,8 +33,8 @@ class HoppingSimulationResult[L: Lattice](SimulationResult[L]):
 @dataclass(frozen=True, kw_only=True)
 class DeterministicSolverResult[L: Lattice]:
     system: L
-    times: jnp.ndarray[tuple[int], jnp.dtype[jnp.float64]]
-    probabilities: jnp.ndarray[tuple[int], jnp.dtype[jnp.float64]]
+    times: np.ndarray[tuple[int], jnp.dtype[jnp.float64]]
+    probabilities: np.ndarray[tuple[int, int], jnp.dtype[jnp.float64]]
 
 
 @jax.jit
@@ -127,12 +127,12 @@ def solve_ensemble[L: Lattice = Lattice](
 
 
 @jax.jit
-def _get_deterministic_probabilities_jit[L: Lattice[Any]](
-    initial_p: jnp.ndarray[tuple[int], jnp.dtype[jnp.float32]],
+def _get_deterministic_probabilities_jit[L: Lattice](
+    initial_p: jnp.ndarray,
     times: jnp.ndarray,
-    hop_sites: jnp.ndarray[tuple[int], jnp.dtype[jnp.int_]],
-    hop_rates: jnp.ndarray[tuple[int], jnp.dtype[jnp.float32]],
-) -> jnp.ndarray[tuple[int], jnp.dtype[jnp.float32]]:
+    hop_sites: jnp.ndarray,
+    hop_rates: jnp.ndarray,
+) -> jnp.ndarray:
     """Use deterministic formula to return the ISF, inefficiently."""
     total_outgoing_rates = jnp.sum(hop_rates, axis=-1)
 
@@ -173,10 +173,10 @@ def get_ensemble_probabilities[L: Lattice](
     initial_p = jnp.full(np.prod(shape), 0.0, dtype=jnp.float32)
     initial_p = initial_p.at[initial_position].set(1)
 
-    hop_sites, hop_rates = system.get_rates(jnp.arange(np.prod(shape)))
+    hop_sites, hop_rates = system.get_rates(np.arange(np.prod(shape)))
 
     sol = _get_deterministic_probabilities_jit(initial_p, times, hop_sites, hop_rates)
 
     return DeterministicSolverResult(
-        system=system, times=times, probabilities=np.array(sol)
+        system=system, times=np.array(times), probabilities=np.array(sol)
     )
