@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 import scipy.stats
 import sympy as sp
-from matplotlib.cm import ScalarMappable, viridis
+from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
 
 from classical_diffusion.langevin._langevin import (
@@ -144,30 +144,28 @@ def plot_x_distribution(
     if x_points is None:
         x_points = np.linspace(np.min(result.x_points), np.max(result.x_points), 200)
 
-    n_times = len(result.times)
-    colors = viridis(np.linspace(0, 1, n_times))
+    norm = Normalize(vmin=float(result.times[0]), vmax=float(result.times[-1]))
+    sm = ScalarMappable(cmap="viridis", norm=norm)
+    colors = sm.to_rgba(result.times)
     lines: list[Line2D] = []
 
-    # Calculate KDE density and plot a line for each time step
-    for i in range(n_times):
+    for i in range(len(result.times)):
         sample_points = result.x_points[:, 0, i]
+        # Add additional jitter to avoid singularities
         if np.std(sample_points) < 1e-8:  # ruff: ignore[magic-value-comparison]
             rng = np.random.default_rng()
-            sample_points += rng.normal(0, 1e-6, size=sample_points.shape)
+            sample_points += rng.normal(
+                0, 1e-3 * np.max(x_points), size=sample_points.shape
+            )
         kde = scipy.stats.gaussian_kde(sample_points)
         density = kde(x_points)
 
         (line,) = ax.plot(x_points, density, color=colors[i])
         lines.append(line)
 
-    # Add a continuous colorbar representing time evolution
-    norm = Normalize(vmin=float(result.times[0]), vmax=float(result.times[-1]))
-    sm = ScalarMappable(cmap="viridis", norm=norm)
-    sm.set_array([])
+    fig.colorbar(sm, ax=ax, label="Time / $s$")
 
-    fig.colorbar(sm, ax=ax, label="Time ($t$)")
-
-    ax.set_xlabel("$x$")
+    ax.set_xlabel("$x$ / $m$")
     ax.set_ylabel("$P(x)$")
     ax.set_xlim(x_points[0], x_points[-1])
 
