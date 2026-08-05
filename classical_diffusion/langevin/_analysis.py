@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, cast, overload
 
 import jax.numpy as jnp
 import numpy as np
@@ -358,21 +358,22 @@ def plot_initial_p(
 
 
 def _get_average_elastic_velocity(
-    t: np.ndarray, x: np.ndarray
+    times: np.ndarray, x_points: np.ndarray[tuple[int, int, int], np.dtype[np.floating]]
 ) -> np.ndarray[Any, np.dtype[np.floating]]:
     """Return the elastic (ballistic straight-line) velocity estimate per trajectory across all dimensions."""
-    n = len(t)
-    st = np.sum(t)
-    stt = np.sum(t * t)
-    sy = np.sum(x, axis=-1)
-    sty = np.sum(x * t, axis=-1)
+    sum_t = np.sum(times)
+    sum_tt = np.sum(times * times)
+    sum_x_points = np.sum(x_points, axis=-1)
+    sum_xt = np.sum(x_points * times, axis=-1)
 
-    denom = n * stt - st**2
-    return (n * sty - st * sy) / denom
+    denom = len(times) * sum_tt - sum_t**2
+    return (len(times) * sum_xt - sum_t * sum_x_points) / denom
 
 
 def _get_average_elastic_p(
-    result: LangevinSimulationResult, *, max_samples: int = 100
+    result: LangevinSimulationResult | SingleLangevinSimulationResult,
+    *,
+    max_samples: int = 100,
 ) -> np.ndarray[Any, np.dtype[np.floating]]:
     """Return the elastic (ballistic straight-line) momentum estimate per trajectory across all dimensions."""
     n_times = len(result.times)
@@ -380,15 +381,30 @@ def _get_average_elastic_p(
     sample_indices = np.linspace(0, n_times - 1, n_samples, dtype=int)
 
     t_sampled = result.times[sample_indices]
-    x_sampled = result.x_points[:, :, sample_indices]
+    x_sampled = result.x_points[..., sample_indices]
 
     v_elastic = _get_average_elastic_velocity(t_sampled, x_sampled)
     return v_elastic * result.system.m
 
 
+@overload
 def breakdown_ballistic_trajectory[S: System](
     result: LangevinSimulationResult[S],
-) -> tuple[LangevinSimulationResult[S], LangevinSimulationResult[S]]:
+) -> tuple[LangevinSimulationResult[S], LangevinSimulationResult[S]]: ...
+
+
+@overload
+def breakdown_ballistic_trajectory[S: System](
+    result: SingleLangevinSimulationResult[S],
+) -> tuple[SingleLangevinSimulationResult[S], SingleLangevinSimulationResult[S]]: ...
+
+
+def breakdown_ballistic_trajectory[S: System](
+    result: LangevinSimulationResult[S] | SingleLangevinSimulationResult[S],
+) -> tuple[
+    LangevinSimulationResult[S] | SingleLangevinSimulationResult[S],
+    LangevinSimulationResult[S] | SingleLangevinSimulationResult[S],
+]:
     """Split a ballistic simulation into its elastic and inelastic components across all dimensions."""
     p_elastic = _get_average_elastic_p(result)
 
@@ -396,22 +412,40 @@ def breakdown_ballistic_trajectory[S: System](
     p_elastic_points = np.broadcast_to(p_elastic[..., None], result.p_points.shape)
 
     # Initial positions x_0: shape (n_trajectories, n_dimensions, 1)
-    x_0 = result.x_points[:, :, :1]
+    x_0 = result.x_points[..., :1]
 
     # Calculate x_elastic(t) = x_0 + (p_elastic / m) * t across all spatial components
     x_elastic_points = p_elastic[..., None] * result.times / result.system.m + x_0
 
-    elastic = LangevinSimulationResult(
-        times=result.times,
-        x_points=x_elastic_points,
-        p_points=p_elastic_points,
-        system=result.system,
+    elastic = (
+        LangevinSimulationResult(
+            times=result.times,
+            x_points=x_elastic_points,
+            p_points=p_elastic_points,
+            system=result.system,
+        )
+        if isinstance(result, LangevinSimulationResult)
+        else SingleLangevinSimulationResult(
+            times=result.times,
+            x_points=x_elastic_points,
+            p_points=p_elastic_points,
+            system=result.system,
+        )
     )
-    inelastic = LangevinSimulationResult(
-        times=result.times,
-        x_points=result.x_points - x_elastic_points,
-        p_points=result.p_points - p_elastic_points,
-        system=result.system,
+    inelastic = (
+        LangevinSimulationResult(
+            times=result.times,
+            x_points=result.x_points - x_elastic_points,
+            p_points=result.p_points - p_elastic_points,
+            system=result.system,
+        )
+        if isinstance(result, LangevinSimulationResult)
+        else SingleLangevinSimulationResult(
+            times=result.times,
+            x_points=result.x_points - x_elastic_points,
+            p_points=result.p_points - p_elastic_points,
+            system=result.system,
+        )
     )
     return elastic, inelastic
 

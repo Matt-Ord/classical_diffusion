@@ -10,22 +10,27 @@ class SingleSimulationResult[S: Any]:
     """Results of a simulation of the periodic Langevin equation."""
 
     system: S
-    times: np.ndarray
-    x_points: np.ndarray[Any, np.dtype[np.floating]]
+    times: np.ndarray[tuple[int], np.dtype[np.floating]]
+    x_points: np.ndarray[tuple[int, int], np.dtype[np.floating]]
+    """
+    The positions of the particle at each time point.
+
+    Stored as a 2d array of shape (n_dimensions, n_times).
+    """
 
 
 class SimulationResult[S: Any]:
     """Results of a simulation ensemble."""
 
-    _times: np.ndarray
-    _x_points: np.ndarray[Any, np.dtype[np.floating]]
+    _times: np.ndarray[tuple[int], np.dtype[np.floating]]
+    _x_points: np.ndarray[tuple[int, int, int], np.dtype[np.floating]]
     _system: S
 
     def __init__(
         self,
         *,
-        times: np.ndarray,
-        x_points: np.ndarray[Any, np.dtype[np.floating]],
+        times: np.ndarray[tuple[int], np.dtype[np.floating]],
+        x_points: np.ndarray[tuple[int, int, int], np.dtype[np.floating]],
         system: S,
     ) -> None:
         _times = times
@@ -33,13 +38,16 @@ class SimulationResult[S: Any]:
         _system = system
 
     @property
-    def times(self) -> np.ndarray[Any, np.dtype[np.floating]]:
+    def times(self) -> np.ndarray[tuple[int], np.dtype[np.floating]]:
         """The time points at which the simulation was sampled."""
         return self._times
 
     @property
-    def x_points(self) -> np.ndarray[Any, np.dtype[np.floating]]:
-        """The positions of the particles at each time point."""
+    def x_points(self) -> np.ndarray[tuple[int, int, int], np.dtype[np.floating]]:
+        """The positions of the particles at each time point.
+
+        Stored as a 3d array of shape (n_samples, n_dimensions, n_times).
+        """
         return self._x_points
 
     @property

@@ -135,8 +135,8 @@ def get_fig_size() -> tuple[float, float]:
 CAM_COLOR_CYCLE = [
     CAM_BLUE.warm,
     CAM_BLUE.dark,
-    CAM_CHERRY.warm,
     CAM_CHERRY.dark,
+    CAM_CHERRY.warm,
     CAM_CREST.warm,
     CAM_CREST.dark,
 ]
@@ -170,6 +170,21 @@ def setup_rc_params(*, use_tex: bool = False) -> None:
     )
 
 
+def setup_fancy_figure(fig: Figure, ax: list[Axes]) -> None:
+    """Set up a figure and axis with fancy styling."""
+    fig.set_facecolor((0, 0, 0, 0))
+
+    for a in ax:
+        a.set_facecolor(CAM_SLATE_1)
+        a.set_prop_cycle(cycler(color=CAM_COLOR_CYCLE))
+        a.tick_params(
+            axis="both", direction="in", top=True, right=True, labelsize=8, which="both"
+        )
+
+        a.xaxis.label.set_fontsize(11)
+        a.yaxis.label.set_fontsize(11)
+
+
 def get_fancy_figure(
     *,
     fig_size: tuple[float, float] | None = None,
@@ -181,13 +196,5 @@ def get_fancy_figure(
         figsize=fig_size or get_fig_size(),
         layout="constrained",
     )
-    ax.set_facecolor(CAM_SLATE_1)
-    fig.set_facecolor((0, 0, 0, 0))
-    ax.set_prop_cycle(cycler(color=CAM_COLOR_CYCLE))
-    ax.tick_params(
-        axis="both", direction="in", top=True, right=True, labelsize=8, which="both"
-    )
-
-    ax.xaxis.label.set_fontsize(11)
-    ax.yaxis.label.set_fontsize(11)
+    setup_fancy_figure(fig, [ax])
     return fig, ax
