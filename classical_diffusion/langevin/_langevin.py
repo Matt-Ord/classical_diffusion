@@ -86,7 +86,6 @@ def _run_deterministic_ensemble_jit(
 
     term = dfx.ODETerm(vector_field)
 
-    # Core solver for a single particle pair (x0, p0)
     def solve_one(x0: jnp.ndarray, p0: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
         sol = dfx.diffeqsolve(
             term,
@@ -100,8 +99,8 @@ def _run_deterministic_ensemble_jit(
             stepsize_controller=dfx.PIDController(
                 rtol=1e-6,  # cspell: disable-line
                 atol=1e-8,
-            ),  # cspell: disable-line
-            max_steps=100_000_000,
+            ),
+            max_steps=None,
         )
         return sol.ys
 
@@ -345,7 +344,7 @@ def _run_overdamped_ensemble_jit(
         bm = dfx.VirtualBrownianTree(
             t0=0,
             t1=times[-1],
-            tol=1e-4,
+            tol=1e-3,
             shape=(system.n_dim,),
             key=key,
             levy_area=dfx.SpaceTimeTimeLevyArea,
