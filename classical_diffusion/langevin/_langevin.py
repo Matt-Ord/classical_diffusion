@@ -24,7 +24,8 @@ if TYPE_CHECKING:
 class SingleLangevinSimulationResult[S: System](SingleSimulationResult[S]):
     """Results of a single simulation of the periodic Langevin equation."""
 
-    p_points: np.ndarray[Any, np.dtype[np.floating]]
+    p_points: np.ndarray[tuple[int, int], np.dtype[np.floating]]
+    """p points of the trajectory, shape (n_dim, n_time)."""
 
 
 class LangevinSimulationResult[S: System](SimulationResult[S]):
