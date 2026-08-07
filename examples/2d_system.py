@@ -120,7 +120,7 @@ def _plot_2d_ballistic_trajectory() -> None:
     result = solve_single(
         system,
         TimeSpan(t_end=1000, n_steps=1000),
-        # TODO: replace with random "free" initial condition
+        # TODO: replace with random "free" initial condition?
         (np.full((2,), 0.0), np.full((2,), 1.0)),
         _key=key,
     )
@@ -144,7 +144,7 @@ def _plot_2d_ballistic_trajectory() -> None:
 
 
 if __name__ == "__main__":
-    # _plot_periodic_system()
-    # _plot_2d_periodic_isf()
-    # _plot_2d_trajectory()
+    _plot_periodic_system()
+    _plot_2d_periodic_isf()
+    _plot_2d_trajectory()
     _plot_2d_ballistic_trajectory()
