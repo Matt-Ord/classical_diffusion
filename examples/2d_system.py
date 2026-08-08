@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 import jax.random as jrandom
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.signal import butter, sosfiltfilt
 
 from classical_diffusion.analysis import plot_isf
 from classical_diffusion.langevin import (
@@ -190,14 +191,14 @@ def filter_trajectory_kv(
 
 
 def breakdown_filtered_ballistic_trajectory[S: System](
-    result: SingleLangevinSimulationResult[S], *, gamma: float = 0
+    result: SingleLangevinSimulationResult[S], *, minimum_timescale: float = 0
 ) -> tuple[
     SingleLangevinSimulationResult[S],
     SingleLangevinSimulationResult[S],
 ]:
     """Split a ballistic simulation into its elastic and inelastic components across all dimensions."""
     dt = result.times[1] - result.times[0]
-    min_split_points = max(4, int(gamma * dt))
+    min_split_points = max(4, int(minimum_timescale / dt))
 
     p_points = result.p_points
     p_elastic_points = filter_trajectory_kv(
@@ -233,6 +234,52 @@ def breakdown_filtered_ballistic_trajectory[S: System](
     return elastic, inelastic
 
 
+def breakdown_filtered_ballistic_trajectory_butterworth[S: System](
+    result: SingleLangevinSimulationResult[S], *, minimum_timescale: float = 0
+) -> tuple[
+    SingleLangevinSimulationResult[S],
+    SingleLangevinSimulationResult[S],
+]:
+    """Split a ballistic simulation into its elastic (slow) and inelastic (fast) components."""
+    times = result.times
+    dt = times[1] - times[0]
+
+    # Changes slower than minimum_timescale correspond to frequencies f < 1 / minimum_timescale.
+    # High frequencies are filtered out to yield the elastic (slow) component.
+    fs = 1.0 / dt
+    cutoff_freq = 1.0 / max(minimum_timescale, 1e-5 * dt)
+    nyquist = 0.5 * fs
+
+    if cutoff_freq < nyquist:
+        sos = butter(N=4, Wn=cutoff_freq / nyquist, btype="low", output="sos")
+
+        # Low-pass filter both momentum and position along the time axis (axis=-1)
+        # cspell: disable-next-line  # ruff: ignore[commented-out-code]
+        p_elastic_points = sosfiltfilt(sos, result.p_points, axis=-1)
+        # Since the filter is a linear operation, it commutes with integration
+        # So, filtering the position is equivalent to integrating the filtered momentum
+        # cspell: disable-next-line  # ruff: ignore[commented-out-code]
+        x_elastic_points = sosfiltfilt(sos, result.x_points, axis=-1)
+    else:
+        p_elastic_points = result.p_points.copy()
+        x_elastic_points = result.x_points.copy()
+
+    elastic = SingleLangevinSimulationResult(
+        times=result.times,
+        x_points=x_elastic_points,
+        p_points=p_elastic_points,
+        system=result.system,
+    )
+
+    inelastic = SingleLangevinSimulationResult(
+        times=result.times,
+        x_points=result.x_points - x_elastic_points,
+        p_points=result.p_points - p_elastic_points,
+        system=result.system,
+    )
+    return elastic, inelastic
+
+
 def _plot_2d_ballistic_trajectory() -> None:
 
     key = jrandom.PRNGKey(100)
@@ -247,20 +294,25 @@ def _plot_2d_ballistic_trajectory() -> None:
         (np.full((2,), 0.0), np.full((2,), 1.0)),
         _key=key,
     )
-    elastic, inelastic = breakdown_filtered_ballistic_trajectory(result, gamma=1)
+    elastic, inelastic = breakdown_filtered_ballistic_trajectory_butterworth(
+        result, minimum_timescale=2 / 0.1
+    )
 
     fig, ax = _get_two_panel_figure()
 
     _, _ax_0, line = plot_2d_trajectory(result=result, ax=ax[0])
     _, _ax_0, line_e = plot_2d_trajectory(result=elastic, ax=ax[0])
-    _, _ax_0, line_i = plot_2d_trajectory(result=inelastic, ax=ax[0])
 
-    _, _ax_1, line_1 = plot_2d_trajectory(result=inelastic, ax=ax[1])
-    line_1.set_color(line_i.get_color())
+    _, _ax_1, line_i = plot_2d_trajectory(result=inelastic, ax=ax[1])
+    line_i.set_color("C2")
 
     ax[0].legend(
-        handles=[line, line_e, line_i],
-        labels=["full", "elastic", "inelastic"],
+        handles=[line, line_e],
+        labels=["full", "elastic"],
+    )
+    ax[1].legend(
+        handles=[line_i],
+        labels=["inelastic"],
     )
 
     fig.savefig("examples/2d_system.ballistic_trajectory.pdf")
