@@ -155,6 +155,66 @@ class HarmonicSystem(System):
         )
 
 
+class DoubleHarmonicSystem(System):
+    """Parameters representing a periodic double harmonic system."""
+
+    def __init__(
+        self,
+        *,
+        gamma: float,
+        temperature: float,
+        m: float,
+        barrier_energy: float,
+        n_dim: int = 1,
+    ) -> None:
+        x, s1 = sp.symbols("x s1")
+        x1 = sp.sqrt(2 / (s1 * 1 + s1**2))
+        x_peak = sp.sqrt(2 * (1 + s1**2) / s1)
+        length = 2 * x_peak
+        x_cell = sp.Mod(x + x_peak, length) - x_peak
+        potential = sp.Piecewise(
+            (0.5 * s1**2 * x_cell**2, sp.Abs(x_cell) <= x1),
+            (-0.5 * (sp.Abs(x_cell) - x_peak) ** 2 + s1, True),
+        )
+
+        # --- Verification ---
+        v1_join = 0.5 * s1**2 * x1**2
+        v2_join = -0.5 * (x1 - x_peak) ** 2 + s1
+
+        print("v1 at join point:", sp.simplify(v1_join))
+        print("v2 at join point:", sp.simplify(v2_join))
+        print("Are values equal?", sp.simplify(v1_join - v2_join) == 0)
+
+        super().__init__(
+            gamma=gamma,
+            temperature=temperature,
+            m=m,
+            potential=(n_dim, potential),
+            params=(barrier_energy,),
+        )
+
+    @property
+    def delta_x(self) -> float:
+        """The delta x of the system."""
+        x_peak = sp.sqrt(2 * (1 + self.barrier_energy**2) / self.barrier_energy)
+        return 2 * x_peak
+
+    @property
+    def barrier_energy(self) -> float:
+        """The barrier energy of the system."""
+        return self.params[0]
+
+    @override
+    def with_gamma(self, gamma: float) -> DoubleHarmonicSystem:
+        return DoubleHarmonicSystem(
+            gamma=gamma,
+            temperature=self.temperature,
+            m=self.m,
+            barrier_energy=self.barrier_energy,
+            n_dim=self.n_dim,
+        )
+
+
 class PeriodicSystem1D(System):
     """Parameters for a 1D cosine potential system."""
 

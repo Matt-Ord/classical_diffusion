@@ -5,12 +5,12 @@ from typing import TYPE_CHECKING, Any, Protocol
 import jax
 import jax.numpy as jnp
 import numpy as np
-import sympy as sp
 
 from classical_diffusion.util import timed
 
 if TYPE_CHECKING:
-    from classical_diffusion.langevin import PeriodicSystem1D, System
+    from classical_diffusion.langevin import PeriodicSystem1D
+    from classical_diffusion.langevin._system import DoubleHarmonicSystem
 
 
 class CanonicalLattice(Protocol):
@@ -151,52 +151,51 @@ class Lattice1D(Lattice):
         )
 
 
-def get_kramers_lattice(system: System) -> Lattice:
-    """Potential must be periodic."""
-    gamma = system.gamma
-    kBT = system.kbt
-    mass = system.m
+# def get_kramers_lattice(system: System) -> Lattice:
+#     """Potential must be periodic."""
+#     gamma = system.gamma
+#     kBT = system.kbt
+#     mass = system.m
 
-    potential = system.potential
+#     potential = system.potential
 
-    [sp.diff(potential, c) for c in coordinat]
+#     [sp.diff(potential, c) for c in coordinat]
 
-    # 2. Hessian Matrix (N x N 2nd derivatives)
-    sp.Matrix([[sp.diff(V, c1, c2) for c2 in coords] for c1 in coords])
+#     # 2. Hessian Matrix (N x N 2nd derivatives)
+#     sp.Matrix([[sp.diff(V, c1, c2) for c2 in coords] for c1 in coords])
 
-    omega_max = jnp.sqrt(maximum / mass)
-    omega_min = jnp.sqrt(minimum / mass)
-    amplitude = maximum - minimum
+#     omega_max = jnp.sqrt(maximum / mass)
+#     omega_min = jnp.sqrt(minimum / mass)
+#     amplitude = maximum - minimum
 
-    # @jax.jit
-    def characterise_potential_jit() -> tuple[float, float, float]:
+#     # @jax.jit
+#     def characterise_potential_jit() -> tuple[float, float, float]:
 
-        print(f"min: {min}, max: {max}")
+#         print(f"min: {min}, max: {max}")
 
-        omega_min = jnp.sqrt(jax.hessian(potential)(min) / mass)
-        omega_max = jnp.sqrt(-jax.hessian(potential)(max) / mass)
-        print(f"omega_min: {omega_min}, omega_max: {omega_max}")
+#         omega_min = jnp.sqrt(jax.hessian(potential)(min) / mass)
+#         omega_max = jnp.sqrt(-jax.hessian(potential)(max) / mass)
+#         print(f"omega_min: {omega_min}, omega_max: {omega_max}")
 
-        amp = potential(max) - potential(min)
-        print(f"amp: {amp}")
+#         amp = potential(max) - potential(min)
+#         print(f"amp: {amp}")
 
-        return omega_min, omega_max, amp
+#         return omega_min, omega_max, amp
 
-    omega_min, omega_max, amplitude = characterise_potential_jit()
+#     omega_min, omega_max, amplitude = characterise_potential_jit()
 
-    rate = (
-        (omega_min * omega_max)
-        / (2 * jnp.pi * mass * gamma)
-        * jnp.exp(-amplitude / kBT)
-    )
+#     rate = (
+#         (omega_min * omega_max)
+#         / (2 * jnp.pi * mass * gamma)
+#         * jnp.exp(-amplitude / kBT)
+#     )
 
-    return Lattice1D(lattice_spacing=1.0, hop_time=1.0 / rate)
+#     return Lattice1D(lattice_spacing=1.0, hop_time=1.0 / rate)
 
 
+@timed
 def get_kramers_lattice_cosine(system: PeriodicSystem1D) -> Lattice1D:
     """Potential must be periodic."""
-    system.potential[0]
-
     gamma = system.gamma
     kBT = system.kbt
     mass = system.m
@@ -209,4 +208,22 @@ def get_kramers_lattice_cosine(system: PeriodicSystem1D) -> Lattice1D:
         (omega_max**2) / (2 * jnp.pi * mass * gamma) * jnp.exp(-amplitude / kBT)
     )
 
-    return Lattice1D(lattice_spacing=1.0, hop_time=1.0 / rate)
+    return Lattice1D(lattice_spacing=delta_x, hop_time=1.0 / rate)
+
+
+@timed
+def get_kramers_lattice_harmonic(system: DoubleHarmonicSystem) -> Lattice1D:
+    """Potential must be periodic."""
+    gamma = system.gamma
+    kBT = system.kbt
+    mass = system.m
+    barrier_energy = system.barrier_energy
+    delta_x = system.delta_x
+
+    amplitude = barrier_energy
+    omega_max = barrier_energy / jnp.sqrt(mass)
+    rate = float(
+        (omega_max**2) / (2 * jnp.pi * mass * gamma) * jnp.exp(-amplitude / kBT)
+    )
+
+    return Lattice1D(lattice_spacing=delta_x, hop_time=1.0 / rate)

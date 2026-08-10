@@ -7,7 +7,7 @@ from ._hopping import (
     get_ensemble_probabilities,
     solve_ensemble,
 )
-from ._system import Lattice, Lattice1D, Lattice1D_4hop, get_kramers_lattice
+from ._system import Lattice, Lattice1D, Lattice1D_4hop
 
 __all__ = [
     "DeterministicSolverResult",
@@ -16,7 +16,6 @@ __all__ = [
     "Lattice1D",
     "Lattice1D_4hop",
     "get_ensemble_probabilities",
-    "get_kramers_lattice",
     "plot_deterministic_isf",
     "solve_ensemble",
 ]
