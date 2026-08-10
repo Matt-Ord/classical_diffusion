@@ -442,6 +442,71 @@ class PeriodicSystemFCC(System):
         """The barrier energy of the system."""
         return self.params[1]
 
+    @override
+    def with_gamma(self, gamma: float) -> PeriodicSystem1D:
+        return PeriodicSystem1D(
+            gamma=gamma,
+            temperature=self.temperature,
+            m=self.m,
+            delta_x=self.delta_x,
+            barrier_energy=self.barrier_energy,
+            n_dim=self.n_dim,
+            units=self.units,
+        )
+
+    @override
+    @property
+    def sampling_domain(self) -> tuple[float, float, float, float]:
+        """The domain over which the equilibrium x-density should be sampled."""
+        return (
+            -self.delta_x / 2,
+            self.delta_x / 2,
+            -self.delta_x / 2,
+            self.delta_x / 2,
+        )
+
+    def get_normalized_units(self) -> UnitSystem:
+        """Return the units suited to a simulation of the system."""
+        return UnitSystem(
+            Boltzmann=1 / self.temperature,
+            angstrom=self.units.angstrom / self.delta_x,
+            atomic_mass=self.units.atomic_mass / self.m,
+        )
+
+    def with_normalized_units(self) -> PeriodicSystem1D:
+        """Return the normalized parameters of the simulation."""
+        normalized_units = self.get_normalized_units()
+        length_factor = normalized_units.angstrom / self.units.angstrom
+        mass_factor = normalized_units.atomic_mass / self.units.atomic_mass
+        energy_factor = normalized_units.Boltzmann / self.units.Boltzmann
+        time_factor = np.sqrt(length_factor**2 * mass_factor / energy_factor)
+        return PeriodicSystem1D(
+            gamma=self.gamma / time_factor,
+            temperature=self.temperature,
+            m=self.m * mass_factor,
+            delta_x=self.delta_x * length_factor,
+            barrier_energy=self.barrier_energy * energy_factor,
+            n_dim=self.n_dim,
+            units=normalized_units,
+        )
+
+    def with_si_units(self) -> PeriodicSystem1D:
+        """Return the si parameters of the system."""
+        si_units = UnitSystem()
+        length_factor = si_units.angstrom / self.units.angstrom
+        mass_factor = si_units.atomic_mass / self.units.atomic_mass
+        energy_factor = si_units.Boltzmann / self.units.Boltzmann
+        time_factor = np.sqrt(length_factor**2 * mass_factor / energy_factor)
+        return PeriodicSystem1D(
+            gamma=self.gamma / time_factor,
+            temperature=self.temperature,
+            m=self.m * mass_factor,
+            delta_x=self.delta_x * length_factor,
+            barrier_energy=self.barrier_energy * energy_factor,
+            n_dim=self.n_dim,
+            units=si_units,
+        )
+
 
 class PeriodicSquareSystem1D(System):
     """Parameters for a 1D cosine potential system."""
@@ -500,7 +565,7 @@ class PeriodicSquareSystem1D(System):
 
     @override
     @property
-    def sampling_domain(self) -> tuple[float, float]:
+    def sampling_domain(self) -> tuple[float, float, float, float]:
         """The domain over which the equilibrium x-density should be sampled."""
         return (
             -self.delta_x / 2,
@@ -563,28 +628,30 @@ class PeriodicSquareSystem2D(System):
         m: float,
         delta_x: float,
         barrier_energy: float,
+        delta: float,
+        k: float,
         units: UnitSystem,
         n_dim: int = 2,
     ) -> None:
-        s0 = sp.Symbol("s0")
-        s1 = sp.Symbol("s1")
+        s0, s1, s2, s3 = sp.symbols("s0 s1 s2 s3")
         x0, x1 = sp.symbols("x0 x1")
 
-        cell_i = sp.floor((x0 + s0 / 2) / s0)
-        cell_j = sp.floor((x1 + s0 / 2) / s0)
-        parity = sp.Mod(cell_i + cell_j, 2)
+        def smooth_sign(u):
+            return sp.tanh((s0 / s2) * sp.cos(sp.pi * u / s0))
 
-        potential = sp.Piecewise(
-            (0, parity < 0.5),  # ruff:ignore[magic-value-comparison]
-            (s1, True),
-        )
+        def barrier_1d(u):
+            return s1 / 2 * (1 - smooth_sign(u))
 
+        b0 = barrier_1d(x0)
+        b1 = barrier_1d(x1)
+
+        potential = sp.log(sp.exp(s3 * b0) + sp.exp(s3 * b1)) / s3
         super().__init__(
             gamma=gamma,
             temperature=temperature,
             m=m,
             potential=(n_dim, potential),
-            params=(delta_x, barrier_energy),
+            params=(delta_x, barrier_energy, delta),
             units=units,
         )
 
@@ -598,14 +665,21 @@ class PeriodicSquareSystem2D(System):
         """The barrier energy of the system."""
         return self.params[1]
 
+    @property
+    def delta(self) -> float:
+        """The barrier energy of the system."""
+        return self.params[2]
+
     @override
-    def with_gamma(self, gamma: float) -> PeriodicSystem1D:
-        return PeriodicSystem1D(
+    def with_gamma(self, gamma: float) -> PeriodicSquareSystem2D:
+        return PeriodicSquareSystem2D(
             gamma=gamma,
             temperature=self.temperature,
             m=self.m,
             delta_x=self.delta_x,
             barrier_energy=self.barrier_energy,
+            delta=self.delta,
+            k=self.k,
             n_dim=self.n_dim,
             units=self.units,
         )
@@ -624,36 +698,38 @@ class PeriodicSquareSystem2D(System):
             atomic_mass=self.units.atomic_mass / self.m,
         )
 
-    def with_normalized_units(self) -> PeriodicSystem1D:
+    def with_normalized_units(self) -> PeriodicSquareSystem2D:
         """Return the normalized parameters of the simulation."""
         normalized_units = self.get_normalized_units()
         length_factor = normalized_units.angstrom / self.units.angstrom
         mass_factor = normalized_units.atomic_mass / self.units.atomic_mass
         energy_factor = normalized_units.Boltzmann / self.units.Boltzmann
         time_factor = np.sqrt(length_factor**2 * mass_factor / energy_factor)
-        return PeriodicSystem1D(
+        return PeriodicSquareSystem2D(
             gamma=self.gamma / time_factor,
             temperature=self.temperature,
             m=self.m * mass_factor,
             delta_x=self.delta_x * length_factor,
             barrier_energy=self.barrier_energy * energy_factor,
+            delta=self.delta * length_factor,
             n_dim=self.n_dim,
             units=normalized_units,
         )
 
-    def with_si_units(self) -> PeriodicSystem1D:
+    def with_si_units(self) -> PeriodicSquareSystem2D:
         """Return the si parameters of the system."""
         si_units = UnitSystem()
         length_factor = si_units.angstrom / self.units.angstrom
         mass_factor = si_units.atomic_mass / self.units.atomic_mass
         energy_factor = si_units.Boltzmann / self.units.Boltzmann
         time_factor = np.sqrt(length_factor**2 * mass_factor / energy_factor)
-        return PeriodicSystem1D(
+        return PeriodicSquareSystem2D(
             gamma=self.gamma / time_factor,
             temperature=self.temperature,
             m=self.m * mass_factor,
             delta_x=self.delta_x * length_factor,
             barrier_energy=self.barrier_energy * energy_factor,
+            delta=self.delta * length_factor,
             n_dim=self.n_dim,
             units=si_units,
         )

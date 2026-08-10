@@ -6,7 +6,6 @@ import sympy as sp
 
 from classical_diffusion.langevin import (
     LangevinSimulationResult,
-    SingleLangevinSimulationResult,
     get_energy,
 )
 from classical_diffusion.plot import get_figure
@@ -315,9 +314,7 @@ def plot_initial_p(
     return fig, ax
 
 
-def _get_average_elastic_velocity(
-    t: np.ndarray, x: np.ndarray
-) -> np.ndarray[Any, np.dtype[np.floating]]:
+def _get_average_elastic_velocity(t: np.ndarray, x: np.ndarray) -> tuple:
     """Return the elastic (ballistic straight-line) velocity estimate per trajectory across all dimensions."""
     n = len(t)
     st = np.sum(t)
@@ -326,12 +323,14 @@ def _get_average_elastic_velocity(
     sty = np.sum(x * t, axis=-1)
 
     denom = n * stt - st**2
-    return (n * sty - st * sy) / denom
+    m = (n * sty - st * sy) / denom
+    c = sy - m * st / n
+    return m, c
 
 
 def _get_average_elastic_p(
     result: LangevinSimulationResult, *, max_samples: int = 100
-) -> np.ndarray[Any, np.dtype[np.floating]]:
+) -> tuple:
     """Return the elastic (ballistic straight-line) momentum estimate per trajectory across all dimensions."""
     n_times = len(result.times)
     n_samples = min(max_samples, n_times)
@@ -340,21 +339,18 @@ def _get_average_elastic_p(
     t_sampled = result.times[sample_indices]
     x_sampled = result.x_points[:, :, sample_indices]
 
-    v_elastic = _get_average_elastic_velocity(t_sampled, x_sampled)
-    return v_elastic * result.system.m
+    v_elastic, x_0 = _get_average_elastic_velocity(t_sampled, x_sampled)
+    return v_elastic * result.system.m, x_0
 
 
 def breakdown_ballistic_trajectory[S: System](
     result: LangevinSimulationResult[S],
 ) -> tuple[LangevinSimulationResult[S], LangevinSimulationResult[S]]:
     """Split a ballistic simulation into its elastic and inelastic components across all dimensions."""
-    p_elastic = _get_average_elastic_p(result)
+    p_elastic, x_0 = _get_average_elastic_p(result)
 
     # Broadcast p_elastic across time steps: (n_trajectories, n_dimensions, n_times)
     p_elastic_points = np.broadcast_to(p_elastic[..., None], result.p_points.shape)
-
-    # Initial positions x_0: shape (n_trajectories, n_dimensions, 1)
-    x_0 = result.x_points[:, :, :1]
 
     # Calculate x_elastic(t) = x_0 + (p_elastic / m) * t across all spatial components
     x_elastic_points = p_elastic[..., None] * result.times / result.system.m + x_0
@@ -378,23 +374,13 @@ _EXPECTED_NDIM = 2
 
 
 def plot_2d_trajectory(
-    result: SingleLangevinSimulationResult,
+    result: LangevinSimulationResult,
     *,
     ax: Axes | None = None,
     n_trajectories: int = 1,
 ) -> tuple[Figure, Axes, list[Line2D]]:
-    """Plot x against y for 2d trajectory.
-
-    Raises
-    ------
-    ValueError
-        If n_dimensions is not 2.
-    """
+    """Plot x against y for 2d trajectory."""
     fig, ax = get_figure(ax)
-
-    if result.x_points.shape[1] != _EXPECTED_NDIM:
-        msg = "incorrect number of system dimensions, must be 2)"
-        raise ValueError(msg)
 
     lines = []
     for traj in range(n_trajectories):
@@ -452,11 +438,14 @@ def plot_probability_over_barrier(
     return fig, ax
 
 
-# TODO: provide a general direction
-def get_effective_mass(result: LangevinSimulationResult, idx: int = 0) -> float:
-    """Return the effective mass averaged over a full simulation."""
-    elastic_ps = _get_average_elastic_p(result=result)[..., idx]
-    return (result.system.kbt * result.system.m**2) / np.average(elastic_ps**2, axis=0)
+def get_effective_mass(result: LangevinSimulationResult) -> float:
+    """Return the effective mass matrix averaged over a full simulation."""
+    elastic_ps = _get_average_elastic_p(result=result)
+    elastic_p_sqaured = np.einsum("ti,tj->tij", elastic_ps, elastic_ps)
+    avg_elastic_p_squared = np.mean(elastic_p_sqaured, axis=0)
+    return (result.system.kbt * result.system.m**2) * np.linalg.inv(
+        avg_elastic_p_squared
+    )
 
 
 def get_full_effective_mass_from_free(

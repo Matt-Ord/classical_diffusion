@@ -43,7 +43,8 @@ def get_energy(
         "numpy",
     )
 
-    potential = potential(x_points, *system.params).squeeze(axis=1)
+    x_components = [x_points[:, d] for d in range(system.n_dim)]
+    potential = potential(*x_components, *system.params)
 
     kinetic = np.sum(p_points**2, axis=1) / (2 * system.m)
 
@@ -272,14 +273,15 @@ def get_exact_flat_isf(
 
 def get_exact_gaussian_isf(
     system: System,
-    effective_mass: float,
+    effective_mass: np.ndarray,
     delta_k: tuple[float, ...],
     times: np.ndarray[Any, np.dtype[np.floating[Any]]],
 ) -> np.ndarray:
     """Return the exact ballistic ISF for a 1D flat (potential-free) surface."""
     kbt, _, _ = system.kbt, system.m, system.gamma
-    k_squared = sum(k_i**2 for k_i in delta_k)
-    return np.exp(-((k_squared) * kbt / (2 * effective_mass)) * times**2)
+    inv_m = np.linalg.inv(effective_mass)
+    inner_product = np.einsum("i,tij,j->t", delta_k, inv_m, delta_k)
+    return np.exp(-(inner_product * kbt / 2) * times**2)
 
 
 def plot_exact_gaussian_isf(
@@ -345,7 +347,7 @@ def plot_exact_flat_isf(
     """Plot the exact ISF for a 1D flat (potential-free) surface."""
     fig, ax = get_figure(ax)
 
-    times = times if times is not None else np.linspace(0, 30, 1000)
+    times = times if times is not None else np.linspace(0, 2e-11, 1000)
     isf_exact = get_exact_flat_isf(system, delta_k=delta_k, times=times)
 
     (line,) = ax.plot(times, isf_exact)

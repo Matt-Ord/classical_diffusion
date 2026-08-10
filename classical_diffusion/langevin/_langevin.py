@@ -368,7 +368,7 @@ def get_over_barrier_initial_conditions(
 def get_initial_conditions(system: System, n_samples: int) -> tuple:
     sampler = make_initial_conditions_sampler(system)
     keys = jax.random.split(jax.random.PRNGKey(0), n_samples)
-    free_x_initial, free_p_initial = sampler(keys)
-    free_x_initial = free_x_initial.reshape(-1, system.n_dim)
-    free_p_initial = free_p_initial.reshape(-1, system.n_dim)
-    return free_x_initial, free_p_initial
+    x_initial, p_initial = sampler(keys)
+    x_initial = x_initial.reshape(-1, system.n_dim)
+    p_initial = p_initial.reshape(-1, system.n_dim)
+    return x_initial, p_initial
