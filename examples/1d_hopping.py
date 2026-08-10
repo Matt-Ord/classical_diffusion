@@ -4,8 +4,8 @@ import numpy as np
 from classical_diffusion.analysis import plot_isf, plot_x_evolution
 from classical_diffusion.hopping import (
     Lattice1D,
-    get_ensemble_probabilities,
-    plot_deterministic_isf,
+    get_ensemble_probabilities,  # ty:ignore[unresolved-import]
+    plot_deterministic_isf,  # ty:ignore[unresolved-import]
     solve_ensemble,
 )
 from classical_diffusion.plot import (

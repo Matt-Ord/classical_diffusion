@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from classical_diffusion.hopping import Lattice
+from classical_diffusion.hopping._system import Lattice
 from classical_diffusion.plot import get_figure
 from classical_diffusion.util import timed
 
