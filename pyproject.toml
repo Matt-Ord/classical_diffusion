@@ -8,8 +8,8 @@ dependencies = [
     "diffrax>=0.7.2",
     "jax>=0.10.2",
     "matplotlib>=3.11.0",
+    "numpy>=2.5.1",
     "sympy>=1.14.0",
-    "tqdm>=4.68.4",
 ]
 
 [dependency-groups]
@@ -19,6 +19,7 @@ dev = [
     "sphinx >=9.1.0,<10.0.0",
     "pydata-sphinx-theme >=0.18.0,<0.19.0",
     "ty>=0.0.56",
+    "tqdm>=4.68.4",
 ]
 
 
@@ -48,9 +49,23 @@ unfixable = ["print"]
 
 
 [tool.ruff.lint.extend-per-file-ignores]
-"tests/**/*" = ["no-self-use", "too-many-locals", "undocumented-public-class", "undocumented-public-method", "undocumented-public-function", "undocumented-public-package"]
+"tests/**/*" = [
+    "no-self-use",
+    "too-many-locals",
+    "undocumented-public-class",
+    "undocumented-public-method",
+    "undocumented-public-function",
+    "undocumented-public-package",
+]
 "examples/**/*" = ["implicit-namespace-package", "print"]
-"scripts/**/*" = ["implicit-namespace-package", "print", "undocumented-public-class", "undocumented-public-method", "undocumented-public-function", "undocumented-public-package"]
+"scripts/**/*" = [
+    "implicit-namespace-package",
+    "print",
+    "undocumented-public-class",
+    "undocumented-public-method",
+    "undocumented-public-function",
+    "undocumented-public-package",
+]
 "docs/**/*" = ["implicit-namespace-package", "missing-required-import"]
 
 [tool.ruff.lint.pylint]

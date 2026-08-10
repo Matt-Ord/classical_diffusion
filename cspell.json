@@ -5,16 +5,22 @@
     "words": [
         "axhline",
         "boltzman",
+        "brentq",
         "cmap",
         "diffeqsolve",
         "diffrax",
+        "ellipk",
+        "ellipkinc",
         "frameon",
         "Heun",
+        "intertial",
         "lambdify",
         "Langevin",
+        "ndindex",
         "pcolormesh",
         "pickler",
         "PRNG",
+        "rtol",
         "saveat",
         "savez",
         "sympy",
@@ -24,11 +30,15 @@
         "viridis",
         "visualizable",
         "vmap",
+        "vmax",
+        "vmin",
         "xedges",
         "xlim",
+        "xticks",
         "yedges",
         "ylim",
-        "yscale"
+        "yscale",
+        "yticks"
     ],
     "ignoreWords": [
         "Phonopy",
@@ -47,7 +57,7 @@
         "trange",
         "tqdm",
         "jrandom",
-        "srepr",
+        "srepr"
     ],
     "flagWords": [
         "hte",

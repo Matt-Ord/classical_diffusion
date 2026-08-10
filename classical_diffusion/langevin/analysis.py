@@ -1,12 +1,12 @@
-from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, Unpack, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import matplotlib as mpl
 import numpy as np
-import scipy
 import sympy as sp
 
 from classical_diffusion.langevin import (
-    SimulationResult,
+    LangevinSimulationResult,
+    get_energy,
 )
 from classical_diffusion.langevin._langevin import sample_results
 from classical_diffusion.plot import get_figure, get_measured_data
@@ -15,13 +15,10 @@ from classical_diffusion.util import expanding_slope_ensemble
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
-    from matplotlib.collections import PolyCollection, QuadMesh
+    from matplotlib.collections import QuadMesh
     from matplotlib.container import BarContainer
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
-
-    from classical_diffusion.langevin._langevin import SingleSimulationResult
-    from classical_diffusion.plot import Measure
 
 
 def _calculate_total_offsset_multiplications_complex(
@@ -230,16 +227,18 @@ def _get_sampled_kinetic_energies[T: SimulationResult](
     )
 
 
-def _get_all_kinetic_energies[T: SimulationResult](
+def _get_all_kinetic_energies[T: LangevinSimulationResult](
     result: T | list[T],
 ) -> np.ndarray[Any, np.dtype[np.float64]]:
     result: list[T] = (
-        cast("list[T]", [result]) if isinstance(result, SimulationResult) else result
+        cast("list[T]", [result])
+        if isinstance(result, LangevinSimulationResult)
+        else result
     )
     return np.concatenate([_get_sampled_kinetic_energies(r) for r in result]).ravel()
 
 
-def plot_kinetic_probability[T: SimulationResult](
+def plot_kinetic_probability[T: LangevinSimulationResult](
     result: T | list[T],
     *,
     ax: Axes | None = None,
@@ -288,7 +287,9 @@ def plot_kinetic_probability[T: SimulationResult](
     return fig, ax, (line0, cast("BarContainer", bars))
 
 
-def split_result(result: SimulationResult) -> tuple[SimulationResult, SimulationResult]:
+def split_result(
+    result: LangevinSimulationResult,
+) -> tuple[LangevinSimulationResult, LangevinSimulationResult]:
     """Split a simulation result in half along the time axis, each restarting at t=0."""
     xs1, xs2 = np.split(result.x_points, 2, axis=-1)
     ps1, ps2 = np.split(result.p_points, 2, axis=-1)
@@ -297,16 +298,16 @@ def split_result(result: SimulationResult) -> tuple[SimulationResult, Simulation
     times1 -= times1[0]
     times2 -= times2[0]
 
-    first = SimulationResult(
+    first = LangevinSimulationResult(
         times=times1, x_points=xs1, p_points=ps1, system=result.system
     )
-    second = SimulationResult(
+    second = LangevinSimulationResult(
         times=times2, x_points=xs2, p_points=ps2, system=result.system
     )
     return first, second
 
 
-def x_exact_pdf(result: SimulationResult, *, n_grid: int = 10_000) -> tuple:
+def x_exact_pdf(result: LangevinSimulationResult, *, n_grid: int = 10_000) -> tuple:
     """Return x boltzman pdf for given potential."""
     potential = sp.lambdify(
         (*result.system.coordinate_symbols, *result.system.parameter_symbols),
@@ -327,7 +328,7 @@ def x_exact_pdf(result: SimulationResult, *, n_grid: int = 10_000) -> tuple:
 
 
 def plot_x_histogram(
-    result: SimulationResult,
+    result: LangevinSimulationResult,
     *,
     ax: Axes | None = None,
     bins: int = 100,
@@ -340,7 +341,7 @@ def plot_x_histogram(
     fig, ax = get_figure(ax)
 
     _bin_counts, _bin_edges, bars = ax.hist(
-        result.x_points.reshape(-1),
+        result.x_points[1:].reshape(-1),
         bins=bins,
         density=True,
         alpha=1.0,
@@ -356,7 +357,7 @@ def plot_x_histogram(
     return fig, ax, cast("BarContainer", bars)
 
 
-def p_exact_pdf(result: SimulationResult, *, n_grid: int = 10_000) -> tuple:
+def p_exact_pdf(result: LangevinSimulationResult, *, n_grid: int = 10_000) -> tuple:
     """Return p boltzman pdf."""
     p_grid = np.linspace(result.p_points.min(), result.p_points.max(), n_grid)
     m, kbt = (
@@ -371,7 +372,7 @@ def p_exact_pdf(result: SimulationResult, *, n_grid: int = 10_000) -> tuple:
 
 
 def plot_p_histogram(
-    result: SimulationResult,
+    result: LangevinSimulationResult,
     *,
     ax: Axes | None = None,
     bins: int = 100,
@@ -401,7 +402,7 @@ def plot_p_histogram(
 
 
 def plot_phase_space_density(
-    result: SimulationResult,
+    result: LangevinSimulationResult,
     *,
     ax: Axes | None = None,
     bins: int = 100,
@@ -410,8 +411,8 @@ def plot_phase_space_density(
     fig, ax = get_figure(ax)
 
     _counts, _xedges, _yedges, mesh = ax.hist2d(
-        result.x_points.reshape(-1),
-        result.p_points.reshape(-1),
+        result.x_points[1:].reshape(-1),
+        result.p_points[1:].reshape(-1),
         bins=bins,
         density=True,
         cmap="viridis",
@@ -536,15 +537,96 @@ def plot_2d_trajectory(
     Raises
     ------
     ValueError
-        If n_dimensions is not 2.
+        If `n_trajectories` exceeds the number of trajectories available in `result`.
     """
-    fig, ax = get_figure(ax)
-
-    if result.x_points.shape[0] != _EXPECTED_NDIM:
-        msg = "incorrect number of system dimensions, must be 2)"
+    if n_trajectories > result.p_points.shape[0]:
+        msg = f"n_trajectories={n_trajectories} exceeds available trajectories ({result.p_points.shape[0]})"
         raise ValueError(msg)
 
-    (line,) = ax.plot(result.x_points[0], result.x_points[1])
+    fig, ax = get_figure(ax)
+
+    for trajectory in range(n_trajectories):
+        ax.axhline(
+            result.p_points[trajectory, 0, 0],
+            label=f"trajectory {trajectory}",
+            linestyle=":",
+        )
+
+    return fig, ax
+
+
+def _get_average_elastic_velocity(t: np.ndarray, x: np.ndarray) -> tuple:
+    """Return the elastic (ballistic straight-line) velocity estimate per trajectory across all dimensions."""
+    n = len(t)
+    st = np.sum(t)
+    stt = np.sum(t * t)
+    sy = np.sum(x, axis=-1)
+    sty = np.sum(x * t, axis=-1)
+
+    denom = n * stt - st**2
+    m = (n * sty - st * sy) / denom
+    c = sy - m * st / n
+    return m, c
+
+
+def _get_average_elastic_p(
+    result: LangevinSimulationResult, *, max_samples: int = 100
+) -> tuple:
+    """Return the elastic (ballistic straight-line) momentum estimate per trajectory across all dimensions."""
+    n_times = len(result.times)
+    n_samples = min(max_samples, n_times)
+    sample_indices = np.linspace(0, n_times - 1, n_samples, dtype=int)
+
+    t_sampled = result.times[sample_indices]
+    x_sampled = result.x_points[:, :, sample_indices]
+
+    v_elastic, x_0 = _get_average_elastic_velocity(t_sampled, x_sampled)
+    return v_elastic * result.system.m, x_0
+
+
+def breakdown_ballistic_trajectory[S: System](
+    result: LangevinSimulationResult[S],
+) -> tuple[LangevinSimulationResult[S], LangevinSimulationResult[S]]:
+    """Split a ballistic simulation into its elastic and inelastic components across all dimensions."""
+    p_elastic, x_0 = _get_average_elastic_p(result)
+
+    # Broadcast p_elastic across time steps: (n_trajectories, n_dimensions, n_times)
+    p_elastic_points = np.broadcast_to(p_elastic[..., None], result.p_points.shape)
+
+    # Calculate x_elastic(t) = x_0 + (p_elastic / m) * t across all spatial components
+    x_elastic_points = p_elastic[..., None] * result.times / result.system.m + x_0
+
+    elastic = LangevinSimulationResult[S](
+        times=result.times,
+        x_points=x_elastic_points,
+        p_points=p_elastic_points,
+        system=result.system,
+    )
+    inelastic = LangevinSimulationResult[S](
+        times=result.times,
+        x_points=result.x_points - x_elastic_points,
+        p_points=result.p_points - p_elastic_points,
+        system=result.system,
+    )
+    return elastic, inelastic
+
+
+_EXPECTED_NDIM = 2
+
+
+def plot_2d_trajectory(
+    result: LangevinSimulationResult,
+    *,
+    ax: Axes | None = None,
+    n_trajectories: int = 1,
+) -> tuple[Figure, Axes, list[Line2D]]:
+    """Plot x against y for 2d trajectory."""
+    fig, ax = get_figure(ax)
+
+    lines = []
+    for traj in range(n_trajectories):
+        (line,) = ax.plot(result.x_points[traj, 0, :], result.x_points[traj, 1, :])
+        lines.append(line)
 
     ax.set_xlabel("$x$")
     ax.set_ylabel("$y$")

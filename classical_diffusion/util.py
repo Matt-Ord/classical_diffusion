@@ -1,6 +1,9 @@
 import datetime
 import pickle  # ruff:ignore[suspicious-pickle-import]
 import types
+import zlib
+from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import update_wrapper, wraps
 from types import FunctionType
 from typing import TYPE_CHECKING, Literal, TypeVar, overload
@@ -10,6 +13,19 @@ import numpy as np
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
     from pathlib import Path
+
+
+_timing_disabled = ContextVar("timing_disabled", default=False)
+
+
+@contextmanager
+def disabled_timing() -> Generator[None]:
+    """Context manager to temporarily disable nested @timed logs."""
+    token = _timing_disabled.set(True)
+    try:
+        yield
+    finally:
+        _timing_disabled.reset(token)
 
 
 def timed[**P, R](f: Callable[P, R]) -> Callable[P, R]:
@@ -30,6 +46,10 @@ def timed[**P, R](f: Callable[P, R]) -> Callable[P, R]:
 
     @wraps(f)
     def wrap(*args: P.args, **kw: P.kwargs) -> R:
+
+        if _timing_disabled.get():
+            return f(*args, **kw)
+
         ts = datetime.datetime.now(tz=datetime.UTC)
         try:
             result = f(*args, **kw)
@@ -199,3 +219,13 @@ def cached[**P, R](
         )
 
     return _cached
+
+
+def hash_array(arrays: tuple[np.ndarray, ...]) -> int:
+    chk = 0
+    for arr in arrays:
+        # Chain the CRC32 checksums of the raw float bytes
+        chk = zlib.crc32(arr.tobytes(), chk)  # cspell: disable-line
+        # Include shape just in case the same floats are reshaped
+        chk = zlib.crc32(str(arr.shape).encode(), chk)
+    return chk

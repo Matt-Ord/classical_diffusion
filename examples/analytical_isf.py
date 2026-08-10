@@ -1,36 +1,39 @@
 import jax.random as jrandom
 import numpy as np
 
+from classical_diffusion.analysis import plot_isf
 from classical_diffusion.langevin import (
-    TimeSpan,
-    plot_isf,
+    plot_exact_flat_isf,
+    plot_exact_harmonic_isf,
     solve_ensemble,
 )
 from classical_diffusion.plot import get_fancy_figure
-from classical_diffusion.system import (
-    HarmonicSystem,
-    plot_exact_flat_isf,
-    plot_exact_harmonic_isf,
-)
+from classical_diffusion.simulation import TimeSpan
+from classical_diffusion.system import HarmonicSystem, PeriodicSystem1D, UnitSystem
 
 
 def _plot_harmonic_isf() -> None:
     key = jrandom.PRNGKey(100)
 
-    system = HarmonicSystem(gamma=0.1, temperature=0.5, m=1.0, omega=1.0)
+    system = HarmonicSystem(
+        gamma=0.1,
+        temperature=1.0,
+        m=1.0,
+        omega=1.0,
+        units=UnitSystem(Boltzmann=1.0, angstrom=1.0, atomic_mass=1.0),
+    )
 
     result = solve_ensemble(
         system,
         TimeSpan(
-            t0=0,
-            t1=50 / system.gamma,
-            dt=0.01 / system.gamma,
+            t_end=50 / system.gamma,
+            n_steps=5000,
         ),
         (np.full((200, 1), 0.0), np.full((200, 1), 0.0)),
         _key=key,
     )
 
-    fig, ax = get_fancy_figure()
+    _fig, ax = get_fancy_figure()
 
     delta_k = (2 * np.pi / 5,)
     _, ax, line_simulated, _ = plot_isf(
@@ -48,7 +51,7 @@ def _plot_harmonic_isf() -> None:
         color="black",
     )
 
-    _, ax, line_exact = plot_exact_harmonic_isf(system, delta_k, result.times, ax=ax)
+    fig, ax, line_exact = plot_exact_harmonic_isf(system, delta_k, result.times, ax=ax)
     line_exact.set_label("exact")
     ax.legend(
         loc="upper right",
@@ -63,20 +66,73 @@ def _plot_harmonic_isf() -> None:
 def _plot_flat_isf() -> None:
     key = jrandom.PRNGKey(100)
 
-    system = HarmonicSystem(gamma=0.1, temperature=0.5, m=1.0, omega=0)
+    system = PeriodicSystem1D(
+        gamma=4e11,
+        temperature=103,
+        m=8e-27,
+        delta_x=3e-10,
+        barrier_energy=0,
+        units=UnitSystem(),
+    )
+
+    normalized_system = system.with_normalized_units()
 
     result = solve_ensemble(
-        system,
+        normalized_system,
         TimeSpan(
-            t0=0,
-            t1=50 / system.gamma,
-            dt=0.01 / system.gamma,
+            t_end=normalized_system.units.time_into(10e-12, units=UnitSystem()),
+            n_steps=1000,
         ),
         (np.full((200, 1), 0.0), np.full((200, 1), 0.0)),
         _key=key,
     )
 
     fig, ax = get_fancy_figure()
+
+    delta_k = (7.1e9,)
+    _, ax, line_simulated, _fill_0 = plot_isf(
+        result=result.with_si_units(),
+        ax=ax,
+        delta_k=delta_k,
+    )
+    line_simulated.set_label("simulation")
+
+    _, ax, line_exact = plot_exact_flat_isf(system=system, delta_k=delta_k, ax=ax)
+    line_exact.set_label("exact")
+    ax.legend(
+        loc="upper right",
+        handles=[line_simulated, line_exact],
+        labels=["Simulation", "Exact"],
+    )
+    ax.set_xlim(0, 2e-12)
+    ax.set_ylim(0, 1)
+
+    fig.savefig("./examples/analytical_isf.flat.pdf", dpi=300, bbox_inches="tight")
+
+
+def _plot_flat_isf_2d() -> None:
+    key = jrandom.PRNGKey(100)
+
+    system = HarmonicSystem(
+        gamma=0.1,
+        temperature=1.0,
+        m=1.0,
+        omega=0,
+        n_dim=2,
+        units=UnitSystem(Boltzmann=1.0, angstrom=1.0, atomic_mass=1.0),
+    )
+
+    result = solve_ensemble(
+        system,
+        TimeSpan(
+            t_end=50 / system.gamma,
+            n_steps=5000,
+        ),
+        (np.full((200, 2), 0.0), np.full((200, 2), 0.0)),
+        _key=key,
+    )
+
+    _fig, ax = get_fancy_figure()
 
     delta_k = (2 * np.pi / 40,)
     _, ax, line_simulated, _ = plot_isf(
@@ -95,45 +151,6 @@ def _plot_flat_isf() -> None:
     )
     ax.set_xlim(0, 2 / system.gamma)
     ax.set_ylim(0, 1)
-    fig.savefig("./examples/analytical_isf.flat.pdf", dpi=300, bbox_inches="tight")
-
-
-def _plot_flat_isf_2d() -> None:
-    key = jrandom.PRNGKey(100)
-
-    system = HarmonicSystem(gamma=0.1, temperature=0.5, m=1.0, omega=0, n_dim=2)
-
-    result = solve_ensemble(
-        system,
-        TimeSpan(
-            t0=0,
-            t1=50 / system.gamma,
-            dt=0.01 / system.gamma,
-        ),
-        (np.full((200, 2), 0.0), np.full((200, 2), 0.0)),
-        _key=key,
-    )
-
-    fig, ax = get_fancy_figure()
-
-    delta_k = (2 * np.pi / 40, 0)
-    _, ax, line_simulated, _ = plot_isf(
-        result=result,
-        ax=ax,
-        delta_k=delta_k,
-    )
-    line_simulated.set_label("simulation")
-
-    _, ax, line_exact = plot_exact_flat_isf(system, delta_k, result.times, ax=ax)
-    line_exact.set_label("exact")
-    ax.legend(
-        loc="upper right",
-        handles=[line_simulated, line_exact],
-        labels=["Simulation", "Exact"],
-    )
-    ax.set_xlim(0, 2 / system.gamma)
-    ax.set_ylim(0, 1)
-    fig.savefig("./examples/analytical_isf.flat_2d.pdf", dpi=300, bbox_inches="tight")
 
 
 if __name__ == "__main__":
