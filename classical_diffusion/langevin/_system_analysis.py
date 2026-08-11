@@ -4,13 +4,14 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import sympy as sp
-from scipy import integrate
+from scipy import integrate, interpolate, ndimage
 from scipy.integrate import quad
 from scipy.optimize import brentq
-from scipy.special import ellipk, ellipkinc
+from scipy.special import ellipk, ellipkinc, gamma
 from scipy.stats.sampling import NumericalInversePolynomial
 
 from classical_diffusion.plot import get_figure
+from classical_diffusion.util import timed
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -47,6 +48,26 @@ def get_energy(
     potential = potential(*x_components, *system.params)
 
     kinetic = np.sum(p_points**2, axis=1) / (2 * system.m)
+
+    return kinetic + potential
+
+
+def get_energy_single(
+    system: System,
+    x_points: np.ndarray,
+    p_points: np.ndarray,
+) -> np.ndarray[Any, np.dtype[np.floating]]:
+    """Return the energy of the system."""
+    potential = sp.lambdify(
+        (*system.coordinate_symbols, *system.parameter_symbols),
+        system.potential_expr,
+        "numpy",
+    )
+
+    x_components = [x_points[d, :] for d in range(system.n_dim)]
+    potential = potential(*x_components, *system.params)
+
+    kinetic = np.sum(p_points**2, axis=0) / (2 * system.m)
 
     return kinetic + potential
 
@@ -219,12 +240,12 @@ def get_exact_harmonic_isf(
     times: np.ndarray[Any, np.dtype[np.floating[Any]]],
 ) -> np.ndarray:
     """Return the exact ISF for simulation."""
-    gamma, temp, m = system.gamma, system.temperature, system.m
+    gamma, _temp, m = system.gamma, system.temperature, system.m
     f = np.sqrt(system.omega**2 - gamma**2 / 4)
 
     return np.exp(
         -(delta_k[0] ** 2)
-        * ((1.0 * temp) / (m * system.omega**2))
+        * (system.kbt / (m * system.omega**2))
         * (
             1
             - np.exp(-gamma * times / 2)
@@ -264,9 +285,9 @@ def get_exact_flat_isf(
 ) -> np.ndarray:
     """Return the exact ballistic ISF for a 1D flat (potential-free) surface."""
     kbt, m, gamma = system.kbt, system.m, system.gamma
-    k_squared = sum(k_i**2 for k_i in delta_k)
+    k_squared = np.sum(np.array(delta_k) ** 2)
     return np.exp(
-        ((k_squared) * kbt / (gamma**2 * m))
+        ((k_squared**2) * kbt / (gamma**2 * m))
         * (1 - gamma * times - np.exp(-gamma * times))
     )
 
@@ -280,13 +301,13 @@ def get_exact_gaussian_isf(
     """Return the exact ballistic ISF for a 1D flat (potential-free) surface."""
     kbt, _, _ = system.kbt, system.m, system.gamma
     inv_m = np.linalg.inv(effective_mass)
-    inner_product = np.einsum("i,tij,j->t", delta_k, inv_m, delta_k)
+    inner_product = np.einsum("i,ij,j->", delta_k, inv_m, delta_k)
     return np.exp(-(inner_product * kbt / 2) * times**2)
 
 
 def plot_exact_gaussian_isf(
     system: System,
-    effective_mass: float,
+    effective_mass: np.ndarray,
     delta_k: tuple[float, ...],
     times: np.ndarray[Any, np.dtype[np.floating[Any]]] | None = None,
     *,
@@ -312,12 +333,12 @@ def plot_exact_gaussian_isf(
 
 def plot_exact_offset_gaussian_isf(  # ruff:ignore[too-many-arguments]
     system: System,
-    effective_mass: float,
+    effective_mass: np.ndarray,
     delta_k: tuple[float, ...],
     times: np.ndarray[Any, np.dtype[np.floating[Any]]] | None = None,
     *,
     ax: Axes | None = None,
-    offset: float = 0,
+    offset: float,
 ) -> tuple[Figure, Axes, Line2D]:
     """Plot the exact ISF for a 1D flat (potential-free) surface."""
     fig, ax = get_figure(ax)
@@ -347,7 +368,7 @@ def plot_exact_flat_isf(
     """Plot the exact ISF for a 1D flat (potential-free) surface."""
     fig, ax = get_figure(ax)
 
-    times = times if times is not None else np.linspace(0, 2e-11, 1000)
+    times = times if times is not None else np.linspace(0, 10, 1000)
     isf_exact = get_exact_flat_isf(system, delta_k=delta_k, times=times)
 
     (line,) = ax.plot(times, isf_exact)
@@ -368,7 +389,9 @@ def get_characteristic_friction_time(system: System) -> float:
     return 1 / system.gamma
 
 
-def set_up_integral(system: System) -> Callable[[np.ndarray, np.ndarray], np.ndarray]:
+def set_up_integral_1d(
+    system: System,
+) -> Callable[[np.ndarray, np.ndarray], np.ndarray]:
     potential_func = sp.lambdify(system.lambda_symbols, system.potential_expr, "numpy")
     params = system.params
 
@@ -380,19 +403,19 @@ def set_up_integral(system: System) -> Callable[[np.ndarray, np.ndarray], np.nda
     return integrand
 
 
-def calculate_partition_function(system: System) -> float:
-    integrand = set_up_integral(system)
+def calculate_partition_function_1d(system: System) -> float:
+    integrand = set_up_integral_1d(system)
     z, _ = integrate.dblquad(
         integrand,
         -np.inf,
         np.inf,  # p limits (outer)
-        lambda _p: system.sampling_domain[0],  # x lower (inner) — fixed, one period
-        lambda _p: system.sampling_domain[1],  # x upper (inner)
+        lambda _p: system.sampling_domain[0][0],  # x lower (inner) — fixed, one period
+        lambda _p: system.sampling_domain[0][1],  # x upper (inner)
     )
     return z
 
 
-def get_x_domian_given_p(
+def get_x_domian_given_p_1d(
     system: System, barrier_energy: float
 ) -> Callable[[float], float]:
     potential_func = sp.lambdify(system.lambda_symbols, system.potential_expr, "numpy")
@@ -406,16 +429,18 @@ def get_x_domian_given_p(
         return brentq(
             lambda x: potential_func(x, *params) - target,
             0.0,
-            system.sampling_domain[1],
+            system.sampling_domain[0][1],
         )
 
     return x_t
 
 
-def calculate_probability_under_barrier(system: System, barrier_energy: float) -> float:
+def calculate_probability_under_barrier_1d(
+    system: System, barrier_energy: float
+) -> float:
 
-    x_t = get_x_domian_given_p(system, barrier_energy)
-    integrand = set_up_integral(system)
+    x_t = get_x_domian_given_p_1d(system, barrier_energy)
+    integrand = set_up_integral_1d(system)
 
     integral_below, _ = integrate.dblquad(
         integrand,
@@ -425,7 +450,7 @@ def calculate_probability_under_barrier(system: System, barrier_energy: float) -
         x_t,
     )
 
-    z = calculate_partition_function(system)
+    z = calculate_partition_function_1d(system)
 
     return integral_below / z
 
@@ -436,12 +461,16 @@ def make_free_point_sampler(system: System, barrier_energy: float) -> Callable:
         system.potential_expr,
         "jax",
     )
-    sigma = jnp.sqrt(system.m * system.kbt)
-    x_lo, x_hi = system.sampling_domain
+    bounds = system.sampling_domain
 
-    grid_1d = jnp.linspace(x_lo, x_hi, 50)
-    grids = jnp.meshgrid(*([grid_1d] * system.n_dim), indexing="ij")
-    v_grid = potential_fn(*[g.ravel() for g in grids], *system.params)
+    lo = jnp.array([b[0] for b in bounds])
+    hi = jnp.array([b[1] for b in bounds])
+    lattice = jnp.asarray(system.lattice_vectors)
+
+    grids = jnp.meshgrid(*[jnp.linspace(b[0], b[1], 50) for b in bounds], indexing="ij")
+    frac_grid = jnp.stack([g.ravel() for g in grids], axis=0)
+    cart_grid = lattice @ frac_grid
+    v_grid = potential_fn(*cart_grid, *system.params)
     pdf_max = jnp.exp(-jnp.min(v_grid) / system.kbt)
 
     def _sample_one(key: jax.Array) -> tuple:
@@ -453,13 +482,15 @@ def make_free_point_sampler(system: System, barrier_energy: float) -> Callable:
             key, _x, _p, _ = state
             key, kx, ku, kp = jax.random.split(key, 4)
 
-            x_candidate = jax.random.uniform(
-                kx, minval=x_lo, maxval=x_hi, shape=(system.n_dim,)
+            frac_candidates = jax.random.uniform(
+                kx, minval=lo, maxval=hi, shape=(system.n_dim,)
             )
+            x_candidate = lattice @ frac_candidates
             v = potential_fn(*x_candidate, *system.params)
             x_ok = jax.random.uniform(ku) < jnp.exp(-v / system.kbt) / pdf_max
 
-            p_candidate = jax.random.normal(kp, (system.n_dim,)) * sigma
+            p_std = jnp.sqrt(system.kbt * system.m)
+            p_candidate = jax.random.normal(kp, (system.n_dim,)) * p_std
             energy = jnp.sum(p_candidate**2) / (2 * system.m) + v
 
             accept = x_ok & (energy > barrier_energy)
@@ -472,19 +503,26 @@ def make_free_point_sampler(system: System, barrier_energy: float) -> Callable:
     return jax.jit(jax.vmap(_sample_one))
 
 
-def make_initial_conditions_sampler(system: System) -> Callable:
-
+def make_initial_conditions_sampler(system: System, n_grid: int = 60) -> Callable:
     potential_fn = sp.lambdify(
         (*system.coordinate_symbols, *system.parameter_symbols),
         system.potential_expr,
         "jax",
     )
 
-    x_lo, x_hi = system.sampling_domain
+    bounds = system.sampling_domain
 
-    grid_1d = jnp.linspace(x_lo, x_hi, 50)
-    grids = jnp.meshgrid(*([grid_1d] * system.n_dim), indexing="ij")
-    v_grid = potential_fn(*[g.ravel() for g in grids], *system.params)
+    lo = jnp.array([b[0] for b in bounds])
+    hi = jnp.array([b[1] for b in bounds])
+
+    lattice = jnp.asarray(system.lattice_vectors)
+
+    grids = jnp.meshgrid(
+        *[jnp.linspace(b[0], b[1], n_grid) for b in bounds], indexing="ij"
+    )
+    frac_grid = jnp.stack([g.ravel() for g in grids], axis=0)
+    cart_grid = lattice @ frac_grid
+    v_grid = potential_fn(*cart_grid, *system.params)
     pdf_max = jnp.exp(-jnp.min(v_grid) / system.kbt)
 
     def _sample_one(key: jax.Array) -> tuple:
@@ -495,16 +533,17 @@ def make_initial_conditions_sampler(system: System) -> Callable:
         def _body_fn(state: tuple) -> tuple:
             key, _x, _ = state
             key, kx, ku = jax.random.split(key, 3)
-            x_candidates = jax.random.uniform(
-                kx, minval=x_lo, maxval=x_hi, shape=(system.n_dim,)
+            frac_candidates = jax.random.uniform(
+                kx, minval=lo, maxval=hi, shape=(system.n_dim,)
             )
-            v = potential_fn(*x_candidates, *system.params)
+            x_candidate = lattice @ frac_candidates
+            v = potential_fn(*x_candidate, *system.params)
             accept = jax.random.uniform(ku) < jnp.exp(-v / system.kbt) / pdf_max
 
-            return key, x_candidates, accept
+            return key, x_candidate, accept
 
         key, p_key = jax.random.split(key, 2)
-        init = (key, jnp.zeros(system.n_dim), jnp.array(False))  # ruff:ignore[boolean-positional-value-in-call]
+        init = (key, jnp.zeros(system.n_dim), jnp.array(False))
         _, x_finals, _ = jax.lax.while_loop(_cond_fn, _body_fn, init)
         p_std = jnp.sqrt(system.kbt * system.m)
         p_finals = jax.random.normal(p_key, (system.n_dim,)) * p_std
@@ -572,7 +611,7 @@ def get_full_effective_mass_exact_1d_periodic(
     )
     avg_p2_given_escaped = np.average(elastic_ps**2, axis=0)
 
-    prob_escape = 1 - calculate_probability_under_barrier(
+    prob_escape = 1 - calculate_probability_under_barrier_1d(
         system=system, barrier_energy=system.barrier_energy
     )
 
@@ -657,7 +696,7 @@ def get_full_effective_mass_exact_1d_square_periodic(
     )
     avg_p2_given_escaped = np.average(elastic_ps**2, axis=0)
 
-    prob_escape = 1 - calculate_probability_under_barrier(
+    prob_escape = 1 - calculate_probability_under_barrier_1d(
         system=system, barrier_energy=system.barrier_energy
     )
 
@@ -717,3 +756,84 @@ def add_periodic_grid(
     ax.grid(which="minor", color="white", linestyle="-", linewidth=0.5, alpha=0.6)
 
     return fig, ax
+
+
+@timed
+def calculate_partition_function_ndim(system: System) -> float:
+    """Z = Z_p * Z_x, valid for any n_dim."""
+    lattice = np.asarray(system.lattice_vectors)
+    jac = abs(np.linalg.det(lattice))
+    potential_func = sp.lambdify(system.lambda_symbols, system.potential_expr, "numpy")
+    params = system.params
+    n = system.n_dim
+
+    def integrand(*frac_coords: float) -> float:
+        xc = lattice @ np.array(frac_coords)
+        return np.exp(-potential_func(*xc, *params) / system.kbt)
+
+    ranges = system.sampling_domain
+    z_x, _ = integrate.nquad(integrand, ranges)
+    z_x *= jac
+
+    z_p = (2 * np.pi * system.m * system.kbt) ** (n / 2)
+    return z_p * z_x
+
+
+@timed
+def build_basin_weight_function(
+    system: System, barrier_energy: float, n_grid: int = 60, n_energy: int = 40
+) -> tuple[Callable[[float], float], float]:
+    """W(E): Boltzmann-weighted volume of the connected basin V <= E, any n_dim."""
+    potential_fn = sp.lambdify(system.lambda_symbols, system.potential_expr, "numpy")
+    lattice = np.asarray(system.lattice_vectors)
+    jac = abs(np.linalg.det(lattice))
+    n = system.n_dim
+    cell_vol = jac / n_grid**n
+
+    bounds = system.sampling_domain
+
+    grids = jnp.meshgrid(
+        *[jnp.linspace(b[0], b[1], n_grid) for b in bounds], indexing="ij"
+    )
+    v_grid = potential_fn(*[g.ravel() for g in grids], *system.params)
+    v_grid = np.asarray(v_grid).reshape(grids[0].shape)
+
+    v_min = v_grid.min()
+    min_idx = np.unravel_index(np.argmin(v_grid), v_grid.shape)
+    boltz = np.exp(-v_grid / system.kbt)
+
+    energies = np.linspace(v_min, v_min + barrier_energy, n_energy)
+    weights = np.zeros(n_energy)
+    structure = np.ones((3,) * n)
+    for i, e in enumerate(energies):
+        mask = v_grid <= e
+        labeled, _ = ndimage.label(mask, structure=structure)
+        basin = labeled == labeled[min_idx]
+        weights[i] = boltz[basin].sum() * cell_vol
+
+    return interpolate.interp1d(
+        energies, weights, bounds_error=False, fill_value=(0.0, weights[-1])
+    ), v_min
+
+
+@timed
+def calculate_probability_under_barrier_ndim(
+    system: System, barrier_energy: float
+) -> float:
+    w_of_e, v_min = build_basin_weight_function(system, barrier_energy)
+    n, m = system.n_dim, system.m
+
+    # d^n p = S_{n-1} p^{n-1} dp,  S_{n-1} = 2 pi^{n/2} / Gamma(n/2)  (surface area of unit (n-1)-sphere)
+    surface_area = 2 * np.pi ** (n / 2) / gamma(n / 2)
+
+    def radial_integrand(p: float) -> float:
+        e_avail = barrier_energy - p**2 / (2 * m)
+        if e_avail < v_min:
+            return 0.0
+        ke_boltz = np.exp(-(p**2 / (2 * m)) / system.kbt)
+        return surface_area * p ** (n - 1) * ke_boltz * w_of_e(e_avail)
+
+    p_max = np.sqrt(2 * m * (barrier_energy - v_min))
+    numerator, _ = integrate.quad(radial_integrand, 0, p_max)
+
+    return numerator / calculate_partition_function_ndim(system)

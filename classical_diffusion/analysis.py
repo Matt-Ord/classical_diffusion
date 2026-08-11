@@ -78,13 +78,9 @@ def plot_isf(
     fig, ax = get_figure(ax)
 
     isf = get_isf(result.x_points, **kwargs)
-    if isf.ndim == 1:
-        avg_isf = isf
-        sem_isf = np.zeros_like(isf)
-    else:
-        n_trajectories = isf.shape[0]
-        avg_isf = np.mean(isf, axis=0)
-        sem_isf = np.std(isf, axis=0) / np.sqrt(n_trajectories)
+    n_trajectories = isf.shape[0]
+    avg_isf = np.mean(isf, axis=0)
+    sem_isf = np.std(isf, axis=0) / np.sqrt(n_trajectories)
 
     avg_data = get_measured_data(avg_isf, measure)
     sem_data = get_measured_data(sem_isf, measure)
@@ -128,7 +124,6 @@ def plot_isf_with_delta_k(
         avg_data = get_measured_data(avg_isf, measure)
         ax.plot(result.times, avg_data, color=cmap(norm(dk)))
 
-    ax.set_title("Intermediate Scattering Function Over Time")
     ax.set_xlabel("Time / s")
     ax.set_ylabel("ISF")
     fig.colorbar(
@@ -163,10 +158,27 @@ def plot_x_evolution(
         (line,) = ax.plot(result.times, result.x_points[trajectory, idx])
         lines.append(line)
 
-    ax.set_xlabel("$t / characteristic time$")
+    ax.set_xlabel("$time$")
     ax.set_ylabel("$x$")
 
     return fig, ax, lines
+
+
+def plot_single_x_evolution(
+    result: SimulationResult,
+    *,
+    ax: Axes | None = None,
+    idx: int = 0,
+) -> tuple[Figure, Axes, Line2D]:
+    """Plot x against t for the first n_trajectories trajectories."""
+    fig, ax = get_figure(ax)
+
+    (line,) = ax.plot(result.times, result.x_points[idx, :])
+
+    ax.set_xlabel("$time$")
+    ax.set_ylabel("$x$")
+
+    return fig, ax, line
 
 
 def plot_p_evolution(

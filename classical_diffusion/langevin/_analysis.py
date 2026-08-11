@@ -1,15 +1,18 @@
+import itertools
 from typing import TYPE_CHECKING, Any, cast
 
 import jax.numpy as jnp
 import numpy as np
-import sympy as sp
+from scipy.signal import butter, sosfiltfilt
 
 from classical_diffusion.langevin import (
     LangevinSimulationResult,
+    SingleLangevinSimulationResult,
     get_energy,
 )
 from classical_diffusion.plot import get_figure
 from classical_diffusion.system import PeriodicSystem1D, System
+from classical_diffusion.util import timed
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -17,6 +20,8 @@ if TYPE_CHECKING:
     from matplotlib.container import BarContainer
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
+
+import sympy as sp
 
 
 def _get_sampled_kinetic_energies[T: LangevinSimulationResult](
@@ -323,14 +328,12 @@ def _get_average_elastic_velocity(t: np.ndarray, x: np.ndarray) -> tuple:
     sty = np.sum(x * t, axis=-1)
 
     denom = n * stt - st**2
-    m = (n * sty - st * sy) / denom
-    c = sy - m * st / n
-    return m, c
+    return (n * sty - st * sy) / denom
 
 
 def _get_average_elastic_p(
     result: LangevinSimulationResult, *, max_samples: int = 100
-) -> tuple:
+) -> np.ndarray[Any, np.dtype[np.floating]]:
     """Return the elastic (ballistic straight-line) momentum estimate per trajectory across all dimensions."""
     n_times = len(result.times)
     n_samples = min(max_samples, n_times)
@@ -339,18 +342,19 @@ def _get_average_elastic_p(
     t_sampled = result.times[sample_indices]
     x_sampled = result.x_points[:, :, sample_indices]
 
-    v_elastic, x_0 = _get_average_elastic_velocity(t_sampled, x_sampled)
-    return v_elastic * result.system.m, x_0
+    v_elastic = _get_average_elastic_velocity(t_sampled, x_sampled)
+    return v_elastic * result.system.m
 
 
 def breakdown_ballistic_trajectory[S: System](
     result: LangevinSimulationResult[S],
 ) -> tuple[LangevinSimulationResult[S], LangevinSimulationResult[S]]:
     """Split a ballistic simulation into its elastic and inelastic components across all dimensions."""
-    p_elastic, x_0 = _get_average_elastic_p(result)
+    p_elastic = _get_average_elastic_p(result)
 
     # Broadcast p_elastic across time steps: (n_trajectories, n_dimensions, n_times)
     p_elastic_points = np.broadcast_to(p_elastic[..., None], result.p_points.shape)
+    x_0 = result.x_points[:, :, 0]
 
     # Calculate x_elastic(t) = x_0 + (p_elastic / m) * t across all spatial components
     x_elastic_points = p_elastic[..., None] * result.times / result.system.m + x_0
@@ -393,6 +397,27 @@ def plot_2d_trajectory(
     return fig, ax, lines
 
 
+def plot_2d_trajectory_single(
+    result: LangevinSimulationResult,
+    *,
+    ax: Axes | None = None,
+    start_step: float = 0,
+    end_step: float = 0,
+) -> tuple[Figure, Axes, Line2D]:
+    """Plot x against y for 2d trajectory."""
+    end_step = len(result.x_points) - end_step
+    fig, ax = get_figure(ax)
+
+    (line,) = ax.plot(
+        result.x_points[0, start_step:end_step], result.x_points[1, start_step:end_step]
+    )
+
+    ax.set_xlabel("$x$")
+    ax.set_ylabel("$y$")
+
+    return fig, ax, line
+
+
 def _partition_result(
     result: LangevinSimulationResult, mask: np.ndarray[Any, np.dtype[np.bool_]]
 ) -> tuple[
@@ -412,11 +437,12 @@ def get_evolution_trapped_probability(result: LangevinSimulationResult) -> np.nd
 
 def get_under_barrier_probability_ballistic(
     system: System, x_points: np.ndarray, p_points: np.ndarray, barrier_energy: float
-) -> np.ndarray:
+) -> float:
     """Return the probability of a particle being trapped under barrier."""
-    energies = get_energy(system, x_points, p_points)[:, 0]
-    is_over_barrier = energies < barrier_energy
-    return np.sum(is_over_barrier) / is_over_barrier.size
+    energies = get_energy(system, x_points, p_points)
+    energies = energies[:, 0]
+    is_under_barrier = energies < barrier_energy
+    return np.sum(is_under_barrier) / is_under_barrier.size
 
 
 def plot_probability_over_barrier(
@@ -438,32 +464,37 @@ def plot_probability_over_barrier(
     return fig, ax
 
 
-def get_effective_mass(result: LangevinSimulationResult) -> float:
+def get_effective_mass(elastic_result: LangevinSimulationResult) -> np.ndarray:
     """Return the effective mass matrix averaged over a full simulation."""
-    elastic_ps = _get_average_elastic_p(result=result)
-    elastic_p_sqaured = np.einsum("ti,tj->tij", elastic_ps, elastic_ps)
-    avg_elastic_p_squared = np.mean(elastic_p_sqaured, axis=0)
-    return (result.system.kbt * result.system.m**2) * np.linalg.inv(
-        avg_elastic_p_squared
+    elastic_ps = elastic_result.p_points
+    elastic_ps_squared = np.einsum("nit,njt->nijt", elastic_ps, elastic_ps)
+    avg_elastic_ps_squared = np.average(elastic_ps_squared, axis=(0, 3))
+
+    return (elastic_result.system.kbt * elastic_result.system.m**2) * np.linalg.inv(
+        avg_elastic_ps_squared
     )
 
 
 def get_full_effective_mass_from_free(
-    result: LangevinSimulationResult, prob_under_barrier: float
-) -> float:
+    elastic_result: LangevinSimulationResult,
+    prob_under_barrier: float,
+) -> np.ndarray:
     """Return the effective mass, correcting for trapped trajectories analytically."""
-    elastic_ps = _get_average_elastic_p(result=result)[:, -1]
-    avg_p2_given_escaped = np.average(elastic_ps**2, axis=0)
+    elastic_ps = elastic_result.p_points
+    elastic_ps_squared = np.einsum("nit,njt->nijt", elastic_ps, elastic_ps)
+    avg_elastic_ps_squared_given_escaped = np.average(elastic_ps_squared, axis=(0, 3))
 
     prob_escape = 1 - prob_under_barrier
 
-    return (result.system.kbt * result.system.m) / (prob_escape * avg_p2_given_escaped)
+    return (elastic_result.system.kbt * elastic_result.system.m**2) * np.linalg.inv(
+        avg_elastic_ps_squared_given_escaped * prob_escape
+    )
 
 
-def plot_effective_mass_ratio_periodic_1D(  # ruff:ignore[invalid-function-name]
-    effective_mass_ratio: np.ndarray[Any, np.dtype[np.floating]],
-    inertial_mass: np.ndarray[Any, np.dtype[np.floating]],
-    barrier_energy: np.ndarray[Any, np.dtype[np.floating]],
+def plot_2d_gradient(
+    x_values: np.ndarray[Any, np.dtype[np.floating]],
+    y_values: np.ndarray[Any, np.dtype[np.floating]],
+    z_values: np.ndarray[Any, np.dtype[np.floating]],
     *,
     ax: Axes | None = None,
 ) -> tuple[Figure, Axes, QuadMesh]:
@@ -471,16 +502,12 @@ def plot_effective_mass_ratio_periodic_1D(  # ruff:ignore[invalid-function-name]
     fig, ax = get_figure(ax)
 
     mesh = ax.pcolormesh(
-        barrier_energy,
-        inertial_mass,
-        effective_mass_ratio,
+        x_values,
+        y_values,
+        z_values,
         shading="auto",
         cmap="viridis",
     )
-    fig.colorbar(mesh, ax=ax, label="effective mass ratio")
-
-    ax.set_xlabel("Dimensionless Barrier energy")
-    ax.set_ylabel("Dimenesionless Inertial mass")
 
     return fig, ax, mesh
 
@@ -516,3 +543,191 @@ def split_escaped_and_trapped(
         system=result.system,
     )
     return free, trapped
+
+
+MIN_SPLIT_POINTS = 4
+MIN_VARIANCE = 1e-15
+
+
+def filter_trajectory_kv(
+    x: np.ndarray[tuple[int, ...], np.dtype[np.floating]],
+    *,
+    min_split_points: int = MIN_SPLIT_POINTS,
+) -> np.ndarray[tuple[int, ...], np.dtype[np.float64]]:
+    """Discretize a 1D or 2D signal using the objective Kalafut-Visscher step detection algorithm."""
+    x = x[:, np.newaxis] if x.ndim == 1 else x
+
+    n_samples = x.shape[0]
+    breakpoints = [0, n_samples]
+    stack = [(0, n_samples)]
+
+    while stack:
+        start, end = stack.pop()
+        n_seg = end - start
+
+        if n_seg <= min_split_points:
+            continue
+
+        segment = x[start:end]
+        total_sum = np.sum(segment, axis=0)  # Shape (D,)
+        total_sum_x2 = np.sum(segment**2)  # Scalar sum of all elements squared
+
+        # Calculate local baseline variance across dimensions before splitting
+        base_mu = total_sum / n_seg  # Shape (D,)
+        base_ssr = (
+            total_sum_x2 - 2 * np.sum(base_mu * total_sum) + n_seg * np.sum(base_mu**2)
+        )
+        base_variance = base_ssr / n_seg
+        if base_variance <= MIN_VARIANCE:
+            continue
+
+        indices = np.arange(2, n_seg - 1)
+        n_right_arr = n_seg - indices
+
+        # Vectorized segment cumulative sums across time for all dimensions: shape (K, D)
+        cum_sum_left = np.cumsum(segment, axis=0)[indices - 1]
+        cum_sum_right = total_sum - cum_sum_left
+
+        # Mean vectors for left and right partitions: shape (K, D)
+        mu_left = cum_sum_left / indices[:, None]
+        mu_right = cum_sum_right / n_right_arr[:, None]
+
+        # Vectorized sum of squared residuals reduced across spatial dimensions (axis=1)
+        split_ssr = (
+            total_sum_x2
+            - 2 * np.sum(mu_left * cum_sum_left, axis=1)
+            + indices * np.sum(mu_left**2, axis=1)
+            - 2 * np.sum(mu_right * cum_sum_right, axis=1)
+            + n_right_arr * np.sum(mu_right**2, axis=1)
+        )
+        split_variances = split_ssr / n_seg
+        split_variances = np.maximum(split_variances, MIN_VARIANCE)
+
+        # Objective Criterion: delta_sic > 0 means the split is justified by the data
+        delta_sic = n_seg * np.log(base_variance / split_variances) - np.log(n_seg)
+        best_idx = np.argmax(delta_sic)
+
+        if delta_sic[best_idx] > 0:
+            global_split_point = start + indices[best_idx]
+            breakpoints.append(global_split_point)
+            stack.extend([(start, global_split_point), (global_split_point, end)])
+
+    # Reconstruct the final de-noised piece-wise constant path
+    breakpoints = sorted(set(breakpoints))
+    fitted_trajectory = np.zeros_like(x, dtype=np.float64)
+
+    for b_start, b_end in itertools.pairwise(breakpoints):
+        fitted_trajectory[b_start:b_end] = np.mean(x[b_start:b_end], axis=0)
+
+    return fitted_trajectory
+
+
+def breakdown_filtered_ballistic_trajectory[S: System](
+    result: SingleLangevinSimulationResult[S], *, minimum_timescale: float = 0
+) -> tuple[
+    SingleLangevinSimulationResult[S],
+    SingleLangevinSimulationResult[S],
+]:
+    """Split a ballistic simulation into its elastic and inelastic components across all dimensions."""
+    dt = result.times[1] - result.times[0]
+    min_split_points = max(4, int(minimum_timescale / dt))
+
+    p_points = result.p_points
+    p_elastic_points = filter_trajectory_kv(
+        p_points.T, min_split_points=min_split_points
+    ).T
+
+    # Initial positions x_0: shape (n_trajectories, n_dimensions, 1)
+    x_0 = result.x_points[..., :1]
+
+    # Calculate x_elastic(t) = x_0 + (p_elastic / m) * t across all spatial components
+    dt = result.times[1] - result.times[0]
+    displacements = (p_elastic_points / result.system.m) * dt
+
+    # Prepend zero at t=0 so initial position x_elastic(t_0) == x_0
+    step_displacements = np.concatenate(
+        [np.zeros_like(x_0), displacements[..., :-1]], axis=-1
+    )
+    x_elastic_points = x_0 + np.cumsum(step_displacements, axis=-1)
+
+    elastic = SingleLangevinSimulationResult(
+        times=result.times,
+        x_points=x_elastic_points,
+        p_points=p_elastic_points,
+        system=result.system,
+    )
+
+    inelastic = SingleLangevinSimulationResult(
+        times=result.times,
+        x_points=result.x_points - x_elastic_points,
+        p_points=result.p_points - p_elastic_points,
+        system=result.system,
+    )
+    return elastic, inelastic
+
+
+@timed
+def breakdown_filtered_ballistic_trajectory_butterworth[S: System](
+    result: SingleLangevinSimulationResult[S], *, minimum_timescale: float = 0
+) -> tuple[
+    SingleLangevinSimulationResult[S],
+    SingleLangevinSimulationResult[S],
+]:
+    """Split a ballistic simulation into its elastic (slow) and inelastic (fast) components."""
+    times = result.times
+    dt = times[1] - times[0]
+
+    # Changes slower than minimum_timescale correspond to frequencies f < 1 / minimum_timescale.
+    # High frequencies are filtered out to yield the elastic (slow) component.
+    fs = 1.0 / dt
+    cutoff_freq = 1.0 / max(minimum_timescale, 1e-5 * dt)
+    nyquist = 0.5 * fs
+
+    if cutoff_freq < nyquist:
+        sos = butter(N=4, Wn=cutoff_freq / nyquist, btype="low", output="sos")
+
+        # Low-pass filter both momentum and position along the time axis (axis=-1)
+        # cspell: disable-next-line  # ruff: ignore[commented-out-code]
+        p_elastic_points = sosfiltfilt(sos, result.p_points, axis=-1)
+        # Since the filter is a linear operation, it commutes with integration
+        # So, filtering the position is equivalent to integrating the filtered momentum
+        # cspell: disable-next-line  # ruff: ignore[commented-out-code]
+        x_elastic_points = sosfiltfilt(sos, result.x_points, axis=-1)
+    else:
+        p_elastic_points = result.p_points.copy()
+        x_elastic_points = result.x_points.copy()
+
+    elastic = SingleLangevinSimulationResult(
+        times=result.times,
+        x_points=x_elastic_points,
+        p_points=p_elastic_points,
+        system=result.system,
+    )
+
+    inelastic = SingleLangevinSimulationResult(
+        times=result.times,
+        x_points=result.x_points - x_elastic_points,
+        p_points=result.p_points - p_elastic_points,
+        system=result.system,
+    )
+    return elastic, inelastic
+
+
+def plot_effective_mass_ratio(
+    barrier_energy: np.ndarray[Any, np.dtype[np.floating[Any]]],
+    mass_ratio: np.ndarray[Any, np.dtype[np.floating[Any]]],
+    *,
+    ax: Axes | None = None,
+) -> tuple[Figure, Axes, Line2D]:
+    """Plot the ratio of effective mass to inertial mass against barrier energy."""
+    fig, ax = get_figure(ax)
+
+    (line,) = ax.plot(barrier_energy, mass_ratio[0])
+    line.set_label("Effective mass ratio")
+
+    ax.set_title("Effective Mass Ratio vs Barrier Energy")
+    ax.set_xlabel("Barrier Energy")
+    ax.set_ylabel(r"$m_{\mathrm{eff}} / m$")
+    ax.legend()
+
+    return fig, ax, line

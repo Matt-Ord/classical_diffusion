@@ -324,7 +324,7 @@ def sample_x_initial_1d(
         def logpdf(x: float) -> float:
             return -potential_fn(x, *params) / kbt
 
-    x_sampler = NumericalInversePolynomial(XDensity(), domain=system.sampling_domain)
+    x_sampler = NumericalInversePolynomial(XDensity(), domain=system.sampling_domain[0])
     return x_sampler.rvs(size=n_samples).reshape(n_samples, system.n_dim)
 
 

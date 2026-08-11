@@ -156,7 +156,12 @@ class System:
         return self.units.Boltzmann * self.temperature
 
     @property
-    def sampling_domain(self) -> tuple[float, float]:
+    def lattice_vectors(self) -> np.ndarray:
+        """Primitive lattice vectors (as columns). Identity for a Cartesian/square domain."""
+        return np.eye(self.n_dim)
+
+    @property
+    def sampling_domain(self) -> tuple:
         """The domain over which the equilibrium x-density should be sampled."""
         return (-np.inf, np.inf)
 
@@ -340,9 +345,9 @@ class PeriodicSystem1D(System):
 
     @override
     @property
-    def sampling_domain(self) -> tuple[float, float]:
+    def sampling_domain(self) -> tuple:
         """The domain over which the equilibrium x-density should be sampled."""
-        return (-self.delta_x / 2, self.delta_x / 2)
+        return ((-self.delta_x / 2, self.delta_x / 2),)
 
     def get_normalized_units(self) -> UnitSystem:
         """Return the units suited to a simulation of the system."""
@@ -405,7 +410,7 @@ def _get_potential_expr_fcc() -> sp.Expr:
 
     cos_sum = sp.cos(arg1) + sp.cos(arg2) + sp.cos(arg3)
 
-    return 2.0 * s1 * cos_sum
+    return 2.0 * s1 * cos_sum + 3.0 * s1
 
 
 class PeriodicSystemFCC(System):
@@ -443,27 +448,31 @@ class PeriodicSystemFCC(System):
         return self.params[1]
 
     @override
-    def with_gamma(self, gamma: float) -> PeriodicSystem1D:
-        return PeriodicSystem1D(
+    def with_gamma(self, gamma: float) -> PeriodicSystemFCC:
+        return PeriodicSystemFCC(
             gamma=gamma,
             temperature=self.temperature,
             m=self.m,
             delta_x=self.delta_x,
             barrier_energy=self.barrier_energy,
-            n_dim=self.n_dim,
             units=self.units,
         )
 
     @override
     @property
-    def sampling_domain(self) -> tuple[float, float, float, float]:
-        """The domain over which the equilibrium x-density should be sampled."""
+    def sampling_domain(self) -> tuple:
+        """Fractional coordinate domain spanning one primitive cell."""
         return (
-            -self.delta_x / 2,
-            self.delta_x / 2,
-            -self.delta_x / 2,
-            self.delta_x / 2,
+            (0, 1),
+            (0, 1),
         )
+
+    @property
+    def lattice_vectors(self) -> np.ndarray:
+        """Primitive lattice vectors (as columns) for the hexagonal unit cell."""
+        a1 = np.array([0.0, np.sqrt(3.0) * self.delta_x])
+        a2 = np.array([1.5 * self.delta_x, np.sqrt(3.0) / 2.0 * self.delta_x])
+        return np.stack([a1, a2], axis=1)
 
     def get_normalized_units(self) -> UnitSystem:
         """Return the units suited to a simulation of the system."""
@@ -473,37 +482,35 @@ class PeriodicSystemFCC(System):
             atomic_mass=self.units.atomic_mass / self.m,
         )
 
-    def with_normalized_units(self) -> PeriodicSystem1D:
+    def with_normalized_units(self) -> PeriodicSystemFCC:
         """Return the normalized parameters of the simulation."""
         normalized_units = self.get_normalized_units()
         length_factor = normalized_units.angstrom / self.units.angstrom
         mass_factor = normalized_units.atomic_mass / self.units.atomic_mass
         energy_factor = normalized_units.Boltzmann / self.units.Boltzmann
         time_factor = np.sqrt(length_factor**2 * mass_factor / energy_factor)
-        return PeriodicSystem1D(
+        return PeriodicSystemFCC(
             gamma=self.gamma / time_factor,
             temperature=self.temperature,
             m=self.m * mass_factor,
             delta_x=self.delta_x * length_factor,
             barrier_energy=self.barrier_energy * energy_factor,
-            n_dim=self.n_dim,
             units=normalized_units,
         )
 
-    def with_si_units(self) -> PeriodicSystem1D:
+    def with_si_units(self) -> PeriodicSystemFCC:
         """Return the si parameters of the system."""
         si_units = UnitSystem()
         length_factor = si_units.angstrom / self.units.angstrom
         mass_factor = si_units.atomic_mass / self.units.atomic_mass
         energy_factor = si_units.Boltzmann / self.units.Boltzmann
         time_factor = np.sqrt(length_factor**2 * mass_factor / energy_factor)
-        return PeriodicSystem1D(
+        return PeriodicSystemFCC(
             gamma=self.gamma / time_factor,
             temperature=self.temperature,
             m=self.m * mass_factor,
             delta_x=self.delta_x * length_factor,
             barrier_energy=self.barrier_energy * energy_factor,
-            n_dim=self.n_dim,
             units=si_units,
         )
 
@@ -565,13 +572,11 @@ class PeriodicSquareSystem1D(System):
 
     @override
     @property
-    def sampling_domain(self) -> tuple[float, float, float, float]:
+    def sampling_domain(self) -> tuple:
         """The domain over which the equilibrium x-density should be sampled."""
         return (
-            -self.delta_x / 2,
-            self.delta_x / 2,
-            -self.delta_x / 2,
-            self.delta_x / 2,
+            (-self.delta_x / 2, self.delta_x / 2),
+            (-self.delta_x / 2, self.delta_x / 2),
         )
 
     def get_normalized_units(self) -> UnitSystem:
@@ -651,7 +656,7 @@ class PeriodicSquareSystem2D(System):
             temperature=temperature,
             m=m,
             potential=(n_dim, potential),
-            params=(delta_x, barrier_energy, delta),
+            params=(delta_x, barrier_energy, delta, k),
             units=units,
         )
 
@@ -688,7 +693,7 @@ class PeriodicSquareSystem2D(System):
     @property
     def sampling_domain(self) -> tuple[float, float]:
         """The domain over which the equilibrium x-density should be sampled."""
-        return (-self.delta_x / 2, self.delta_x / 2)
+        return ((-self.delta_x / 2), (self.delta_x / 2))
 
     def get_normalized_units(self) -> UnitSystem:
         """Return the units suited to a simulation of the system."""
@@ -712,6 +717,7 @@ class PeriodicSquareSystem2D(System):
             delta_x=self.delta_x * length_factor,
             barrier_energy=self.barrier_energy * energy_factor,
             delta=self.delta * length_factor,
+            k=self.k,
             n_dim=self.n_dim,
             units=normalized_units,
         )

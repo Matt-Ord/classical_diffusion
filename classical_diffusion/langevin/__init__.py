@@ -1,7 +1,7 @@
 """Langevin Simulations of a Physical System."""
 
 from ._system_analysis import (  # ruff:ignore[unsorted-imports]
-    calculate_probability_under_barrier,
+    calculate_probability_under_barrier_1d,
     get_free_effective_mass_exact_1d_periodic,
     get_full_effective_mass_exact_1d_periodic,
     make_free_point_sampler,
@@ -9,6 +9,7 @@ from ._system_analysis import (  # ruff:ignore[unsorted-imports]
     plot_exact_offset_gaussian_isf,
     plot_periodic_potential_1d,
     get_energy,
+    get_energy_single,
     plot_energy,
     get_full_effective_mass_exact_1d_periodic_directly,
     get_full_effective_mass_exact_1d_square_periodic_directly,
@@ -21,6 +22,7 @@ from ._system_analysis import (  # ruff:ignore[unsorted-imports]
     plot_exact_flat_isf,
     plot_exact_harmonic_isf,
     plot_periodic_potential_fcc,
+    calculate_probability_under_barrier_ndim,
 )
 
 from ._langevin import (
@@ -37,14 +39,17 @@ from ._analysis import (
     breakdown_ballistic_trajectory,
     get_effective_mass,
     get_full_effective_mass_from_free,
-    get_under_barrier_probability_ballistic,
     plot_2d_trajectory,
-    plot_effective_mass_ratio_periodic_1D,
+    plot_2d_gradient,
     plot_kinetic_probability,
     plot_p_histogram,
     plot_phase_space_density,
     plot_x_histogram,
     split_escaped_and_trapped,
+    breakdown_filtered_ballistic_trajectory_butterworth,
+    plot_effective_mass_ratio,
+    plot_2d_trajectory_single,
+    get_under_barrier_probability_ballistic,
 )
 
 __all__ = [
@@ -52,9 +57,12 @@ __all__ = [
     "SingleLangevinSimulationResult",
     "add_periodic_grid",
     "breakdown_ballistic_trajectory",
-    "calculate_probability_under_barrier",
+    "breakdown_filtered_ballistic_trajectory_butterworth",
+    "calculate_probability_under_barrier_1d",
+    "calculate_probability_under_barrier_ndim",
     "get_effective_mass",
     "get_energy",
+    "get_energy_single",
     "get_free_effective_mass_exact_1d_periodic",
     "get_free_effective_mass_exact_1d_periodic_directly",
     "get_full_effective_mass_exact_1d_periodic",
@@ -67,8 +75,10 @@ __all__ = [
     "get_under_barrier_probability_ballistic",
     "make_free_point_sampler",
     "make_initial_conditions_sampler",
+    "plot_2d_gradient",
     "plot_2d_trajectory",
-    "plot_effective_mass_ratio_periodic_1D",
+    "plot_2d_trajectory_single",
+    "plot_effective_mass_ratio",
     "plot_energy",
     "plot_exact_flat_isf",
     "plot_exact_gaussian_isf",
