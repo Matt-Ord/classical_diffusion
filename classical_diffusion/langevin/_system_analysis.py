@@ -44,7 +44,6 @@ def plot_potential_1d(
     potential = np.broadcast_to(potential_func(*points.T, *params.params), (n_points,))
 
     distances = np.linalg.norm(start) + t * np.linalg.norm(delta)
-
     (line,) = ax.plot(distances, potential)
 
     ax.set_xlabel(r"x")

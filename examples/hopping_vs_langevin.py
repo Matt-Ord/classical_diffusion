@@ -6,7 +6,11 @@ from classical_diffusion.hopping import Lattice1D, solve_ensemble
 from classical_diffusion.hopping._system import (
     get_kramers_lattice_harmonic,
 )
-from classical_diffusion.langevin import PeriodicSystem1D, solve_overdamped_ensemble
+from classical_diffusion.langevin import (
+    PeriodicSystem1D,
+    plot_potential_1d,
+    solve_overdamped_ensemble,
+)
 from classical_diffusion.langevin._system import DoubleHarmonicSystem
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.simulation import TimeSpan
@@ -110,7 +114,13 @@ def _kramers_test() -> None:
         temperature=0.5,
         m=1.0,
         barrier_energy=3,
+        omega_a=3,
+        omega_b=1,
     )
+
+    fig, ax = get_fancy_figure()
+    fig, _ax, _ = plot_potential_1d(system, 0, 10, ax=ax)
+    fig.savefig("./examples/1d_harmonic_potential.pdf")
 
     lattice = get_kramers_lattice_harmonic(system)
     print(f"hop time = {lattice.hop_time}")
@@ -124,71 +134,6 @@ def _kramers_test() -> None:
     )
 
 
-def benchmark(
-    system: PeriodicSystem1D,
-) -> None:
-
-    time_span = TimeSpan(t_end=4, n_steps=400)
-    initial_condition: np.ndarray = np.full((2, 1), 0.0)
-
-    solve_overdamped_ensemble.call_uncached(
-        system,
-        time_span,
-        (initial_condition, np.full(initial_condition.shape, 0.0)),
-        _key=jax.random.PRNGKey(seed=100),
-    )
-
-    solve_overdamped_ensemble.call_uncached(
-        system,
-        time_span,
-        (initial_condition, np.full(initial_condition.shape, 0.0)),
-        _key=jax.random.PRNGKey(seed=100),
-    )
-
-    initial_condition: np.ndarray = np.full((50, 1), 0.0)
-    time_span = TimeSpan(t_end=400, n_steps=100)
-
-    solve_overdamped_ensemble.call_uncached(
-        system,
-        time_span,
-        (initial_condition, np.full(initial_condition.shape, 0.0)),
-        _key=jax.random.PRNGKey(seed=100),
-    )
-
-    solve_overdamped_ensemble.call_uncached(
-        system,
-        time_span,
-        (initial_condition, np.full(initial_condition.shape, 0.0)),
-        _key=jax.random.PRNGKey(seed=100),
-    )
-
-    time_span = TimeSpan(t_end=400, n_steps=4000)
-    initial_condition: np.ndarray = np.full((2, 1), 0.0)
-
-    solve_overdamped_ensemble.call_uncached(
-        system,
-        time_span,
-        (initial_condition, np.full(initial_condition.shape, 0.0)),
-        _key=jax.random.PRNGKey(seed=100),
-    )
-
-    solve_overdamped_ensemble.call_uncached(
-        system,
-        time_span,
-        (initial_condition, np.full(initial_condition.shape, 0.0)),
-        _key=jax.random.PRNGKey(seed=100),
-    )
-
-
 if __name__ == "__main__":
     print("running")
-    # benchmark(
-    #     system=PeriodicSystem1D(
-    #         gamma=0.1,
-    #         temperature=0.5,
-    #         m=1.0,
-    #         delta_x=5,
-    #         barrier_energy=3,
-    #     )
-    # )
     _kramers_test()

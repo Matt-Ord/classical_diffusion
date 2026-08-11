@@ -158,6 +158,9 @@ class HarmonicSystem(System):
 class DoubleHarmonicSystem(System):
     """Parameters representing a periodic double harmonic system."""
 
+    _omega_a: float
+    _omega_b: float
+
     def __init__(
         self,
         *,
@@ -165,32 +168,36 @@ class DoubleHarmonicSystem(System):
         temperature: float,
         m: float,
         barrier_energy: float,
+        omega_a: float,
+        omega_b: float,
         n_dim: int = 1,
     ) -> None:
-        x, s1 = sp.symbols("x s1")
-        x1 = sp.sqrt(2 / (s1 * 1 + s1**2))
-        x_peak = sp.sqrt(2 * (1 + s1**2) / s1)
-        length = 2 * x_peak
-        x_cell = sp.Mod(x + x_peak, length) - x_peak
+        x0 = sp.symbols("x0")
+        s0 = sp.symbols("s0")
+        s1 = sp.symbols("s1")
+        s2: Any = sp.symbols("s2")
+
+        omegas_ss = s0**2 + s1**2  # Omegas squared sum
+        x_0 = sp.sqrt((2 * omegas_ss * s2) / (omegas_ss * s1**2 - s1**4))
+        x_meet = (s1**2 / omegas_ss) * x_0
+
+        periodic_x = sp.Mod(x0 + x_meet, 2 * x_0) - x_meet
+
         potential = sp.Piecewise(
-            (0.5 * s1**2 * x_cell**2, sp.Abs(x_cell) <= x1),
-            (-0.5 * (sp.Abs(x_cell) - x_peak) ** 2 + s1, True),
+            (0.5 * s0**2 * periodic_x**2, periodic_x <= x_meet),
+            (
+                s2 - 0.5 * s1**2 * (periodic_x - x_0) ** 2,
+                periodic_x >= x_meet,
+            ),
+            (0, True),
         )
-
-        # --- Verification ---
-        v1_join = 0.5 * s1**2 * x1**2
-        v2_join = -0.5 * (x1 - x_peak) ** 2 + s1
-
-        print("v1 at join point:", sp.simplify(v1_join))
-        print("v2 at join point:", sp.simplify(v2_join))
-        print("Are values equal?", sp.simplify(v1_join - v2_join) == 0)
 
         super().__init__(
             gamma=gamma,
             temperature=temperature,
             m=m,
             potential=(n_dim, potential),
-            params=(barrier_energy,),
+            params=(omega_a, omega_b, barrier_energy),
         )
 
     @property
@@ -204,6 +211,11 @@ class DoubleHarmonicSystem(System):
         """The barrier energy of the system."""
         return self.params[0]
 
+    @property
+    def omegas(self) -> tuple[float, float]:
+        """The harmonic frequencies of the system."""
+        return self.params[1], self.params[2]
+
     @override
     def with_gamma(self, gamma: float) -> DoubleHarmonicSystem:
         return DoubleHarmonicSystem(
@@ -211,6 +223,8 @@ class DoubleHarmonicSystem(System):
             temperature=self.temperature,
             m=self.m,
             barrier_energy=self.barrier_energy,
+            omega_a=self._omega_a,
+            omega_b=self._omega_b,
             n_dim=self.n_dim,
         )
 
