@@ -8,6 +8,7 @@ from classical_diffusion.langevin import (
     plot_exact_harmonic_isf,
     solve_ensemble,
 )
+from classical_diffusion.langevin._system import DoubleHarmonicSystem
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.simulation import TimeSpan
 
@@ -15,12 +16,19 @@ from classical_diffusion.simulation import TimeSpan
 def _plot_harmonic_isf() -> None:
     key = jrandom.PRNGKey(100)
 
-    system = HarmonicSystem(gamma=0.1, temperature=0.5, m=1.0, omega=1.54)
+    system = DoubleHarmonicSystem(
+        gamma=0.1,
+        temperature=0.5,
+        m=1.0,
+        barrier_energy=3,
+        omega_a=3,
+        omega_b=1,
+    )
 
     result = solve_ensemble(
         system,
         TimeSpan(
-            t_end=50 / system.gamma,
+            t_end=100,
             n_steps=5000,
         ),
         (np.full((200, 1), 0.0), np.full((200, 1), 0.0)),
@@ -39,7 +47,7 @@ def _plot_harmonic_isf() -> None:
 
     ax.axhline(
         y=np.exp(
-            -(delta_k[0] ** 2) * system.temperature / (system.m * system.omega**2)
+            -(delta_k[0] ** 2) * system.temperature / (system.m * system.omegas[0] ** 2)
         ),
         linestyle=":",
         color="black",

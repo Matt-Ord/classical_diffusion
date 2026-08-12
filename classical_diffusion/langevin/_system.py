@@ -78,6 +78,7 @@ class System:
             m=self.m,
             potential=self.potential,
             params=self.params,
+            force=self.force_expr,
         )
 
     def __hash__(self) -> int:
@@ -112,6 +113,8 @@ class CanonicalSystem(System):
     """Parameters representing a physical system."""
 
     potential: tuple[int, sp.Expr] = field(metadata={"static": True})
+
+    force: list[sp.Expr] = field(metadata={"static": True})
 
 
 class HarmonicSystem(System):
@@ -175,7 +178,7 @@ class DoubleHarmonicSystem(System):
         x0 = sp.symbols("x0")
         s0 = sp.symbols("s0")
         s1 = sp.symbols("s1")
-        s2: Any = sp.symbols("s2")
+        s2 = sp.symbols("s2")
 
         omegas_ss = s0**2 + s1**2  # Omegas squared sum
         x_0 = sp.sqrt((2 * omegas_ss * s2) / (omegas_ss * s1**2 - s1**4))
@@ -203,18 +206,23 @@ class DoubleHarmonicSystem(System):
     @property
     def delta_x(self) -> float:
         """The delta x of the system."""
-        x_peak = sp.sqrt(2 * (1 + self.barrier_energy**2) / self.barrier_energy)
-        return 2 * x_peak
+        omega_a, omega_b = self.omegas
+        omegas_ss = omega_a**2 + omega_b**2  # Omegas squared sum
+        x_0 = sp.sqrt(
+            (2 * omegas_ss * self.barrier_energy)
+            / (omegas_ss * omega_b**2 - omega_b**4)
+        )
+        return float(2 * x_0)
 
     @property
     def barrier_energy(self) -> float:
         """The barrier energy of the system."""
-        return self.params[0]
+        return self.params[2]
 
     @property
     def omegas(self) -> tuple[float, float]:
         """The harmonic frequencies of the system."""
-        return self.params[1], self.params[2]
+        return self.params[0], self.params[1]
 
     @override
     def with_gamma(self, gamma: float) -> DoubleHarmonicSystem:
@@ -227,6 +235,32 @@ class DoubleHarmonicSystem(System):
             omega_b=self._omega_b,
             n_dim=self.n_dim,
         )
+
+    @override
+    @cached_property
+    def force_expr(self) -> list[sp.Expr]:
+        """The symbolic force of the system."""
+        x0 = sp.symbols("x0")
+        s0 = sp.symbols("s0")
+        s1 = sp.symbols("s1")
+        s2 = sp.symbols("s2")
+
+        omegas_ss = s0**2 + s1**2  # Omegas squared sum
+        x_0 = sp.sqrt((2 * omegas_ss * s2) / (omegas_ss * s1**2 - s1**4))
+        x_meet = (s1**2 / omegas_ss) * x_0
+
+        periodic_x = sp.Mod(x0 + x_meet, 2 * x_0) - x_meet
+
+        derivative = sp.Piecewise(
+            (s0**2 * periodic_x, periodic_x <= x_meet),
+            (
+                -(s1**2) * (periodic_x - x_0),
+                periodic_x >= x_meet,
+            ),
+            (0, True),
+        )
+
+        return [-1 * derivative]
 
 
 class PeriodicSystem1D(System):

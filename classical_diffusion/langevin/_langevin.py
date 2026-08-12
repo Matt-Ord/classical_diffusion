@@ -60,10 +60,10 @@ class LangevinSimulationResult[S: System](SimulationResult[S]):
 
 
 def _get_force_fn(
-    system: System,
+    system: CanonicalSystem,
 ) -> Callable[[jnp.ndarray, tuple[float, ...]], jnp.ndarray]:
     """Compute a callable force function, taking and returning an array."""
-    raw_fn = sp.lambdify(system.lambda_symbols, system.force_expr, "jax")
+    raw_fn = sp.lambdify(system.lambda_symbols, system.force, "jax")
     return lambda x_array, params: jnp.array(raw_fn(*x_array, *params))
 
 

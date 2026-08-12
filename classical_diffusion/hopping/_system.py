@@ -216,14 +216,14 @@ def get_kramers_lattice_harmonic(system: DoubleHarmonicSystem) -> Lattice1D:
     """Potential must be periodic."""
     gamma = system.gamma
     kBT = system.kbt
-    mass = system.m
     barrier_energy = system.barrier_energy
-    delta_x = system.delta_x
+    omega_min, omega_max = system.omegas
+    delta_x = float(system.delta_x)
 
     amplitude = barrier_energy
-    omega_max = barrier_energy / jnp.sqrt(mass)
     rate = float(
-        (omega_max**2) / (2 * jnp.pi * mass * gamma) * jnp.exp(-amplitude / kBT)
+        (omega_min * omega_max) / (2 * jnp.pi * gamma) * jnp.exp(-amplitude / kBT)
     )
+    print(rate)
 
     return Lattice1D(lattice_spacing=delta_x, hop_time=1.0 / rate)
