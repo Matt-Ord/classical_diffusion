@@ -49,9 +49,6 @@ def get_isf(
         )
         return np.exp(1j * phase)
 
-    delta_k = (float(delta_k[0]),)
-    positions = np.asarray(positions, dtype=np.float64)
-
     scatter = np.exp(-1j * np.einsum("i,...ij->...j", delta_k, positions))
 
     # convolution_j = \sum_i^N-j e^(ik.x_i+j) e^(-ik.x_i)

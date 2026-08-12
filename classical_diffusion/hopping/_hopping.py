@@ -113,11 +113,11 @@ def solve_ensemble[L: Lattice = Lattice](
     """Solve the hopping ensemble."""
     keys = jax.random.split(key, initial_condition.shape[0])
     times = jnp.linspace(time_span.t_start, time_span.t_end, time_span.n_steps)
-    a = system.as_canonical()
+
     results = jax.vmap(
         _run_hopping_simulation_jit,
         in_axes=(None, 0, None, 0),
-    )(a, initial_condition, times, keys)
+    )(system.as_canonical(), initial_condition, times, keys)
 
     return HoppingSimulationResult[L](
         system=system,

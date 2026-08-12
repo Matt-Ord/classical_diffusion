@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from matplotlib.lines import Line2D
 
     from classical_diffusion.langevin._system import (
-        DoubleHarmonicSystem,
+        HarmonicSystem,
         PeriodicSystem1D,
         PeriodicSystemFCC,
         System,
@@ -44,6 +44,7 @@ def plot_potential_1d(
     potential = np.broadcast_to(potential_func(*points.T, *params.params), (n_points,))
 
     distances = np.linalg.norm(start) + t * np.linalg.norm(delta)
+
     (line,) = ax.plot(distances, potential)
 
     ax.set_xlabel(r"x")
@@ -132,17 +133,17 @@ def plot_periodic_potential_fcc(
 
 
 def get_exact_harmonic_isf(
-    system: DoubleHarmonicSystem,
+    system: HarmonicSystem,
     delta_k: tuple[float,],
     times: np.ndarray[Any, np.dtype[np.floating[Any]]],
 ) -> np.ndarray:
     """Return the exact ISF for simulation."""
     gamma, temp, m = system.gamma, system.temperature, system.m
-    f = np.sqrt(system.omegas[0] ** 2 - gamma**2 / 4)
+    f = np.sqrt(system.omega**2 - gamma**2 / 4)
 
     return np.exp(
         -(delta_k[0] ** 2)
-        * ((1.0 * temp) / (m * system.omegas[0] ** 2))
+        * ((1.0 * temp) / (m * system.omega**2))
         * (
             1
             - np.exp(-gamma * times / 2)
@@ -152,7 +153,7 @@ def get_exact_harmonic_isf(
 
 
 def plot_exact_harmonic_isf(
-    system: DoubleHarmonicSystem,
+    system: HarmonicSystem,
     delta_k: tuple[float,],
     times: np.ndarray[Any, np.dtype[np.floating[Any]]] | None = None,
     *,
