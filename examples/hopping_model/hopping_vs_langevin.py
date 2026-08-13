@@ -81,7 +81,7 @@ def _plot_hop_vs_langevin_isf(
     delta_k: tuple[float,],
     time_span: TimeSpan = default_time_span,
     initial_condition: np.ndarray = default_init_condition,
-) -> None:
+) -> tuple[Figure, Axes]:
     lattice, system = systems
 
     # First, Hopping model with Kramer's rates
