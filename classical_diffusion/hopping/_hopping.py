@@ -33,8 +33,8 @@ class HoppingSimulationResult[L: Lattice](SimulationResult[L]):
 @dataclass(frozen=True, kw_only=True)
 class DeterministicSolverResult[L: Lattice]:
     system: L
-    times: np.ndarray[tuple[int], jnp.dtype[jnp.float64]]
-    probabilities: np.ndarray[tuple[int, int], jnp.dtype[jnp.float64]]
+    times: np.ndarray[tuple[int], np.dtype[np.float32]]
+    probabilities: np.ndarray[tuple[int, int], np.dtype[np.float32]]
 
 
 @jax.jit
@@ -133,7 +133,7 @@ def _get_deterministic_probabilities_jit[L: Lattice](
     hop_sites: jnp.ndarray,
     hop_rates: jnp.ndarray,
 ) -> jnp.ndarray:
-    """Use deterministic formula to return the ISF, inefficiently."""
+    """Use deterministic formula to return the ISF, efficiently."""
     total_outgoing_rates = jnp.sum(hop_rates, axis=-1)
 
     def vector_field(

@@ -1,6 +1,6 @@
 """Langevin Simulations of a Physical System."""
 
-from ._langevin import (  # ruff:ignore[unsorted-imports]
+from classical_diffusion.langevin._langevin import (  # ruff:ignore[unsorted-imports]
     solve_ensemble,
     solve_single,
     solve_ballistic_ensemble,
@@ -9,7 +9,7 @@ from ._langevin import (  # ruff:ignore[unsorted-imports]
     solve_overdamped_ensemble,
 )
 
-from ._analysis import (
+from classical_diffusion.langevin._analysis import (
     plot_elastic_p,
     plot_p_histogram,
     plot_phase_space_density,
@@ -23,14 +23,15 @@ from ._analysis import (
     plot_effective_mass_periodic_1D,
     split_escaped_and_trapped,
 )
-from ._system import (
+from classical_diffusion.langevin._system import (
     CanonicalSystem,
     HarmonicSystem,
+    KramersSystem1D,
     PeriodicSystem1D,
     PeriodicSystemFCC,
     System,
 )
-from ._system_analysis import (
+from classical_diffusion.langevin._system_analysis import (
     get_characteristic_friction_time,
     plot_exact_flat_isf,
     plot_exact_gaussian_isf,
@@ -45,6 +46,7 @@ from ._system_analysis import (
 __all__ = [
     "CanonicalSystem",
     "HarmonicSystem",
+    "KramersSystem1D",
     "LangevinSimulationResult",
     "PeriodicSystem1D",
     "PeriodicSystemFCC",

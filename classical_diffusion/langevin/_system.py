@@ -7,6 +7,8 @@ import jax
 import numpy as np
 import sympy as sp
 
+from classical_diffusion.hopping._system import KramersParameters
+
 
 def _hash_sympy_expr(expr: sp.Expr) -> int:
     stable_string = sp.srepr(expr)
@@ -158,11 +160,8 @@ class HarmonicSystem(System):
         )
 
 
-class DoubleHarmonicSystem(System):
+class KramersSystem1D(System):
     """Parameters representing a periodic double harmonic system."""
-
-    _omega_a: float
-    _omega_b: float
 
     def __init__(
         self,
@@ -170,15 +169,21 @@ class DoubleHarmonicSystem(System):
         gamma: float,
         temperature: float,
         m: float,
-        barrier_energy: float,
-        omega_a: float,
-        omega_b: float,
+        kramers_params: KramersParameters,
         n_dim: int = 1,
     ) -> None:
         x0 = sp.symbols("x0")
         s0 = sp.symbols("s0")
         s1 = sp.symbols("s1")
         s2 = sp.symbols("s2")
+
+        # To express a double harmonic potential as a sympy expression, consider moving two harmonics towards each other
+        # y = 1/2 omega_well^2 x^2                      represents an upright harmonic centred at the origin
+        # y = E_b - 1/2 omega_barrier^2 (x - x_0)^2     represents an inverted harmonic centred at x_0, height E_b
+        # At the point where the double harmonic potential is smooth, the two harmonics just touch. So there will only
+        # be one solution to the above simultaneous system. Solving these equations gives a quadratic for x: then
+        # setting the determinant equal to zero gives an expression for x_0
+        # From this, the overlap point, x_meet, can be found and the expression for the periodic potential is as below.
 
         omegas_ss = s0**2 + s1**2  # Omegas squared sum
         x_0 = sp.sqrt((2 * omegas_ss * s2) / (omegas_ss * s1**2 - s1**4))
@@ -200,39 +205,54 @@ class DoubleHarmonicSystem(System):
             temperature=temperature,
             m=m,
             potential=(n_dim, potential),
-            params=(omega_a, omega_b, barrier_energy),
+            params=(
+                kramers_params.omega_well,
+                kramers_params.omega_barrier,
+                kramers_params.barrier_energy,
+            ),
         )
 
     @property
     def delta_x(self) -> float:
         """The delta x of the system."""
-        omega_a, omega_b = self.omegas
-        omegas_ss = omega_a**2 + omega_b**2  # Omegas squared sum
-        x_0 = sp.sqrt(
-            (2 * omegas_ss * self.barrier_energy)
-            / (omegas_ss * omega_b**2 - omega_b**4)
+        omega_well, omega_barrier = self.omega_well, self.omega_barrier
+        omegas_ss = omega_well**2 + omega_barrier**2  # Omegas squared sum
+        return float(
+            2
+            * np.sqrt(
+                (2 * omegas_ss * self.barrier_energy)
+                / (omegas_ss * omega_barrier**2 - omega_barrier**4)
+            )
         )
-        return float(2 * x_0)
+
+    @property
+    def kramers_params(self) -> KramersParameters:
+        return KramersParameters(self.params[0], self.params[1], self.params[2])
+
+    @property
+    def omega_well(self) -> float:
+        """The harmonic frequency at the bottom of the well."""
+        return self.params[0]
+
+    @property
+    def omega_barrier(self) -> float:
+        """The harmonic frequency at the top of the barrier."""
+        return self.params[1]
 
     @property
     def barrier_energy(self) -> float:
         """The barrier energy of the system."""
         return self.params[2]
 
-    @property
-    def omegas(self) -> tuple[float, float]:
-        """The harmonic frequencies of the system."""
-        return self.params[0], self.params[1]
-
     @override
-    def with_gamma(self, gamma: float) -> DoubleHarmonicSystem:
-        return DoubleHarmonicSystem(
+    def with_gamma(self, gamma: float) -> KramersSystem1D:
+        return KramersSystem1D(
             gamma=gamma,
             temperature=self.temperature,
             m=self.m,
-            barrier_energy=self.barrier_energy,
-            omega_a=self._omega_a,
-            omega_b=self._omega_b,
+            kramers_params=KramersParameters(
+                self.omega_well, self.omega_barrier, self.barrier_energy
+            ),
             n_dim=self.n_dim,
         )
 
