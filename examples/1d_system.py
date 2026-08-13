@@ -16,7 +16,6 @@ from classical_diffusion.langevin import (
     plot_periodic_potential_1d,
     solve_ballistic_ensemble,
     solve_ensemble,
-    solve_overdamped_ensemble,
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.simulation import TimeSpan
@@ -93,7 +92,6 @@ def _plot_1d_periodic_isf() -> None:
     ax.set_ylim(0, 1)
     ax.legend(handles=[line_0, line_1, line_2, line_3])
     fig.savefig("./examples/1d_system.isf.pdf", dpi=300, bbox_inches="tight")
-
 
 
 def _plot_1d_inelastic_trends() -> None:

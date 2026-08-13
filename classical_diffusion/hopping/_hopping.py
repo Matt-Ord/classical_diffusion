@@ -133,7 +133,7 @@ def _get_deterministic_probabilities_jit[L: Lattice](
     hop_sites: jnp.ndarray,
     hop_rates: jnp.ndarray,
 ) -> jnp.ndarray:
-    """Use deterministic formula to return the ISF, efficiently."""
+    """Use deterministic formula to return the ISF, inefficiently."""
     total_outgoing_rates = jnp.sum(hop_rates, axis=-1)
 
     def vector_field(

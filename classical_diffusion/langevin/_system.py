@@ -7,7 +7,7 @@ import jax
 import numpy as np
 import sympy as sp
 
-from classical_diffusion.hopping._system import KramersParameters
+from classical_diffusion.hopping import KramersParameters
 
 
 def _hash_sympy_expr(expr: sp.Expr) -> int:
