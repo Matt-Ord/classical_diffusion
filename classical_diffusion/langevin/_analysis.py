@@ -524,7 +524,6 @@ def plot_probability_over_barrier(
     return fig, ax
 
 
-# TODO: provide a general direction
 def get_effective_mass(result: LangevinSimulationResult, idx: int = 0) -> float:
     """Return the effective mass averaged over a full simulation."""
     elastic_ps = _get_average_elastic_p(result=result)[..., idx]
