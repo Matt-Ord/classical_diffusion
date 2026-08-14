@@ -11,6 +11,7 @@
         "frameon",
         "Heun",
         "intertial",
+        "kramers",
         "lambdify",
         "Langevin",
         "ndindex",

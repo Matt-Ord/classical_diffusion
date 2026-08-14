@@ -117,7 +117,7 @@ def x_exact_pdf(result: LangevinSimulationResult, *, n_grid: int = 10_000) -> tu
     potential = sp.lambdify(
         (*result.system.coordinate_symbols, *result.system.parameter_symbols),
         result.system.potential_expr,
-        "numpy",
+        modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
     )
     x_grid = np.linspace(result.x_points.min(), result.x_points.max(), n_grid)
     v_grid = np.broadcast_to(potential(x_grid, *result.system.params), x_grid.shape)
@@ -450,7 +450,7 @@ def get_energy(
     potential = sp.lambdify(
         (*result.system.coordinate_symbols, *result.system.parameter_symbols),
         result.system.potential_expr,
-        "numpy",
+        modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
     )
 
     potential = potential(result.x_points, *result.system.params).squeeze(axis=1)
@@ -524,7 +524,6 @@ def plot_probability_over_barrier(
     return fig, ax
 
 
-# TODO: provide a general direction
 def get_effective_mass(result: LangevinSimulationResult, idx: int = 0) -> float:
     """Return the effective mass averaged over a full simulation."""
     elastic_ps = _get_average_elastic_p(result=result)[..., idx]

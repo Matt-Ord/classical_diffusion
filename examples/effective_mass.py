@@ -24,7 +24,6 @@ def _full_effective_mass_plot() -> None:
     keys = jrandom.split(jrandom.PRNGKey(100), barrier_energy.size)
     effective_mass = np.zeros(barrier_energy.shape)
 
-    # TODO: dont cache a million different simulations
     with disabled_timing():
         for idx, (i, j) in enumerate(
             tqdm(np.ndindex(barrier_energy.shape), total=barrier_energy.size)

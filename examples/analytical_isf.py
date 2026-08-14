@@ -15,12 +15,17 @@ from classical_diffusion.simulation import TimeSpan
 def _plot_harmonic_isf() -> None:
     key = jrandom.PRNGKey(100)
 
-    system = HarmonicSystem(gamma=0.1, temperature=0.5, m=1.0, omega=1.0)
+    system = HarmonicSystem(
+        gamma=0.1,
+        temperature=0.5,
+        m=1.0,
+        omega=3,
+    )
 
     result = solve_ensemble(
         system,
         TimeSpan(
-            t_end=50 / system.gamma,
+            t_end=100,
             n_steps=5000,
         ),
         (np.full((200, 1), 0.0), np.full((200, 1), 0.0)),
