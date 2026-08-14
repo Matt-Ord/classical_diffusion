@@ -63,15 +63,6 @@ class System:
             for c in self.coordinate_symbols
         ]
 
-    def with_gamma(self, gamma: float) -> System:
-        """Return the system with exchanged gamma."""
-        return System(
-            gamma=gamma,
-            m=self.m,
-            temperature=self.temperature,
-            potential=self.potential,
-        )
-
     def as_canonical(self) -> CanonicalSystem:
         """Return the canonical form of the system."""
         return CanonicalSystem(
@@ -80,7 +71,6 @@ class System:
             m=self.m,
             potential=self.potential,
             params=self.params,
-            force=self.force_expr,
         )
 
     def __hash__(self) -> int:
@@ -116,8 +106,6 @@ class CanonicalSystem(System):
 
     potential: tuple[int, sp.Expr] = field(metadata={"static": True})
 
-    force: list[sp.Expr] = field(metadata={"static": True})
-
 
 class HarmonicSystem(System):
     """Parameters representing a simple harmonic oscillator system."""
@@ -149,15 +137,20 @@ class HarmonicSystem(System):
         """The angular frequency of the system."""
         return self.params[0]
 
-    @override
-    def with_gamma(self, gamma: float) -> HarmonicSystem:
-        return HarmonicSystem(
-            gamma=gamma,
-            temperature=self.temperature,
-            m=self.m,
-            omega=self.omega,
-            n_dim=self.n_dim,
-        )
+
+class DerivativeSafeMod(sp.Mod):
+    """A subclass of sympy.Mod that is safe for differentiation.
+
+    This class overrides the _eval_derivative method to ensure that the derivative
+    of a Mod expression is computed correctly, even when the modulus depends on the
+    variable of differentiation.
+    """
+
+    def _eval_derivative(self, s: sp.Symbol) -> sp.Expr:
+        p, q = self.args
+        if not q.has(s):
+            return sp.diff(p, s)
+        return sp.Derivative(self, s)
 
 
 class KramersSystem1D(System):
@@ -166,10 +159,8 @@ class KramersSystem1D(System):
     def __init__(
         self,
         *,
-        gamma: float,
-        temperature: float,
         m: float,
-        kramers_params: KramersParameters,
+        params: KramersParameters,
         n_dim: int = 1,
     ) -> None:
         x0 = sp.symbols("x0")
@@ -186,10 +177,10 @@ class KramersSystem1D(System):
         # From this, the overlap point, x_meet, can be found and the expression for the periodic potential is as below.
 
         omegas_ss = s0**2 + s1**2  # Omegas squared sum
-        x_0 = sp.sqrt((2 * omegas_ss * s2) / (omegas_ss * s1**2 - s1**4))
+        x_0 = sp.sqrt((2 * omegas_ss * s2) / (s0**2 * s1**2))
         x_meet = (s1**2 / omegas_ss) * x_0
 
-        periodic_x = sp.Mod(x0 + x_meet, 2 * x_0) - x_meet
+        periodic_x = DerivativeSafeMod(x0 + x_meet, 2 * x_0) - x_meet
 
         potential = sp.Piecewise(
             (0.5 * s0**2 * periodic_x**2, periodic_x <= x_meet),
@@ -201,86 +192,47 @@ class KramersSystem1D(System):
         )
 
         super().__init__(
-            gamma=gamma,
-            temperature=temperature,
+            gamma=params.gamma,
+            # Note: this currently assumes Boltzmann = 1
+            temperature=params.kbt,
             m=m,
             potential=(n_dim, potential),
             params=(
-                kramers_params.omega_well,
-                kramers_params.omega_barrier,
-                kramers_params.barrier_energy,
+                params.omega_well,
+                params.omega_barrier,
+                params.barrier_energy,
             ),
         )
 
     @property
     def delta_x(self) -> float:
         """The delta x of the system."""
-        omega_well, omega_barrier = self.omega_well, self.omega_barrier
-        omegas_ss = omega_well**2 + omega_barrier**2  # Omegas squared sum
-        return float(
-            2
-            * np.sqrt(
-                (2 * omegas_ss * self.barrier_energy)
-                / (omegas_ss * omega_barrier**2 - omega_barrier**4)
-            )
-        )
+        return self.kramers_params.delta_x
 
     @property
     def kramers_params(self) -> KramersParameters:
-        return KramersParameters(self.params[0], self.params[1], self.params[2])
+        return KramersParameters(
+            omega_well=self.params[0],
+            omega_barrier=self.params[1],
+            barrier_energy=self.params[2],
+            kbt=self.temperature,
+            gamma=self.gamma,
+        )
 
     @property
     def omega_well(self) -> float:
         """The harmonic frequency at the bottom of the well."""
-        return self.params[0]
+        return self.kramers_params.omega_well
 
     @property
     def omega_barrier(self) -> float:
         """The harmonic frequency at the top of the barrier."""
-        return self.params[1]
+        return self.kramers_params.omega_barrier
 
     @property
     def barrier_energy(self) -> float:
         """The barrier energy of the system."""
-        return self.params[2]
-
-    @override
-    def with_gamma(self, gamma: float) -> KramersSystem1D:
-        return KramersSystem1D(
-            gamma=gamma,
-            temperature=self.temperature,
-            m=self.m,
-            kramers_params=KramersParameters(
-                self.omega_well, self.omega_barrier, self.barrier_energy
-            ),
-            n_dim=self.n_dim,
-        )
-
-    @override
-    @cached_property
-    def force_expr(self) -> list[sp.Expr]:
-        """The symbolic force of the system."""
-        x0 = sp.symbols("x0")
-        s0 = sp.symbols("s0")
-        s1 = sp.symbols("s1")
-        s2 = sp.symbols("s2")
-
-        omegas_ss = s0**2 + s1**2  # Omegas squared sum
-        x_0 = sp.sqrt((2 * omegas_ss * s2) / (omegas_ss * s1**2 - s1**4))
-        x_meet = (s1**2 / omegas_ss) * x_0
-
-        periodic_x = sp.Mod(x0 + x_meet, 2 * x_0) - x_meet
-
-        derivative = sp.Piecewise(
-            (s0**2 * periodic_x, periodic_x <= x_meet),
-            (
-                -(s1**2) * (periodic_x - x_0),
-                periodic_x >= x_meet,
-            ),
-            (0, True),
-        )
-
-        return [-1 * derivative]
+        return self.kramers_params.barrier_energy
 
 
 class PeriodicSystem1D(System):
@@ -317,17 +269,6 @@ class PeriodicSystem1D(System):
     def barrier_energy(self) -> float:
         """The barrier energy of the system."""
         return self.params[1]
-
-    @override
-    def with_gamma(self, gamma: float) -> PeriodicSystem1D:
-        return PeriodicSystem1D(
-            gamma=gamma,
-            temperature=self.temperature,
-            m=self.m,
-            delta_x=self.delta_x,
-            barrier_energy=self.barrier_energy,
-            n_dim=self.n_dim,
-        )
 
     @override
     @property

@@ -1,3 +1,4 @@
+import dataclasses
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
@@ -60,10 +61,14 @@ class LangevinSimulationResult[S: System](SimulationResult[S]):
 
 
 def _get_force_fn(
-    system: CanonicalSystem,
+    system: System,
 ) -> Callable[[jnp.ndarray, tuple[float, ...]], jnp.ndarray]:
     """Compute a callable force function, taking and returning an array."""
-    raw_fn = sp.lambdify(system.lambda_symbols, system.force, "jax")
+    raw_fn = sp.lambdify(
+        system.lambda_symbols,
+        system.force_expr,
+        modules=[{"DerivativeSafeMod": jnp.mod}, "jax"],
+    )
     return lambda x_array, params: jnp.array(raw_fn(*x_array, *params))
 
 
@@ -271,7 +276,9 @@ def sample_x_initial(
 ) -> np.ndarray[Any, np.dtype[np.floating]]:
     x0, *_ = system.coordinate_symbols
     potential_fn = sp.lambdify(
-        (x0, *system.parameter_symbols), system.potential_expr, "numpy"
+        (x0, *system.parameter_symbols),
+        system.potential_expr,
+        modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
     )
     kbt = system.kbt
     params = system.params
@@ -314,7 +321,7 @@ def solve_ballistic_ensemble[S: System](
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of ballistic trajectories in parallel via jax.vmap."""
     out = solve_ensemble.load_or_call_uncached(
-        system.with_gamma(0.0),
+        dataclasses.replace(system.as_canonical(), gamma=0.0),
         time_span,
         (
             sample_x_initial(system=system, n_samples=n_samples),

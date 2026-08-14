@@ -11,9 +11,9 @@ from classical_diffusion.hopping._system import (
     KramersParameters,
     Lattice,
     Lattice1D,
-    get_kramers_lattice,
     get_kramers_parameters_cosine,
     get_kramers_rate,
+    lattice_1d_from_kramers_parameters,
 )
 
 __all__ = [
@@ -23,9 +23,9 @@ __all__ = [
     "Lattice",
     "Lattice1D",
     "get_ensemble_probabilities",
-    "get_kramers_lattice",
     "get_kramers_parameters_cosine",
     "get_kramers_rate",
+    "lattice_1d_from_kramers_parameters",
     "plot_deterministic_isf",
     "solve_ensemble",
 ]

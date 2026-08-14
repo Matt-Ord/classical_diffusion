@@ -40,7 +40,11 @@ def plot_potential_1d(
     t = np.linspace(0, 1, n_points)
     points = np.array(start) + t[:, np.newaxis] * delta
 
-    potential_func = sp.lambdify(params.lambda_symbols, params.potential_expr, "numpy")
+    potential_func = sp.lambdify(
+        params.lambda_symbols,
+        params.potential_expr,
+        modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
+    )
     potential = np.broadcast_to(potential_func(*points.T, *params.params), (n_points,))
 
     distances = np.linalg.norm(start) + t * np.linalg.norm(delta)
@@ -49,6 +53,45 @@ def plot_potential_1d(
 
     ax.set_xlabel(r"x")
     ax.set_ylabel(r"$V(x)$")
+    ax.set_xlim(distances[0], distances[-1])
+
+    return fig, ax, line
+
+
+def plot_force_1d(
+    params: System,
+    start: float,
+    end: float,
+    *,
+    n_points: int = 1000,
+    ax: Axes | None = None,
+) -> tuple[Figure, Axes, Line2D]:
+    """Plot the force for a 1D or 2D system.
+
+    For 1D systems, plots F(x) as a line. For 2D systems, plots F(x, y)
+    as a filled heatmap.
+
+    """
+    fig, ax = get_figure(ax)
+
+    delta = np.array(start) - np.array(end)
+
+    t = np.linspace(0, 1, n_points)
+    points = np.array(start) + t[:, np.newaxis] * delta
+
+    force_func = sp.lambdify(
+        params.lambda_symbols,
+        params.force_expr[0],
+        modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
+    )
+    force = np.broadcast_to(force_func(*points.T, *params.params), (n_points,))
+
+    distances = np.linalg.norm(start) + t * np.linalg.norm(delta)
+
+    (line,) = ax.plot(distances, force)
+
+    ax.set_xlabel(r"x")
+    ax.set_ylabel(r"$F(x)$")
     ax.set_xlim(distances[0], distances[-1])
 
     return fig, ax, line
@@ -97,7 +140,11 @@ def plot_potential_2d(
     y = np.linspace(start[1], end[1], n_points[1])
     x_grid, y_grid = np.meshgrid(x, y)
 
-    potential_func = sp.lambdify(params.lambda_symbols, params.potential_expr, "numpy")
+    potential_func = sp.lambdify(
+        params.lambda_symbols,
+        params.potential_expr,
+        modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
+    )
     potential = np.broadcast_to(
         potential_func(x_grid, y_grid, *params.params), x_grid.shape
     )
@@ -135,8 +182,8 @@ def plot_periodic_potential_fcc(
 def get_exact_harmonic_isf(
     system: HarmonicSystem,
     delta_k: tuple[float,],
-    times: np.ndarray[Any, np.dtype[np.floating[Any]]],
-) -> np.ndarray:
+    times: np.ndarray[tuple[int], np.dtype[np.floating[Any]]],
+) -> np.ndarray[tuple[int], np.dtype[np.floating[Any]]]:
     """Return the exact ISF for simulation."""
     gamma, temp, m = system.gamma, system.temperature, system.m
     f = np.sqrt(system.omega**2 - gamma**2 / 4)
@@ -181,78 +228,13 @@ def get_exact_flat_isf(
     delta_k: tuple[float, ...],
     times: np.ndarray[Any, np.dtype[np.floating[Any]]],
 ) -> np.ndarray:
-    """Return the exact ballistic ISF for a 1D flat (potential-free) surface."""
+    """Return the exact ISF for a 1D flat (potential-free) surface."""
     kbt, m, gamma = system.kbt, system.m, system.gamma
     k_squared = sum(k_i**2 for k_i in delta_k)
     return np.exp(
         ((k_squared) * kbt / (gamma**2 * m))
         * (1 - gamma * times - np.exp(-gamma * times))
     )
-
-
-def get_exact_gaussian_isf(
-    system: System,
-    effective_mass: float,
-    delta_k: tuple[float, ...],
-    times: np.ndarray[Any, np.dtype[np.floating[Any]]],
-) -> np.ndarray:
-    """Return the exact ballistic ISF for a 1D flat (potential-free) surface."""
-    kbt, _, _ = system.kbt, system.m, system.gamma
-    k_squared = sum(k_i**2 for k_i in delta_k)
-    return np.exp(-((k_squared) * kbt / (2 * effective_mass)) * times**2)
-
-
-def plot_exact_gaussian_isf(
-    system: System,
-    effective_mass: float,
-    delta_k: tuple[float, ...],
-    times: np.ndarray[Any, np.dtype[np.floating[Any]]] | None = None,
-    *,
-    ax: Axes | None = None,
-) -> tuple[Figure, Axes, Line2D]:
-    """Plot the exact ISF for a 1D flat (potential-free) surface."""
-    fig, ax = get_figure(ax)
-
-    times = times if times is not None else np.linspace(0, 30, 1000)
-    isf_exact = get_exact_gaussian_isf(
-        system=system, effective_mass=effective_mass, delta_k=delta_k, times=times
-    )
-
-    (line,) = ax.plot(times, isf_exact)
-
-    ax.set_title("Intermediate Scattering Function Over Time")
-    ax.set_xlabel("Time / s")
-    ax.set_ylabel("ISF")
-    ax.legend()
-
-    return fig, ax, line
-
-
-def plot_exact_offset_gaussian_isf(  # ruff:ignore[too-many-arguments]
-    system: System,
-    effective_mass: float,
-    delta_k: tuple[float, ...],
-    times: np.ndarray[Any, np.dtype[np.floating[Any]]] | None = None,
-    *,
-    ax: Axes | None = None,
-    offset: float = 0,
-) -> tuple[Figure, Axes, Line2D]:
-    """Plot the exact ISF for a 1D flat (potential-free) surface."""
-    fig, ax = get_figure(ax)
-
-    times = times if times is not None else np.linspace(0, 30, 1000)
-    isf_exact = offset + (1 - offset) * get_exact_gaussian_isf(
-        system=system, effective_mass=effective_mass, delta_k=delta_k, times=times
-    )
-
-    (line,) = ax.plot(times, isf_exact)
-
-    ax.set_title("Intermediate Scattering Function Over Time")
-    ax.set_xlabel("Time / s")
-    ax.set_ylabel("ISF")
-    ax.legend()
-
-    return fig, ax, line
 
 
 def plot_exact_flat_isf(
@@ -270,6 +252,42 @@ def plot_exact_flat_isf(
 
     (line,) = ax.plot(times, isf_exact)
     line.set_label("Exact Flat ISF")
+
+    ax.set_title("Intermediate Scattering Function Over Time")
+    ax.set_xlabel("Time / s")
+    ax.set_ylabel("ISF")
+    ax.legend()
+
+    return fig, ax, line
+
+
+def get_exact_flat_ballistic_isf(
+    system: System,
+    delta_k: tuple[float, ...],
+    times: np.ndarray[Any, np.dtype[np.floating[Any]]],
+) -> np.ndarray:
+    """Return the exact ballistic ISF for a 1D flat (potential-free) surface."""
+    k_squared = sum(k_i**2 for k_i in delta_k)
+    return np.exp(-((k_squared) * system.kbt / (2 * system.m)) * times**2)
+
+
+def plot_exact_flat_ballistic_isf(
+    system: System,
+    delta_k: tuple[float, ...],
+    times: np.ndarray[Any, np.dtype[np.floating[Any]]] | None = None,
+    *,
+    ax: Axes | None = None,
+    offset: float = 0,
+) -> tuple[Figure, Axes, Line2D]:
+    """Plot the exact ISF for a 1D flat (potential-free) surface."""
+    fig, ax = get_figure(ax)
+
+    times = times if times is not None else np.linspace(0, 30, 1000)
+    isf_exact = offset + (1 - offset) * get_exact_flat_ballistic_isf(
+        system=system, delta_k=delta_k, times=times
+    )
+
+    (line,) = ax.plot(times, isf_exact)
 
     ax.set_title("Intermediate Scattering Function Over Time")
     ax.set_xlabel("Time / s")

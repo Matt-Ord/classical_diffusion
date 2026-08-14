@@ -98,19 +98,29 @@ class Lattice1D(Lattice):
         )
 
 
-@dataclass
+@dataclass(kw_only=True, frozen=True)
 class KramersParameters:
     omega_well: float
     omega_barrier: float
     barrier_energy: float
+    kbt: float
+    gamma: float
+
+    @property
+    def delta_x(self) -> float:
+        """The delta x of the system."""
+        omegas_ss = self.omega_well**2 + self.omega_barrier**2
+        return float(
+            2
+            * np.sqrt(
+                (2 * omegas_ss * self.barrier_energy)
+                / (self.omega_barrier**2 * self.omega_barrier**2)
+            )
+        )
 
 
-def get_kramers_rate(gamma: float, kbt: float, params: KramersParameters) -> float:
-    return (
-        (params.omega_well * params.omega_barrier)
-        / (2 * np.pi * gamma)
-        * np.exp(-params.barrier_energy / kbt)
-    )
+def get_kramers_rate(params: KramersParameters) -> float:
+    return (params.omega_well * params.omega_barrier) / (2 * np.pi * params.gamma)
 
 
 def get_kramers_parameters_cosine(system: PeriodicSystem1D) -> KramersParameters:
@@ -118,14 +128,19 @@ def get_kramers_parameters_cosine(system: PeriodicSystem1D) -> KramersParameters
     mass = system.m
     barrier_energy = system.barrier_energy
     delta_x = system.delta_x
+    # Effective omega, approximating as a harmonic potential
+    omega = np.sqrt(2 * (np.pi**2) * (barrier_energy / delta_x**2) / mass)
 
-    omega = np.sqrt(
-        2 * (np.pi**2) * (barrier_energy / delta_x**2) / mass
-    )  # Effective omega, approximating as a harmonic potential
+    return KramersParameters(
+        omega_barrier=omega,
+        omega_well=omega,
+        barrier_energy=barrier_energy,
+        kbt=system.kbt,
+        gamma=system.gamma,
+    )
 
-    return KramersParameters(omega, omega, barrier_energy)
 
-
-def get_kramers_lattice(delta_x: float, rate: float) -> Lattice1D:
-    """Build lattice from parameters."""
-    return Lattice1D(lattice_spacing=delta_x, hop_time=1.0 / rate)
+def lattice_1d_from_kramers_parameters(params: KramersParameters) -> Lattice1D:
+    """Get a 1D lattice from Kramers parameters."""
+    hop_time = 1 / get_kramers_rate(params)
+    return Lattice1D(lattice_spacing=params.delta_x, hop_time=hop_time)

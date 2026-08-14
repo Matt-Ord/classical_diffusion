@@ -1,3 +1,5 @@
+import dataclasses
+
 import jax.random as jrandom
 import numpy as np
 
@@ -11,8 +13,7 @@ from classical_diffusion.langevin import (
     breakdown_ballistic_trajectory,
     get_effective_mass,
     get_under_barrier_probability_ballistic,
-    plot_exact_gaussian_isf,
-    plot_exact_offset_gaussian_isf,
+    plot_exact_flat_ballistic_isf,
     plot_periodic_potential_1d,
     solve_ballistic_ensemble,
     solve_ensemble,
@@ -159,16 +160,16 @@ def _plot_effective_mass_isf() -> None:
     )
     line_0.set_label("elastic")
 
-    _, ax, line_1 = plot_exact_gaussian_isf(
-        system=system, ax=ax, delta_k=delta_k, effective_mass=system.m
-    )
+    _, ax, line_1 = plot_exact_flat_ballistic_isf(system=system, ax=ax, delta_k=delta_k)
     line_1.set_label("actual mass")
     line_1.set_linestyle(":")
 
     effective_mass = get_effective_mass(result)
 
-    _, ax, line_2 = plot_exact_gaussian_isf(
-        system=system, ax=ax, delta_k=delta_k, effective_mass=effective_mass
+    _, ax, line_2 = plot_exact_flat_ballistic_isf(
+        system=dataclasses.replace(system.as_canonical(), m=effective_mass),
+        ax=ax,
+        delta_k=delta_k,
     )
     line_2.set_label("effective mass")
     line_2.set_linestyle(":")
@@ -211,11 +212,10 @@ def _plot_effective_mass_offset_isf() -> None:
     )
     line_0.set_label("elastic")
 
-    _, ax, line_1 = plot_exact_offset_gaussian_isf(
+    _, ax, line_1 = plot_exact_flat_ballistic_isf(
         system=system,
         ax=ax,
         delta_k=delta_k,
-        effective_mass=system.m,
         offset=np.average(get_under_barrier_probability_ballistic(result)),
     )
     line_1.set_label("actual mass")
