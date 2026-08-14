@@ -120,7 +120,9 @@ class KramersParameters:
 
 
 def get_kramers_rate(params: KramersParameters) -> float:
-    return (params.omega_well * params.omega_barrier) / (2 * np.pi * params.gamma)
+    return (
+        (params.omega_well * params.omega_barrier) / (2 * np.pi * params.gamma)
+    ) * np.exp(-params.barrier_energy / params.kbt)
 
 
 def get_kramers_parameters_cosine(system: PeriodicSystem1D) -> KramersParameters:

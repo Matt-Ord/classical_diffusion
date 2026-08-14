@@ -14,6 +14,7 @@ from classical_diffusion.langevin import (
     get_effective_mass,
     get_under_barrier_probability_ballistic,
     plot_exact_flat_ballistic_isf,
+    plot_force_1d,
     plot_periodic_potential_1d,
     solve_ballistic_ensemble,
     solve_ensemble,
@@ -32,6 +33,7 @@ def _plot_periodic_system() -> None:
     )
     fig, ax = get_fancy_figure()
     _, _, _ = plot_periodic_potential_1d(system, ax=ax)
+    _, _, _ = plot_force_1d(system, 0, system.delta_x, ax=ax)
     fig.savefig("examples/1d_system.potential.pdf")
 
 

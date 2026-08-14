@@ -29,6 +29,7 @@ from classical_diffusion.plot import (
     get_measured_data,
 )
 from classical_diffusion.simulation import SimulationResult, TimeSpan
+from classical_diffusion.util import timed
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -69,6 +70,7 @@ def plot_relaxation_corrected_hopping_isf(
     return fig, ax, line, fill
 
 
+@timed
 def _plot_kramers_system() -> None:
     system = KramersSystem1D(
         m=1.0,
@@ -110,10 +112,6 @@ def _kramers_harmonic_comparison() -> None:
     )
 
     delta_k = (0.5 * 2 * np.pi / system.delta_x,)
-    _, _, line, _ = plot_isf(
-        result=langevin_result, ax=ax, delta_k=delta_k, pairwise=True, measure="real"
-    )
-    line.set_label("Overdamped Langevin")
 
     lattice = lattice_1d_from_kramers_parameters(system.kramers_params)
 
@@ -143,15 +141,21 @@ def _kramers_harmonic_comparison() -> None:
     )
     line_0.set_label("Hopping model")
 
+    _, _, line, _ = plot_isf(
+        result=langevin_result, ax=ax, delta_k=delta_k, pairwise=True, measure="real"
+    )
+    line.set_label("Overdamped Langevin")
+
     ax.set_xlim(0, right=100)
     ax.set_ylim(0, 1)
     ax.legend()
     ax.set_title("Hopping vs Langevin for a harmonic potential")
 
-    fig.savefig("./examples/1d_comparison.harmonic.isf.pdf")
+    fig.savefig("./examples/hopping_model/1d_comparison.harmonic.isf.pdf")
 
     ax.set_yscale("symlog", linthresh=1e-3)
-    fig.savefig("./examples/1d_comparison.harmonic.isf.log.pdf")
+    fig.savefig("./examples/hopping_model/1d_comparison.harmonic.isf.log.pdf")
+    print("harmonic comparison figures saved")
 
 
 def _kramers_sinusoid_comparison() -> None:
