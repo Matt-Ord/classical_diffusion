@@ -15,16 +15,14 @@ from classical_diffusion.langevin import (
     make_initial_conditions_sampler,
 )
 from classical_diffusion.simulation import SimulationResult, SingleSimulationResult
-from classical_diffusion.system import System, UnitSystem
+from classical_diffusion.system import UnitSystem
 from classical_diffusion.util import cached, hash_array, timed
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from classical_diffusion.langevin._system import CanonicalSystem, System
     from classical_diffusion.simulation import TimeSpan
-    from classical_diffusion.system import (
-        CanonicalSystem,
-    )
 
 rng = np.random.default_rng()
 
