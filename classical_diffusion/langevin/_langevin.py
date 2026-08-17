@@ -1,5 +1,4 @@
 import dataclasses
-import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self, override
@@ -16,24 +15,13 @@ from classical_diffusion.langevin._sample import (
 )
 from classical_diffusion.simulation import SimulationResult, SingleSimulationResult
 from classical_diffusion.system import UnitSystem
-from classical_diffusion.util import cached, timed
+from classical_diffusion.util import cached, hash_array, timed
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from classical_diffusion.langevin import CanonicalSystem, System
     from classical_diffusion.simulation import TimeSpan
-
-
-def hash_array(arrays: tuple[np.ndarray, ...]) -> int:
-    """Hash a tuple of arrays using CRC32."""
-    chk = 0
-    for arr in arrays:
-        # Chain the CRC32 checksums of the raw float bytes
-        chk = zlib.crc32(arr.tobytes(), chk)  # cspell: disable-line
-        # Include shape just in case the same floats are reshaped
-        chk = zlib.crc32(str(arr.shape).encode(), chk)
-    return chk
 
 
 @dataclass(frozen=True, kw_only=True)
