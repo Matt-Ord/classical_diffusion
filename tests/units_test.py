@@ -1,19 +1,17 @@
 import numpy as np
 
-from classical_diffusion.system import (
+from classical_diffusion.langevin import (
     PeriodicSystem1D,
-    UnitSystem,
 )
 
 
-def test_import() -> None:
+def test_units() -> None:
     system = PeriodicSystem1D(
         gamma=4e12,
         temperature=110,
         m=8e-27,
         delta_x=3e-10,
         barrier_energy=1.6e-22,
-        units=UnitSystem(),
     )
 
     normalized_system = system.with_normalized_units()

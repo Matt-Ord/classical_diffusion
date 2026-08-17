@@ -1,6 +1,5 @@
 from typing import TYPE_CHECKING, Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import sympy as sp
@@ -22,10 +21,8 @@ if TYPE_CHECKING:
     from matplotlib.lines import Line2D
 
     from classical_diffusion.langevin import LangevinSimulationResult
-    from classical_diffusion.system import (
+    from classical_diffusion.langevin._system import (
         HarmonicSystem,
-        PeriodicSquareSystem1D,
-        PeriodicSquareSystem2D,
         PeriodicSystem1D,
         PeriodicSystemFCC,
         System,
@@ -180,15 +177,6 @@ def plot_periodic_potential_1d(
     )
 
 
-def plot_periodic_square_potential_1d(
-    system: PeriodicSquareSystem1D, *, n_points: int = 1000, ax: Axes | None = None
-) -> tuple[Figure, Axes, Line2D]:
-    """Plot the square periodic potential in 1D."""
-    return plot_potential_1d(
-        system, -system.delta_x * 2, system.delta_x * 2, n_points=n_points, ax=ax
-    )
-
-
 def plot_potential_2d(
     params: System,
     start: tuple[float, ...],
@@ -250,25 +238,6 @@ def plot_periodic_potential_fcc(
 ) -> tuple[Figure, Axes, QuadMesh]:
     """Plot the periodic potential in 2D."""
     # TODO: fix up  PeriodicParameters2D to make lattice directions explicit # ruff:ignore[line-contains-todo]
-    return plot_potential_2d(
-        params,
-        (-2 * params.delta_x, -2 * params.delta_x),
-        (
-            2 * params.delta_x,
-            2 * params.delta_x,
-        ),
-        n_points=n_points,
-        ax=ax,
-    )
-
-
-def plot_periodic_potential_square_2d(
-    params: PeriodicSquareSystem2D,
-    *,
-    n_points: tuple[int, int] = (100, 100),
-    ax: Axes | None = None,
-) -> tuple[Figure, Axes, QuadMesh]:
-    """Plot the periodic potential in 2D."""
     return plot_potential_2d(
         params,
         (-2 * params.delta_x, -2 * params.delta_x),
@@ -538,104 +507,6 @@ def calculate_probability_under_barrier_1d(
     return integral_below / z
 
 
-def make_free_point_sampler(system: System, barrier_energy: float) -> Callable:
-    potential_fn = sp.lambdify(
-        (*system.coordinate_symbols, *system.parameter_symbols),
-        system.potential_expr,
-        "jax",
-    )
-    bounds = system.sampling_domain
-
-    lo = jnp.array([b[0] for b in bounds])
-    hi = jnp.array([b[1] for b in bounds])
-    lattice = jnp.asarray(system.lattice_vectors)
-
-    grids = jnp.meshgrid(*[jnp.linspace(b[0], b[1], 50) for b in bounds], indexing="ij")
-    frac_grid = jnp.stack([g.ravel() for g in grids], axis=0)
-    cart_grid = lattice @ frac_grid
-    v_grid = potential_fn(*cart_grid, *system.params)
-    pdf_max = jnp.exp(-jnp.min(v_grid) / system.kbt)
-
-    def _sample_one(key: jax.Array) -> tuple:
-        def _cond_fn(state: tuple) -> bool:
-            _, _, _, accepted = state
-            return ~accepted
-
-        def _body_fn(state: tuple) -> tuple:
-            key, _x, _p, _ = state
-            key, kx, ku, kp = jax.random.split(key, 4)
-
-            frac_candidates = jax.random.uniform(
-                kx, minval=lo, maxval=hi, shape=(system.n_dim,)
-            )
-            x_candidate = lattice @ frac_candidates
-            v = potential_fn(*x_candidate, *system.params)
-            x_ok = jax.random.uniform(ku) < jnp.exp(-v / system.kbt) / pdf_max
-
-            p_std = jnp.sqrt(system.kbt * system.m)
-            p_candidate = jax.random.normal(kp, (system.n_dim,)) * p_std
-            energy = jnp.sum(p_candidate**2) / (2 * system.m) + v
-
-            accept = x_ok & (energy > barrier_energy)
-            return key, x_candidate, p_candidate, accept
-
-        init = (key, jnp.zeros(system.n_dim), jnp.zeros(system.n_dim), jnp.array(False))  # ruff:ignore[boolean-positional-value-in-call]
-        _, x_final, p_final, _ = jax.lax.while_loop(_cond_fn, _body_fn, init)
-        return x_final, p_final
-
-    return jax.jit(jax.vmap(_sample_one))
-
-
-def make_initial_conditions_sampler(system: System, n_grid: int = 60) -> Callable:
-    potential_fn = sp.lambdify(
-        (*system.coordinate_symbols, *system.parameter_symbols),
-        system.potential_expr,
-        "jax",
-    )
-
-    bounds = system.sampling_domain
-
-    lo = jnp.array([b[0] for b in bounds])
-    hi = jnp.array([b[1] for b in bounds])
-
-    lattice = jnp.asarray(system.lattice_vectors)
-
-    grids = jnp.meshgrid(
-        *[jnp.linspace(b[0], b[1], n_grid) for b in bounds], indexing="ij"
-    )
-    frac_grid = jnp.stack([g.ravel() for g in grids], axis=0)
-    cart_grid = lattice @ frac_grid
-    v_grid = potential_fn(*cart_grid, *system.params)
-    pdf_max = jnp.exp(-jnp.min(v_grid) / system.kbt)
-
-    def _sample_one(key: jax.Array) -> tuple:
-        def _cond_fn(state: tuple) -> bool:
-            _, _, accepted = state
-            return ~accepted
-
-        def _body_fn(state: tuple) -> tuple:
-            key, _x, _ = state
-            key, kx, ku = jax.random.split(key, 3)
-            frac_candidates = jax.random.uniform(
-                kx, minval=lo, maxval=hi, shape=(system.n_dim,)
-            )
-            x_candidate = lattice @ frac_candidates
-            v = potential_fn(*x_candidate, *system.params)
-            accept = jax.random.uniform(ku) < jnp.exp(-v / system.kbt) / pdf_max
-
-            return key, x_candidate, accept
-
-        key, p_key = jax.random.split(key, 2)
-        init = (key, jnp.zeros(system.n_dim), jnp.array(False))
-        _, x_finals, _ = jax.lax.while_loop(_cond_fn, _body_fn, init)
-        p_std = jnp.sqrt(system.kbt * system.m)
-        p_finals = jax.random.normal(p_key, (system.n_dim,)) * p_std
-
-        return x_finals, p_finals
-
-    return jax.jit(jax.vmap(_sample_one))
-
-
 def period(energy: float, system: PeriodicSystem1D) -> float:
     omega = (2 * np.pi / system.delta_x) * np.sqrt(energy / (2 * system.m))
     q2 = system.barrier_energy / energy
@@ -814,31 +685,6 @@ def get_full_effective_mass_exact_1d_square_periodic_directly(
     dimensionless_factor = np.sqrt(np.pi / u0**3) * np.exp(u0) / np.cosh(u0)
 
     return system.m * dimensionless_factor / integral
-
-
-def add_periodic_grid(
-    system: PeriodicSquareSystem2D,
-    x_range: tuple,
-    y_range: tuple,
-    ax: Axes | None = None,
-) -> tuple[Figure, Axes]:
-    """Draw gridlines matching the periodic cell boundaries, centered on (0,0)."""
-    fig, ax = get_figure(ax)
-    period = system.delta_x
-
-    n_start = int(np.floor((x_range[0] + period / 2) / period))
-    n_end = int(np.ceil((x_range[1] + period / 2) / period))
-    x_lines = (np.arange(n_start, n_end + 1) - 0.5) * period
-
-    n_start = int(np.floor((y_range[0] + period / 2) / period))
-    n_end = int(np.ceil((y_range[1] + period / 2) / period))
-    y_lines = (np.arange(n_start, n_end + 1) - 0.5) * period
-
-    ax.set_xticks(x_lines, minor=True)
-    ax.set_yticks(y_lines, minor=True)
-    ax.grid(which="minor", color="white", linestyle="-", linewidth=0.5, alpha=0.6)
-
-    return fig, ax
 
 
 @timed

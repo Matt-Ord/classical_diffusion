@@ -2,19 +2,16 @@ import jax.random as jrandom
 import numpy as np
 
 from classical_diffusion.langevin import (
-    breakdown_filtered_ballistic_trajectory_butterworth,
+    PeriodicSystemFCC,
+    breakdown_ballistic_trajectory,
+    get_diffusion_time,
     get_energy_single,
     plot_2d_trajectory_single,
     plot_periodic_potential_fcc,
     solve_single,
 )
-from classical_diffusion.plot import _get_two_panel_figure, get_fancy_figure
+from classical_diffusion.plot import get_fancy_figure, get_two_panel_figure
 from classical_diffusion.simulation import TimeSpan
-from classical_diffusion.system import (
-    PeriodicSystemFCC,
-    UnitSystem,
-    get_diffusion_time,
-)
 
 system = PeriodicSystemFCC(
     gamma=4e11,
@@ -22,7 +19,6 @@ system = PeriodicSystemFCC(
     m=6e-26,
     delta_x=20e-10,
     barrier_energy=1.6e-21,
-    units=UnitSystem(),
 )
 
 normalized_system = system.with_normalized_units()
@@ -46,14 +42,14 @@ def _plot_ballistic_trajectory() -> None:
     result = solve_single(
         normalized_system.with_gamma(0.0),
         TimeSpan(
-            t_end=normalized_system.units.time_into(50e-12, units=UnitSystem()),
+            t_end=normalized_system.units.time_into(50e-12),
             n_steps=1000,
         ),
         (np.full((2,), 1), np.full((2,), 0.01)),
         _key=key,
     )
 
-    elastic, inelastic = breakdown_filtered_ballistic_trajectory_butterworth(
+    elastic, inelastic = breakdown_ballistic_trajectory(
         result,
         minimum_timescale=get_diffusion_time(
             normalized_system, 1 / normalized_system.gamma
@@ -63,7 +59,7 @@ def _plot_ballistic_trajectory() -> None:
     print(get_energy_single(normalized_system, result.x_points, result.p_points))
     print(normalized_system.barrier_energy)
 
-    fig, ax = _get_two_panel_figure()
+    fig, ax = get_two_panel_figure()
 
     _, _ax_0, line = plot_2d_trajectory_single(
         result=result.with_si_units(), ax=ax[0], start_step=30, end_step=30

@@ -5,17 +5,14 @@ from classical_diffusion.analysis import (
     plot_single_x_evolution,
 )
 from classical_diffusion.langevin import (
-    breakdown_filtered_ballistic_trajectory_butterworth,
+    PeriodicSystem1D,
+    breakdown_ballistic_trajectory,
+    get_diffusion_time,
     plot_periodic_potential_1d,
     solve_single,
 )
-from classical_diffusion.plot import _get_two_panel_figure, get_fancy_figure
+from classical_diffusion.plot import get_fancy_figure, get_two_panel_figure
 from classical_diffusion.simulation import TimeSpan
-from classical_diffusion.system import (
-    PeriodicSystem1D,
-    UnitSystem,
-    get_diffusion_time,
-)
 
 system = PeriodicSystem1D(
     gamma=4e11,
@@ -23,7 +20,6 @@ system = PeriodicSystem1D(
     m=6e-27,
     delta_x=1.48e-10,
     barrier_energy=10e-21,
-    units=UnitSystem(),
 )
 
 normalized_system = system.with_normalized_units()
@@ -47,21 +43,21 @@ def _plot_ballistic_trajectory() -> None:
     result = solve_single(
         normalized_system.with_gamma(0.0),
         TimeSpan(
-            t_end=normalized_system.units.time_into(10e-12, units=UnitSystem()),
+            t_end=normalized_system.units.time_into(10e-12),
             n_steps=1000,
         ),
         (np.full((1,), 0.0), np.full((1,), 2.43)),
         _key=key,
     )
 
-    elastic, inelastic = breakdown_filtered_ballistic_trajectory_butterworth(
+    elastic, inelastic = breakdown_ballistic_trajectory(
         result,
         minimum_timescale=get_diffusion_time(
             normalized_system, characteristic_length=normalized_system.delta_x / 0.1
         ),
     )
 
-    fig, ax = _get_two_panel_figure()
+    fig, ax = get_two_panel_figure()
 
     _, _ax_0, line = plot_single_x_evolution(result=result.with_si_units(), ax=ax[0])
     _, _ax_0, line_e = plot_single_x_evolution(result=elastic.with_si_units(), ax=ax[0])

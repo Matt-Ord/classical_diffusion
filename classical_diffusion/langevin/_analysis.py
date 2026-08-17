@@ -1,4 +1,3 @@
-import itertools
 from typing import TYPE_CHECKING, Any, cast
 
 import jax.numpy as jnp
@@ -14,8 +13,8 @@ from classical_diffusion.langevin import (
     SingleLangevinSimulationResult,
     get_energy,
 )
+from classical_diffusion.langevin._system import PeriodicSystem1D, System
 from classical_diffusion.plot import get_figure
-from classical_diffusion.system import PeriodicSystem1D, System
 from classical_diffusion.util import timed
 
 if TYPE_CHECKING:
@@ -359,61 +358,6 @@ def plot_initial_p(
     return fig, ax
 
 
-def _get_average_elastic_velocity(t: np.ndarray, x: np.ndarray) -> tuple:
-    """Return the elastic (ballistic straight-line) velocity estimate per trajectory across all dimensions."""
-    n = len(t)
-    st = np.sum(t)
-    stt = np.sum(t * t)
-    sy = np.sum(x, axis=-1)
-    sty = np.sum(x * t, axis=-1)
-
-    denom = n * stt - st**2
-    return (n * sty - st * sy) / denom
-
-
-def _get_average_elastic_p(
-    result: LangevinSimulationResult, *, max_samples: int = 100
-) -> np.ndarray[Any, np.dtype[np.floating]]:
-    """Return the elastic (ballistic straight-line) momentum estimate per trajectory across all dimensions."""
-    n_times = len(result.times)
-    n_samples = min(max_samples, n_times)
-    sample_indices = np.linspace(0, n_times - 1, n_samples, dtype=int)
-
-    t_sampled = result.times[sample_indices]
-    x_sampled = result.x_points[:, :, sample_indices]
-
-    v_elastic = _get_average_elastic_velocity(t_sampled, x_sampled)
-    return v_elastic * result.system.m
-
-
-def breakdown_ballistic_trajectory[S: System](
-    result: LangevinSimulationResult[S],
-) -> tuple[LangevinSimulationResult[S], LangevinSimulationResult[S]]:
-    """Split a ballistic simulation into its elastic and inelastic components across all dimensions."""
-    p_elastic = _get_average_elastic_p(result)
-
-    # Broadcast p_elastic across time steps: (n_trajectories, n_dimensions, n_times)
-    p_elastic_points = np.broadcast_to(p_elastic[..., None], result.p_points.shape)
-    x_0 = result.x_points[:, :, 0]
-
-    # Calculate x_elastic(t) = x_0 + (p_elastic / m) * t across all spatial components
-    x_elastic_points = p_elastic[..., None] * result.times / result.system.m + x_0
-
-    elastic = LangevinSimulationResult[S](
-        times=result.times,
-        x_points=x_elastic_points,
-        p_points=p_elastic_points,
-        system=result.system,
-    )
-    inelastic = LangevinSimulationResult[S](
-        times=result.times,
-        x_points=result.x_points - x_elastic_points,
-        p_points=result.p_points - p_elastic_points,
-        system=result.system,
-    )
-    return elastic, inelastic
-
-
 _EXPECTED_NDIM = 2
 
 
@@ -585,129 +529,8 @@ def split_escaped_and_trapped(
     return free, trapped
 
 
-MIN_SPLIT_POINTS = 4
-MIN_VARIANCE = 1e-15
-
-
-def filter_trajectory_kv(
-    x: np.ndarray[tuple[int, ...], np.dtype[np.floating]],
-    *,
-    min_split_points: int = MIN_SPLIT_POINTS,
-) -> np.ndarray[tuple[int, ...], np.dtype[np.float64]]:
-    """Discretize a 1D or 2D signal using the objective Kalafut-Visscher step detection algorithm."""
-    x = x[:, np.newaxis] if x.ndim == 1 else x
-
-    n_samples = x.shape[0]
-    breakpoints = [0, n_samples]
-    stack = [(0, n_samples)]
-
-    while stack:
-        start, end = stack.pop()
-        n_seg = end - start
-
-        if n_seg <= min_split_points:
-            continue
-
-        segment = x[start:end]
-        total_sum = np.sum(segment, axis=0)  # Shape (D,)
-        total_sum_x2 = np.sum(segment**2)  # Scalar sum of all elements squared
-
-        # Calculate local baseline variance across dimensions before splitting
-        base_mu = total_sum / n_seg  # Shape (D,)
-        base_ssr = (
-            total_sum_x2 - 2 * np.sum(base_mu * total_sum) + n_seg * np.sum(base_mu**2)
-        )
-        base_variance = base_ssr / n_seg
-        if base_variance <= MIN_VARIANCE:
-            continue
-
-        indices = np.arange(2, n_seg - 1)
-        n_right_arr = n_seg - indices
-
-        # Vectorized segment cumulative sums across time for all dimensions: shape (K, D)
-        cum_sum_left = np.cumsum(segment, axis=0)[indices - 1]
-        cum_sum_right = total_sum - cum_sum_left
-
-        # Mean vectors for left and right partitions: shape (K, D)
-        mu_left = cum_sum_left / indices[:, None]
-        mu_right = cum_sum_right / n_right_arr[:, None]
-
-        # Vectorized sum of squared residuals reduced across spatial dimensions (axis=1)
-        split_ssr = (
-            total_sum_x2
-            - 2 * np.sum(mu_left * cum_sum_left, axis=1)
-            + indices * np.sum(mu_left**2, axis=1)
-            - 2 * np.sum(mu_right * cum_sum_right, axis=1)
-            + n_right_arr * np.sum(mu_right**2, axis=1)
-        )
-        split_variances = split_ssr / n_seg
-        split_variances = np.maximum(split_variances, MIN_VARIANCE)
-
-        # Objective Criterion: delta_sic > 0 means the split is justified by the data
-        delta_sic = n_seg * np.log(base_variance / split_variances) - np.log(n_seg)
-        best_idx = np.argmax(delta_sic)
-
-        if delta_sic[best_idx] > 0:
-            global_split_point = start + indices[best_idx]
-            breakpoints.append(global_split_point)
-            stack.extend([(start, global_split_point), (global_split_point, end)])
-
-    # Reconstruct the final de-noised piece-wise constant path
-    breakpoints = sorted(set(breakpoints))
-    fitted_trajectory = np.zeros_like(x, dtype=np.float64)
-
-    for b_start, b_end in itertools.pairwise(breakpoints):
-        fitted_trajectory[b_start:b_end] = np.mean(x[b_start:b_end], axis=0)
-
-    return fitted_trajectory
-
-
-def breakdown_filtered_ballistic_trajectory[S: System](
-    result: SingleLangevinSimulationResult[S], *, minimum_timescale: float = 0
-) -> tuple[
-    SingleLangevinSimulationResult[S],
-    SingleLangevinSimulationResult[S],
-]:
-    """Split a ballistic simulation into its elastic and inelastic components across all dimensions."""
-    dt = result.times[1] - result.times[0]
-    min_split_points = max(4, int(minimum_timescale / dt))
-
-    p_points = result.p_points
-    p_elastic_points = filter_trajectory_kv(
-        p_points.T, min_split_points=min_split_points
-    ).T
-
-    # Initial positions x_0: shape (n_trajectories, n_dimensions, 1)
-    x_0 = result.x_points[..., :1]
-
-    # Calculate x_elastic(t) = x_0 + (p_elastic / m) * t across all spatial components
-    dt = result.times[1] - result.times[0]
-    displacements = (p_elastic_points / result.system.m) * dt
-
-    # Prepend zero at t=0 so initial position x_elastic(t_0) == x_0
-    step_displacements = np.concatenate(
-        [np.zeros_like(x_0), displacements[..., :-1]], axis=-1
-    )
-    x_elastic_points = x_0 + np.cumsum(step_displacements, axis=-1)
-
-    elastic = SingleLangevinSimulationResult(
-        times=result.times,
-        x_points=x_elastic_points,
-        p_points=p_elastic_points,
-        system=result.system,
-    )
-
-    inelastic = SingleLangevinSimulationResult(
-        times=result.times,
-        x_points=result.x_points - x_elastic_points,
-        p_points=result.p_points - p_elastic_points,
-        system=result.system,
-    )
-    return elastic, inelastic
-
-
 @timed
-def breakdown_filtered_ballistic_trajectory_butterworth[S: System](
+def breakdown_ballistic_trajectory[S: System](
     result: SingleLangevinSimulationResult[S], *, minimum_timescale: float = 0
 ) -> tuple[
     SingleLangevinSimulationResult[S],

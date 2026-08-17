@@ -5,17 +5,13 @@ from classical_diffusion.analysis import (
     plot_isf_with_delta_k,
 )
 from classical_diffusion.langevin import (
-    breakdown_filtered_ballistic_trajectory_butterworth,
-    get_initial_conditions,
+    PeriodicSystem1D,
+    breakdown_ballistic_trajectory,
+    get_diffusion_time,
     solve_ballistic_ensemble,
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.simulation import TimeSpan
-from classical_diffusion.system import (
-    PeriodicSystem1D,
-    UnitSystem,
-    get_diffusion_time,
-)
 
 system = PeriodicSystem1D(
     gamma=4e11,
@@ -23,7 +19,6 @@ system = PeriodicSystem1D(
     m=6e-27,
     delta_x=1.48e-10,
     barrier_energy=4e-21,
-    units=UnitSystem(),
 )
 
 normalized_system = system.with_normalized_units()
@@ -33,19 +28,17 @@ key = jrandom.PRNGKey(100)
 
 def _plot_inelastic_trends() -> None:
 
-    initial_conditions = get_initial_conditions(normalized_system, n_samples=2000)
-
     ballistic_result = solve_ballistic_ensemble(
         normalized_system,
         TimeSpan(
-            t_end=normalized_system.units.time_into(6e-12, units=UnitSystem()),
+            t_end=normalized_system.units.time_into(6e-12),
             n_steps=1000,
         ),
-        initial_conditions,
+        n_samples=2000,
         _key=key,
     )
 
-    _, inelastic_result = breakdown_filtered_ballistic_trajectory_butterworth(
+    _, inelastic_result = breakdown_ballistic_trajectory(
         ballistic_result,
         minimum_timescale=get_diffusion_time(
             normalized_system, characteristic_length=normalized_system.delta_x / 0.5

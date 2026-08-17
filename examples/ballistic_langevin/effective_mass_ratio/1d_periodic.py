@@ -7,22 +7,18 @@ from scipy.constants import Boltzmann, hbar
 from tqdm import tqdm
 
 from classical_diffusion.langevin import (
+    PeriodicSystem1D,
     calculate_probability_under_barrier_1d,
     get_effective_mass,
     get_free_effective_mass_exact_1d_periodic_directly,
     get_full_effective_mass_exact_1d_periodic_directly,
     get_full_effective_mass_from_free,
-    get_over_barrier_initial_conditions,
     plot_2d_gradient,
     plot_effective_mass_ratio,
-    solve_ballistic_ensemble,
+    solve_over_barrier_ballistic_ensemble,
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.simulation import TimeSpan
-from classical_diffusion.system import (
-    PeriodicSystem1D,
-    UnitSystem,
-)
 from classical_diffusion.util import cached, disabled_timing, hash_array
 
 system = PeriodicSystem1D(
@@ -31,7 +27,6 @@ system = PeriodicSystem1D(
     m=6e-27,
     delta_x=1.48e-10,
     barrier_energy=4e-21,
-    units=UnitSystem(),
 )
 
 normalized_system = system.with_normalized_units()
@@ -54,7 +49,7 @@ def _plot_effective_mass_ratio() -> None:  # ruff:ignore[too-many-statements]
         return Path("examples/data") / filename
 
     @cached(_solve_effective_mass_path)
-    def _effective_mass_simulation(  # ruff:ignore[too-many-arguments, too-many-locals, too-many-positional-arguments]
+    def _effective_mass_simulation(  # ruff:ignore[too-many-arguments, too-many-positional-arguments]
         temperature: float,
         delta_x: float,
         end_time: float,
@@ -87,29 +82,22 @@ def _plot_effective_mass_ratio() -> None:  # ruff:ignore[too-many-statements]
                     m=m_grid[i, j],
                     delta_x=delta_x,
                     barrier_energy=barrier_energy_grid[i, j],
-                    units=UnitSystem(),
-                )
-                normalized_system = system.with_normalized_units()
-                initial_conditions = get_over_barrier_initial_conditions(
-                    system=normalized_system,
-                    barrier_energy=normalized_system.barrier_energy,
-                    n_samples=n_samples,
-                )
-                result = solve_ballistic_ensemble(
-                    normalized_system,
+                ).with_normalized_units()
+
+                result = solve_over_barrier_ballistic_ensemble(
+                    system,
                     TimeSpan(
-                        t_end=normalized_system.units.time_into(
-                            end_time, units=UnitSystem()
-                        ),
+                        t_end=system.units.time_into(end_time),
                         n_steps=1000,
                     ),
-                    initial_conditions=initial_conditions,
+                    n_samples=n_samples,
+                    barrier_energy=system.barrier_energy,
                     _key=keys[idx],
                 )
 
                 prob_under_barrier_val = calculate_probability_under_barrier_1d(
-                    system=normalized_system,
-                    barrier_energy=normalized_system.barrier_energy,
+                    system=system,
+                    barrier_energy=system.barrier_energy,
                 )
                 prob_under_barrier[i, j] = prob_under_barrier_val
 
@@ -121,15 +109,11 @@ def _plot_effective_mass_ratio() -> None:  # ruff:ignore[too-many-statements]
                 free_effective_mass_ratio[i, j] = get_effective_mass(result).item()
 
                 full_effective_mass_exact_ratio[i, j] = (
-                    get_full_effective_mass_exact_1d_periodic_directly(
-                        normalized_system
-                    )
+                    get_full_effective_mass_exact_1d_periodic_directly(system)
                 )
 
                 free_effective_mass_exact_ratio[i, j] = (
-                    get_free_effective_mass_exact_1d_periodic_directly(
-                        normalized_system
-                    )
+                    get_free_effective_mass_exact_1d_periodic_directly(system)
                 )
 
             return (

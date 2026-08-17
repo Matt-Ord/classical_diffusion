@@ -27,6 +27,11 @@ class UnitSystem:
         """Get the SI units."""
         return cls()
 
+    @property
+    def time_factor(self) -> float:
+        """The time factor for the unit system."""
+        return np.sqrt(self.atomic_mass * self.angstrom**2 / self.Boltzmann)
+
     @overload
     def time_into(self, value: float, units: UnitSystem) -> float: ...
     @overload
@@ -37,11 +42,13 @@ class UnitSystem:
         self, value: float | np.ndarray[Any, np.dtype[np.number]], units: UnitSystem
     ) -> float | np.ndarray[Any, np.dtype[np.number]]:
         """Convert a time from SI units to the system's units."""
-        length_factor = self.angstrom / units.angstrom
-        mass_factor = self.atomic_mass / units.atomic_mass
-        energy_factor = self.Boltzmann / units.Boltzmann
-        time_factor = np.sqrt(length_factor**2 * mass_factor / energy_factor)
+        time_factor = self.time_factor / units.time_factor
         return value * time_factor
+
+    @property
+    def mass_factor(self) -> float:
+        """The mass factor of the system."""
+        return self.atomic_mass / atomic_mass_si
 
     @overload
     def mass_into(self, value: float, units: UnitSystem) -> float: ...
@@ -53,7 +60,7 @@ class UnitSystem:
         self, value: float | np.ndarray[Any, np.dtype[np.number]], units: UnitSystem
     ) -> float | np.ndarray[Any, np.dtype[np.number]]:
         """Convert a time from SI units to the system's units."""
-        mass_factor = self.atomic_mass / units.atomic_mass
+        mass_factor = self.mass_factor / units.mass_factor
         return value * mass_factor
 
     def as_canonical(self) -> CanonicalUnitSystem:
@@ -63,6 +70,16 @@ class UnitSystem:
             atomic_mass=self.atomic_mass,
             angstrom=self.angstrom,
         )
+
+    @property
+    def length_factor(self) -> float:
+        """The length factor of the system."""
+        return self.angstrom / angstrom_si
+
+    @property
+    def energy_factor(self) -> float:
+        """The energy factor of the system."""
+        return self.Boltzmann / Boltzmann_si
 
 
 @jax.tree_util.register_dataclass

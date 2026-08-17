@@ -5,21 +5,18 @@ from classical_diffusion.analysis import (
     plot_isf,
 )
 from classical_diffusion.langevin import (
-    breakdown_filtered_ballistic_trajectory_butterworth,
+    PeriodicSystemFCC,
+    breakdown_ballistic_trajectory,
+    get_diffusion_time,
     get_full_effective_mass_from_free,
-    get_initial_conditions,
-    get_over_barrier_initial_conditions,
     get_under_barrier_probability_ballistic,
     plot_exact_gaussian_isf,
     solve_ballistic_ensemble,
+    solve_over_barrier_ballistic_ensemble,
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.simulation import TimeSpan
-from classical_diffusion.system import (
-    PeriodicSystemFCC,
-    UnitSystem,
-    get_diffusion_time,
-)
+from classical_diffusion.system import UnitSystem
 
 system = PeriodicSystemFCC(
     gamma=4e11,
@@ -27,7 +24,6 @@ system = PeriodicSystemFCC(
     m=6e-27,
     delta_x=1.48e-10,
     barrier_energy=1.6e-21,
-    units=UnitSystem(),
 )
 
 normalized_system = system.with_normalized_units()
@@ -41,14 +37,13 @@ def _plot_effective_mass_isf() -> None:
     direction = np.array([1, 0])
     delta_k = tuple(7e9 * direction / np.linalg.norm(direction))
 
-    initial_conditions = get_initial_conditions(normalized_system, n_samples=2000)
     result_full = solve_ballistic_ensemble(
         normalized_system,
         TimeSpan(
-            t_end=normalized_system.units.time_into(5e-12, units=UnitSystem()),
+            t_end=normalized_system.units.time_into(5e-12),
             n_steps=1000,
         ),
-        initial_conditions,
+        n_samples=2000,
         _key=key,
     )
 
@@ -59,7 +54,7 @@ def _plot_effective_mass_isf() -> None:
         normalized_system.barrier_energy,
     )
 
-    elastic_result, _ = breakdown_filtered_ballistic_trajectory_butterworth(
+    elastic_result, _ = breakdown_ballistic_trajectory(
         result_full,
         minimum_timescale=get_diffusion_time(
             normalized_system, characteristic_length=normalized_system.delta_x / 0.5
@@ -80,22 +75,18 @@ def _plot_effective_mass_isf() -> None:
     line_1.set_label("actual mass")
     line_1.set_linestyle(":")
 
-    initial_conditions = get_over_barrier_initial_conditions(
-        system=normalized_system,
-        barrier_energy=normalized_system.barrier_energy,
-        n_samples=500,
-    )
-    result_free = solve_ballistic_ensemble(
+    result_free = solve_over_barrier_ballistic_ensemble(
         normalized_system,
         TimeSpan(
-            t_end=normalized_system.units.time_into(5e-12, units=UnitSystem()),
+            t_end=normalized_system.units.time_into(5e-12),
             n_steps=1000,
         ),
-        initial_conditions=initial_conditions,
+        n_samples=500,
+        barrier_energy=normalized_system.barrier_energy,
         _key=key,
     )
 
-    elastic_result_free, _ = breakdown_filtered_ballistic_trajectory_butterworth(
+    elastic_result_free, _ = breakdown_ballistic_trajectory(
         result_free,
         minimum_timescale=get_diffusion_time(
             normalized_system, characteristic_length=normalized_system.delta_x / 0.5

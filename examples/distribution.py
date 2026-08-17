@@ -5,7 +5,9 @@ import numpy as np
 from matplotlib.animation import ArtistAnimation
 
 from classical_diffusion.langevin import (
+    HarmonicSystem,
     LangevinSimulationResult,
+    PeriodicSystem1D,
     plot_kinetic_probability,
     plot_p_histogram,
     plot_phase_space_density,
@@ -15,11 +17,6 @@ from classical_diffusion.langevin import (
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.simulation import TimeSpan
-from classical_diffusion.system import (
-    HarmonicSystem,
-    PeriodicSystem1D,
-    UnitSystem,
-)
 
 
 def fold_results(
@@ -44,7 +41,6 @@ def _plot_xp_distributions_periodic() -> None:
         m=8e-27,
         delta_x=3e-10,
         barrier_energy=1.6e-21,
-        units=UnitSystem(),
     )
 
     normalized_system = system.with_normalized_units()
@@ -54,9 +50,7 @@ def _plot_xp_distributions_periodic() -> None:
     result = solve_ensemble(
         normalized_system,
         TimeSpan(
-            t_end=normalized_system.units.time_into(
-                1000 / system.gamma, units=UnitSystem()
-            ),
+            t_end=normalized_system.units.time_into(1000 / system.gamma),
             n_steps=1000,
         ),
         (np.full((10, 1), 0), np.full((10, 1), 0.0)),
@@ -139,13 +133,7 @@ def _plot_x_distribution_spread() -> None:
 def _plot_xp_distributions_harmonic() -> None:
     key = jrandom.PRNGKey(100)
 
-    system = HarmonicSystem(
-        gamma=5e11,
-        temperature=110,
-        m=8e-27,
-        omega=10e12,
-        units=UnitSystem(),
-    )
+    system = HarmonicSystem(gamma=5e11, temperature=110, m=8e-27, omega=10e12)
 
     normalized_system = system.with_normalized_units()
 
@@ -154,9 +142,7 @@ def _plot_xp_distributions_harmonic() -> None:
     result = solve_ensemble(
         normalized_system,
         TimeSpan(
-            t_end=normalized_system.units.time_into(
-                2000 / system.gamma, units=UnitSystem()
-            ),
+            t_end=normalized_system.units.time_into(2000 / system.gamma),
             n_steps=2000,
         ),
         (np.full((10, 1), 0), np.full((10, 1), 0.0)),

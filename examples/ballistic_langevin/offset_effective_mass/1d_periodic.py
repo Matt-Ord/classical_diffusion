@@ -5,22 +5,18 @@ from classical_diffusion.analysis import (
     plot_isf,
 )
 from classical_diffusion.langevin import (
-    breakdown_filtered_ballistic_trajectory_butterworth,
+    PeriodicSystem1D,
+    breakdown_ballistic_trajectory,
     calculate_probability_under_barrier_1d,
+    get_diffusion_time,
     get_effective_mass,
     get_free_effective_mass_exact_1d_periodic_directly,
-    get_initial_conditions,
-    get_over_barrier_initial_conditions,
     plot_exact_offset_gaussian_isf,
     solve_ballistic_ensemble,
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.simulation import TimeSpan
-from classical_diffusion.system import (
-    PeriodicSystem1D,
-    UnitSystem,
-    get_diffusion_time,
-)
+from classical_diffusion.system import UnitSystem
 
 system = PeriodicSystem1D(
     gamma=4e11,
@@ -28,7 +24,6 @@ system = PeriodicSystem1D(
     m=6e-27,
     delta_x=1.48e-10,
     barrier_energy=1.6e-21,
-    units=UnitSystem(),
 )
 
 normalized_system = system.with_normalized_units()
@@ -39,18 +34,17 @@ key = jrandom.PRNGKey(100)
 def _plot_effective_mass_offset_isf() -> None:
     fig, ax = get_fancy_figure()
 
-    initial_conditions = get_initial_conditions(normalized_system, n_samples=2000)
     result = solve_ballistic_ensemble(
         normalized_system,
         TimeSpan(
-            t_end=normalized_system.units.time_into(5e-12, units=UnitSystem()),
+            t_end=normalized_system.units.time_into(5e-12),
             n_steps=1000,
         ),
-        initial_conditions,
+        n_samples=2000,
         _key=key,
     )
 
-    elastic_result, _ = breakdown_filtered_ballistic_trajectory_butterworth(
+    elastic_result, _ = breakdown_ballistic_trajectory(
         result,
         minimum_timescale=get_diffusion_time(
             normalized_system, characteristic_length=normalized_system.delta_x / 0.5
@@ -64,18 +58,13 @@ def _plot_effective_mass_offset_isf() -> None:
     )
     line_0.set_label("elastic")
 
-    initial_conditions = get_over_barrier_initial_conditions(
-        system=normalized_system,
-        barrier_energy=normalized_system.barrier_energy,
-        n_samples=5000,
-    )
     result_free = solve_ballistic_ensemble(
         normalized_system,
         TimeSpan(
-            t_end=normalized_system.units.time_into(50e-12, units=UnitSystem()),
+            t_end=normalized_system.units.time_into(50e-12),
             n_steps=1000,
         ),
-        initial_conditions=initial_conditions,
+        n_samples=5000,
         _key=key,
     )
 
