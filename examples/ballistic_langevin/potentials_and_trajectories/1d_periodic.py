@@ -9,7 +9,7 @@ from classical_diffusion.langevin import (
     breakdown_ballistic_trajectory,
     get_diffusion_time,
     plot_periodic_potential_1d,
-    solve_single,
+    solve_single_ballistic,
 )
 from classical_diffusion.plot import get_fancy_figure, get_two_panel_figure
 from classical_diffusion.simulation import TimeSpan
@@ -40,8 +40,8 @@ def _plot_ballistic_trajectory() -> None:
 
     key = jrandom.PRNGKey(100)
 
-    result = solve_single(
-        normalized_system.with_gamma(0.0),
+    result = solve_single_ballistic(
+        normalized_system,
         TimeSpan(
             t_end=normalized_system.units.time_into(10e-12),
             n_steps=1000,

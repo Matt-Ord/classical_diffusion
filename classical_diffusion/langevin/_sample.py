@@ -1,13 +1,16 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import sympy as sp
+from scipy.special import ellipkinc
+from scipy.stats.sampling import NumericalInversePolynomial
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from classical_diffusion.langevin import System
+    from classical_diffusion.langevin import PeriodicSystem1D, System
 
 
 def make_free_point_sampler(system: System, barrier_energy: float) -> Callable:
@@ -106,3 +109,36 @@ def make_initial_conditions_sampler(system: System, n_grid: int = 60) -> Callabl
         return x_finals, p_finals
 
     return jax.jit(jax.vmap(_sample_one))
+
+
+def _period(energy: float, system: PeriodicSystem1D) -> float:
+    omega = (2 * np.pi / system.delta_x) * np.sqrt(energy / (2 * system.m))
+    q2 = system.barrier_energy / energy
+    return 2 * ellipkinc(np.pi, q2) / omega
+
+
+def sample_energy_1d_periodic(
+    system: PeriodicSystem1D, n_samples: int, domain: tuple
+) -> np.ndarray[Any, np.dtype[np.floating]]:
+    kbt = system.kbt
+
+    class EnergyDensity:
+        @staticmethod
+        def pdf(energy: float) -> float:
+            return np.exp(-energy / kbt) * _period(energy, system)
+
+        @staticmethod
+        def cdf(energy: float) -> float:
+            msg = "CDF is not implemented for EnergyDensity."
+            raise NotImplementedError(msg)
+
+        @staticmethod
+        def logpdf(energy: float) -> float:
+            return -energy / kbt + np.log(_period(energy, system))
+
+    energy_sampler = NumericalInversePolynomial(
+        EnergyDensity(),
+        domain=domain,
+        center=domain[0],
+    )
+    return energy_sampler.rvs(size=n_samples)

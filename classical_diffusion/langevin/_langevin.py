@@ -25,6 +25,17 @@ if TYPE_CHECKING:
     from classical_diffusion.simulation import TimeSpan
 
 
+def hash_array(arrays: tuple[np.ndarray, ...]) -> int:
+    """Hash a tuple of arrays using CRC32."""
+    chk = 0
+    for arr in arrays:
+        # Chain the CRC32 checksums of the raw float bytes
+        chk = zlib.crc32(arr.tobytes(), chk)  # cspell: disable-line
+        # Include shape just in case the same floats are reshaped
+        chk = zlib.crc32(str(arr.shape).encode(), chk)
+    return chk
+
+
 @dataclass(frozen=True, kw_only=True)
 class SingleLangevinSimulationResult[S: System](SingleSimulationResult[S]):
     """Results of a single simulation of the periodic Langevin equation."""
@@ -185,23 +196,13 @@ def _run_langevin_ensemble_jit(
     return jax.vmap(solve_one, in_axes=(0, 0, 0))(xs0, ps0, keys)
 
 
-def _hash_initial_conditions(initial_conditions: tuple[np.ndarray, np.ndarray]) -> int:
-    chk = 0
-    for arr in initial_conditions:
-        # Chain the CRC32 checksums of the raw float bytes
-        chk = zlib.crc32(arr.tobytes(), chk)  # cspell: disable-line
-        # Include shape just in case the same floats are reshaped
-        chk = zlib.crc32(str(arr.shape).encode(), chk)
-    return chk
-
-
 def _solve_ensemble_path[S: System](
     system: S,
     time_span: TimeSpan,
     initial_conditions: tuple[np.ndarray, np.ndarray],
     _key: jax.Array,
 ) -> Path:
-    filename = f"{hash(system)}_{hash(time_span)}_{_hash_initial_conditions(initial_conditions)}.npz"
+    filename = f"{hash(system)}_{hash(time_span)}_{hash_array(initial_conditions)}.npz"
     return Path("examples/data") / filename
 
 
@@ -256,7 +257,7 @@ def _solve_single_path[S: System](
     initial_condition: tuple[np.ndarray, np.ndarray],
     _key: jax.Array,
 ) -> Path:
-    filename = f"{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{_hash_initial_conditions(initial_condition)}.npz"
+    filename = f"{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{hash_array(initial_condition)}.npz"
     return Path("examples/data") / filename
 
 
@@ -280,6 +281,34 @@ def solve_single[S: System](
         ),
         _key,
     )[0]
+
+
+@timed
+def solve_single_ballistic[S: System](
+    system: S,
+    time_span: TimeSpan,
+    initial_condition: tuple[
+        np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
+    ],
+    _key: jax.Array,
+) -> SingleLangevinSimulationResult[S]:
+    """Solve the ULD Langevin equation for a single trajectory via vmap."""
+    out = solve_ensemble.load_or_call_uncached(
+        dataclasses.replace(system.as_canonical(), gamma=0.0),
+        time_span,
+        (
+            np.array([initial_condition[0]]),
+            np.array([initial_condition[1]]),
+        ),
+        _key,
+    )[0]
+
+    return SingleLangevinSimulationResult(
+        times=out.times,
+        x_points=out.x_points,
+        p_points=out.p_points,
+        system=system,
+    )
 
 
 def _solve_ballistic_ensemble_path[S: System](
@@ -437,7 +466,7 @@ def _solve_overdamped_ensemble_path[S: System](
     ],
     _key: jax.Array,
 ) -> Path:
-    filename = f"overdamped_{hash(system)}_{hash(time_span)}_{_hash_initial_conditions(initial_conditions)}.npz"
+    filename = f"overdamped_{hash(system)}_{hash(time_span)}_{hash_array(initial_conditions)}.npz"
     return Path("examples/data") / filename
 
 

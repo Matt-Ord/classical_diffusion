@@ -1,7 +1,6 @@
 import datetime
 import pickle  # ruff:ignore[suspicious-pickle-import]
 import types
-import zlib
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import update_wrapper, wraps
@@ -219,13 +218,3 @@ def cached[**P, R](
         )
 
     return _cached
-
-
-def hash_array(arrays: tuple[np.ndarray, ...]) -> int:
-    chk = 0
-    for arr in arrays:
-        # Chain the CRC32 checksums of the raw float bytes
-        chk = zlib.crc32(arr.tobytes(), chk)  # cspell: disable-line
-        # Include shape just in case the same floats are reshaped
-        chk = zlib.crc32(str(arr.shape).encode(), chk)
-    return chk
