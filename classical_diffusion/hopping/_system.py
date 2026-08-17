@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 import jax
@@ -23,7 +23,7 @@ class CanonicalLattice(Protocol):
 class Lattice(ABC):
     """Parameters representing a simplified, discrete lattice representing a physical potential."""
 
-    units: UnitSystem = UnitSystem()  # ruff:ignore[function-call-in-dataclass-default-argument]
+    units: UnitSystem = field(default_factory=UnitSystem)
 
     @abstractmethod
     def x_points_from_indices(
