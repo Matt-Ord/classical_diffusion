@@ -33,15 +33,18 @@ class UnitSystem:
         return np.sqrt(self.atomic_mass * self.angstrom**2 / self.Boltzmann)
 
     @overload
-    def time_into(self, value: float, units: UnitSystem) -> float: ...
+    def time_into(self, value: float, units: UnitSystem | None = None) -> float: ...
     @overload
     def time_into[DT: np.dtype[np.number]](
-        self, value: np.ndarray[Any, DT], units: UnitSystem
+        self, value: np.ndarray[Any, DT], units: UnitSystem | None = None
     ) -> np.ndarray[Any, DT]: ...
     def time_into(
-        self, value: float | np.ndarray[Any, np.dtype[np.number]], units: UnitSystem
+        self,
+        value: float | np.ndarray[Any, np.dtype[np.number]],
+        units: UnitSystem | None = None,
     ) -> float | np.ndarray[Any, np.dtype[np.number]]:
         """Convert a time from SI units to the system's units."""
+        units = units or UnitSystem.si()
         time_factor = self.time_factor / units.time_factor
         return value * time_factor
 
