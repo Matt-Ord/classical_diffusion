@@ -6,7 +6,7 @@ import scipy.stats
 import sympy as sp
 from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
-from scipy.signal import butter, sosfiltfilt
+from scipy.signal import butter, sosfiltfilt  # cspell: disable-line
 
 from classical_diffusion.langevin._langevin import (
     LangevinSimulationResult,
@@ -411,8 +411,8 @@ def plot_2d_trajectory(
     fig, ax = get_figure(ax)
 
     lines = []
-    for traj in range(n_trajectories):
-        (line,) = ax.plot(result.x_points[traj, 0, :], result.x_points[traj, 1, :])
+    for t in range(n_trajectories):
+        (line,) = ax.plot(result.x_points[t, 0, :], result.x_points[t, 1, :])
         lines.append(line)
 
     ax.set_xlabel("$x$")
@@ -491,6 +491,7 @@ def plot_probability_over_barrier(
 def get_effective_mass(elastic_result: LangevinSimulationResult) -> np.ndarray:
     """Return the effective mass matrix averaged over a full simulation."""
     elastic_ps = elastic_result.p_points
+    # cspell: disable-next-line  # ruff: ignore[commented-out-code]
     elastic_ps_squared = np.einsum("nit,njt->nijt", elastic_ps, elastic_ps)
     avg_elastic_ps_squared = np.average(elastic_ps_squared, axis=(0, 3))
 
@@ -505,6 +506,7 @@ def get_full_effective_mass_from_free(
 ) -> np.ndarray:
     """Return the effective mass, correcting for trapped trajectories analytically."""
     elastic_ps = elastic_result.p_points
+    # cspell: disable-next-line  # ruff: ignore[commented-out-code]
     elastic_ps_squared = np.einsum("nit,njt->nijt", elastic_ps, elastic_ps)
     avg_elastic_ps_squared_given_escaped = np.average(elastic_ps_squared, axis=(0, 3))
 
@@ -630,7 +632,7 @@ def plot_effective_mass_ratio(
 
     ax.set_title("Effective Mass Ratio vs Barrier Energy")
     ax.set_xlabel("Barrier Energy")
-    ax.set_ylabel(r"$m_{\mathrm{eff}} / m$")
+    ax.set_ylabel(r"$m_{\mathrm{eff}} / m$")  # cspell: disable-line
     ax.legend()
 
     return fig, ax, line
