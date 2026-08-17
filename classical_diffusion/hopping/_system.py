@@ -1,18 +1,22 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from classical_diffusion.system import UnitSystem
+from classical_diffusion.util import timed
+
+if TYPE_CHECKING:
+    from classical_diffusion.langevin import PeriodicSystem1D
 
 
 class CanonicalLattice(Protocol):
     """Protocol for JAX-compatible canonical PyTree lattices."""
 
-    def get_rates(self, pos: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]: ...
+    def get_rates(self, positions: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]: ...
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -29,10 +33,10 @@ class Lattice(ABC):
 
     @abstractmethod
     def get_rates(
-        self, pos: jnp.ndarray[Any, jnp.dtype[jnp.int_]]
+        self, positions: np.ndarray[Any, np.dtype[np.int_]]
     ) -> tuple[
-        jnp.ndarray[Any, jnp.dtype[jnp.int_]],
-        jnp.ndarray[Any, jnp.dtype[jnp.float_]],
+        np.ndarray[Any, np.dtype[np.int_]],
+        np.ndarray[Any, np.dtype[np.float64]],
     ]:
         pass
 
@@ -46,8 +50,8 @@ class CanonicalLattice1D:
     hop_time: float
     lattice_spacing: float
 
-    def get_rates(self, pos: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
-        hop_sites = pos + jnp.array([[1], [-1]])
+    def get_rates(self, positions: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        hop_sites = positions + jnp.array([[1], [-1]])
         hop_rates = jnp.array([1.0 / self.hop_time, 1.0 / self.hop_time])
         return hop_sites, hop_rates
 
@@ -72,14 +76,22 @@ class Lattice1D(Lattice):
     ) -> np.ndarray[Any, np.dtype[np.floating]]:
         return indices * self.lattice_spacing
 
+    @timed
     def get_rates(
-        self, pos: np.ndarray[Any, np.dtype[np.int_]]
+        self, positions: np.ndarray[Any, np.dtype[np.int_]]
     ) -> tuple[
         np.ndarray[Any, np.dtype[np.int_]],
         np.ndarray[Any, np.dtype[np.float64]],
     ]:
-        hop_sites = pos + np.array([[1], [-1]])
-        hop_rates = np.array([1 / self.hop_time, 1 / self.hop_time])
+        delta_site = np.array([-1, 1])
+        hop_sites = positions[:, np.newaxis] + delta_site[np.newaxis, :]
+        single_hop_rates = np.array(
+            [
+                1 / self.hop_time,
+                1 / self.hop_time,
+            ]
+        )
+        hop_rates = np.tile(single_hop_rates, (len(positions), 1))
         return (hop_sites, hop_rates)
 
     def as_canonical(self) -> CanonicalLattice1D:
@@ -87,3 +99,53 @@ class Lattice1D(Lattice):
             hop_time=(self.hop_time),
             lattice_spacing=(self.lattice_spacing),
         )
+
+
+@dataclass(kw_only=True, frozen=True)
+class KramersParameters:
+    omega_well: float
+    omega_barrier: float
+    barrier_energy: float
+    kbt: float
+    gamma: float
+
+    @property
+    def delta_x(self) -> float:
+        """The delta x of the system."""
+        omegas_ss = self.omega_well**2 + self.omega_barrier**2
+        return float(
+            2
+            * np.sqrt(
+                (2 * omegas_ss * self.barrier_energy)
+                / (self.omega_barrier**2 * self.omega_well**2)
+            )
+        )
+
+
+def get_kramers_rate(params: KramersParameters) -> float:
+    return (
+        (params.omega_well * params.omega_barrier) / (2 * np.pi * params.gamma)
+    ) * np.exp(-params.barrier_energy / params.kbt)
+
+
+def get_kramers_parameters_cosine(system: PeriodicSystem1D) -> KramersParameters:
+    """Potential must be cosine."""
+    mass = system.m
+    barrier_energy = system.barrier_energy
+    delta_x = system.delta_x
+    # Effective omega, approximating as a harmonic potential
+    omega = np.sqrt(2 * (np.pi**2) * (barrier_energy / delta_x**2) / mass)
+
+    return KramersParameters(
+        omega_barrier=omega,
+        omega_well=omega,
+        barrier_energy=barrier_energy,
+        kbt=system.kbt,
+        gamma=system.gamma,
+    )
+
+
+def lattice_1d_from_kramers_parameters(params: KramersParameters) -> Lattice1D:
+    """Get a 1D lattice from Kramers parameters."""
+    hop_time = 1 / get_kramers_rate(params)
+    return Lattice1D(lattice_spacing=params.delta_x, hop_time=hop_time)

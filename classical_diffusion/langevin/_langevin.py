@@ -30,7 +30,7 @@ rng = np.random.default_rng()
 
 
 @dataclass(frozen=True, kw_only=True)
-class SingleLangevinSimulationResult(SingleSimulationResult["System[Any]"]):
+class SingleLangevinSimulationResult[S: System](SingleSimulationResult[S]):
     """Results of a single simulation of the periodic Langevin equation."""
 
     p_points: np.ndarray[Any, np.dtype[np.floating]]
@@ -106,7 +106,11 @@ def _get_force_fn(
     system: System,
 ) -> Callable[[jnp.ndarray, tuple[float, ...]], jnp.ndarray]:
     """Compute a callable force function, taking and returning an array."""
-    raw_fn = sp.lambdify(system.lambda_symbols, system.force_expr, "jax")
+    raw_fn = sp.lambdify(
+        system.lambda_symbols,
+        system.force_expr,
+        modules=[{"DerivativeSafeMod": jnp.mod}, "jax"],
+    )
     return lambda x_array, params: jnp.array(raw_fn(*x_array, *params))
 
 
@@ -226,10 +230,7 @@ def solve_ensemble[S: System](
     n_run = xs0_jax.shape[0]
 
     times = jnp.linspace(
-        time_span.t_start,
-        time_span.t_end,
-        time_span.n_steps,
-        endpoint=True,
+        time_span.t_start, time_span.t_end, time_span.n_steps + 1, endpoint=True
     )
 
     if np.isclose(system.gamma, 0.0):
@@ -305,7 +306,9 @@ def sample_x_initial_1d(
 ) -> np.ndarray[Any, np.dtype[np.floating]]:
     x0, *_ = system.coordinate_symbols
     potential_fn = sp.lambdify(
-        (x0, *system.parameter_symbols), system.potential_expr, "numpy"
+        (x0, *system.parameter_symbols),
+        system.potential_expr,
+        modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
     )
     kbt = system.kbt
     params = system.params
@@ -346,6 +349,7 @@ def solve_ballistic_ensemble[S: System](
     _key: jax.Array,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of ballistic trajectories in parallel via jax.vmap."""
+    # TODO: use old...
     return solve_ensemble.load_or_call_uncached(
         system.with_gamma(0.0),
         time_span,
