@@ -94,6 +94,7 @@ __all__ = [
     "plot_x_histogram",
     "solve_ballistic_ensemble",
     "solve_ensemble",
+    "solve_overdamped_ensemble",
     "solve_single",
     "split_escaped_and_trapped",
 ]

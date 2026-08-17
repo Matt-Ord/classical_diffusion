@@ -30,7 +30,7 @@ rng = np.random.default_rng()
 
 
 @dataclass(frozen=True, kw_only=True)
-class SingleLangevinSimulationResult(SingleSimulationResult["System[Any]"]):
+class SingleLangevinSimulationResult[S: System](SingleSimulationResult[S]):
     """Results of a single simulation of the periodic Langevin equation."""
 
     p_points: np.ndarray[Any, np.dtype[np.floating]]
@@ -226,10 +226,7 @@ def solve_ensemble[S: System](
     n_run = xs0_jax.shape[0]
 
     times = jnp.linspace(
-        time_span.t_start,
-        time_span.t_end,
-        time_span.n_steps,
-        endpoint=True,
+        time_span.t_start, time_span.t_end, time_span.n_steps + 1, endpoint=True
     )
 
     if np.isclose(system.gamma, 0.0):

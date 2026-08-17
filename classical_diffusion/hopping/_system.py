@@ -7,12 +7,13 @@ import jax.numpy as jnp
 import numpy as np
 
 from classical_diffusion.system import UnitSystem
+from classical_diffusion.util import timed
 
 
 class CanonicalLattice(Protocol):
     """Protocol for JAX-compatible canonical PyTree lattices."""
 
-    def get_rates(self, pos: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]: ...
+    def get_rates(self, positions: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]: ...
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -29,10 +30,10 @@ class Lattice(ABC):
 
     @abstractmethod
     def get_rates(
-        self, pos: jnp.ndarray[Any, jnp.dtype[jnp.int_]]
+        self, positions: np.ndarray[Any, np.dtype[np.int_]]
     ) -> tuple[
-        jnp.ndarray[Any, jnp.dtype[jnp.int_]],
-        jnp.ndarray[Any, jnp.dtype[jnp.float_]],
+        np.ndarray[Any, np.dtype[np.int_]],
+        np.ndarray[Any, np.dtype[np.float64]],
     ]:
         pass
 
@@ -46,8 +47,8 @@ class CanonicalLattice1D:
     hop_time: float
     lattice_spacing: float
 
-    def get_rates(self, pos: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
-        hop_sites = pos + jnp.array([[1], [-1]])
+    def get_rates(self, positions: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        hop_sites = positions + jnp.array([[1], [-1]])
         hop_rates = jnp.array([1.0 / self.hop_time, 1.0 / self.hop_time])
         return hop_sites, hop_rates
 
@@ -72,14 +73,28 @@ class Lattice1D(Lattice):
     ) -> np.ndarray[Any, np.dtype[np.floating]]:
         return indices * self.lattice_spacing
 
+    @timed
     def get_rates(
-        self, pos: np.ndarray[Any, np.dtype[np.int_]]
+        self, positions: np.ndarray[Any, np.dtype[np.int_]]
     ) -> tuple[
         np.ndarray[Any, np.dtype[np.int_]],
         np.ndarray[Any, np.dtype[np.float64]],
     ]:
-        hop_sites = pos + np.array([[1], [-1]])
-        hop_rates = np.array([1 / self.hop_time, 1 / self.hop_time])
+        delta_site = np.array([-4, -3, -2, -1, 1, 2, 3, 4])
+        hop_sites = positions[:, np.newaxis] + delta_site[np.newaxis, :]
+        single_hop_rates = np.array(
+            [
+                0.125 / self.hop_time,
+                0.25 / self.hop_time,
+                0.5 / self.hop_time,
+                1 / self.hop_time,
+                1 / self.hop_time,
+                0.5 / self.hop_time,
+                0.25 / self.hop_time,
+                0.125 / self.hop_time,
+            ]
+        )
+        hop_rates = np.tile(single_hop_rates, (len(positions), 1))
         return (hop_sites, hop_rates)
 
     def as_canonical(self) -> CanonicalLattice1D:
