@@ -101,7 +101,7 @@ def make_initial_conditions_sampler(system: System, n_grid: int = 60) -> Callabl
             return key, x_candidate, accept
 
         key, p_key = jax.random.split(key, 2)
-        init = (key, jnp.zeros(system.n_dim), jnp.array(False))
+        init = (key, jnp.zeros(system.n_dim), jnp.array(False))  # ruff: ignore[boolean-positional-value-in-call]
         _, x_finals, _ = jax.lax.while_loop(_cond_fn, _body_fn, init)
         p_std = jnp.sqrt(system.kbt * system.m)
         p_finals = jax.random.normal(p_key, (system.n_dim,)) * p_std

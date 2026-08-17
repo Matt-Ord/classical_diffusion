@@ -1,0 +1,1 @@
+"""Simulations of classical diffusion."""
