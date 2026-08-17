@@ -14,25 +14,21 @@ from classical_diffusion.langevin import (
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.simulation import TimeSpan
 
-system = PeriodicSystem1D(
-    gamma=5e11,
-    temperature=155,
-    m=8e-27,
-    delta_x=5e-10,
-    barrier_energy=4e-21,
-)
-
-normalized_system = system.with_normalized_units()
-
-key = jrandom.PRNGKey(100)
-
 
 def _plot_periodic_isf() -> None:
+    system = PeriodicSystem1D(
+        gamma=5e11,
+        temperature=155,
+        m=8e-27,
+        delta_x=5e-10,
+        barrier_energy=4e-21,
+    ).with_normalized_units()
 
+    key = jrandom.PRNGKey(100)
     full_result = solve_ensemble(
-        normalized_system,
+        system,
         TimeSpan(
-            t_end=normalized_system.units.time_into(10e-12),
+            t_end=system.units.time_into(10e-12),
             n_steps=1000,
         ),
         (np.full((500, 1), 0.0), np.full((500, 1), 0.0)),
@@ -50,9 +46,9 @@ def _plot_periodic_isf() -> None:
     line_0.set_label("full simulation")
 
     ballistic_result = solve_ballistic_ensemble(
-        normalized_system,
+        system,
         TimeSpan(
-            t_end=normalized_system.units.time_into(3e-12),
+            t_end=system.units.time_into(3e-12),
             n_steps=1000,
         ),
         n_samples=5000,
@@ -67,7 +63,7 @@ def _plot_periodic_isf() -> None:
     elastic_result, inelastic_result = breakdown_ballistic_trajectory(
         ballistic_result,
         minimum_timescale=get_diffusion_time(
-            normalized_system, characteristic_length=normalized_system.delta_x
+            system, characteristic_length=system.delta_x
         ),
     )
 

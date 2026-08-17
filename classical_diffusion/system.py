@@ -79,10 +79,24 @@ class UnitSystem:
         """The length factor of the system."""
         return self.angstrom / angstrom_si
 
+    def length_into(
+        self, value: float | np.ndarray[Any, np.dtype[np.number]], units: UnitSystem
+    ) -> float | np.ndarray[Any, np.dtype[np.number]]:
+        """Convert a length from SI units to the system's units."""
+        length_factor = self.length_factor / units.length_factor
+        return value * length_factor
+
     @property
     def energy_factor(self) -> float:
         """The energy factor of the system."""
         return self.Boltzmann / Boltzmann_si
+
+    def energy_into(
+        self, value: float | np.ndarray[Any, np.dtype[np.number]], units: UnitSystem
+    ) -> float | np.ndarray[Any, np.dtype[np.number]]:
+        """Convert an energy from SI units to the system's units."""
+        energy_factor = self.energy_factor / units.energy_factor
+        return value * energy_factor
 
 
 @jax.tree_util.register_dataclass
