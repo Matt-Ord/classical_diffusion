@@ -8,10 +8,9 @@ from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
 from scipy.signal import butter, sosfiltfilt
 
-from classical_diffusion.langevin import (
+from classical_diffusion.langevin._langevin import (
     LangevinSimulationResult,
     SingleLangevinSimulationResult,
-    get_energy,
 )
 from classical_diffusion.langevin._system import PeriodicSystem1D, System
 from classical_diffusion.plot import get_figure
@@ -91,6 +90,47 @@ def plot_kinetic_probability[T: LangevinSimulationResult](
     ax.set_yscale("log")
 
     return fig, ax, (line0, cast("BarContainer", bars))
+
+
+def get_energy(
+    system: System,
+    x_points: np.ndarray,
+    p_points: np.ndarray,
+) -> np.ndarray[Any, np.dtype[np.floating]]:
+    """Return the energy of the system."""
+    potential = sp.lambdify(
+        (*system.coordinate_symbols, *system.parameter_symbols),
+        system.potential_expr,
+        "numpy",
+    )
+
+    x_components = [x_points[:, d] for d in range(system.n_dim)]
+    potential = potential(*x_components, *system.params)
+
+    kinetic = np.sum(p_points**2, axis=1) / (2 * system.m)
+
+    return kinetic + potential
+
+
+def plot_energy(
+    result: LangevinSimulationResult, n_trajectories: int = 1, *, ax: Axes
+) -> tuple[Figure, Axes]:
+    """Plot the energy of the system with time."""
+    fig, ax = get_figure(ax)
+    energy = get_energy(
+        system=result.system, x_points=result.x_points, p_points=result.p_points
+    )
+    for trajectory in range(n_trajectories):
+        ax.plot(
+            result.times,
+            energy[trajectory, :],
+            label=f"trajectory {trajectory}",
+        )
+
+    ax.set_xlabel("time")
+    ax.set_ylabel("energy")
+
+    return fig, ax
 
 
 def split_result(

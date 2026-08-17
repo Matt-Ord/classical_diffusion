@@ -5,7 +5,6 @@ from classical_diffusion.langevin import (
     PeriodicSystemFCC,
     breakdown_ballistic_trajectory,
     get_diffusion_time,
-    get_energy_single,
     plot_2d_trajectory_single,
     plot_periodic_potential_fcc,
     solve_single,
@@ -55,9 +54,6 @@ def _plot_ballistic_trajectory() -> None:
             normalized_system, 1 / normalized_system.gamma
         ),
     )
-
-    print(get_energy_single(normalized_system, result.x_points, result.p_points))
-    print(normalized_system.barrier_energy)
 
     fig, ax = get_two_panel_figure()
 
