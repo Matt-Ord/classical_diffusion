@@ -188,7 +188,8 @@ def _solve_ensemble_path[S: System](
     system: S,
     time_span: TimeSpan,
     initial_conditions: tuple[np.ndarray, np.ndarray],
-    _key: jax.Array,
+    *,
+    _key: jax.Array | None = None,
 ) -> Path:
     filename = f"{hash(system)}_{hash(time_span)}_{hash_array(initial_conditions)}.npz"
     return Path("examples/data") / filename
@@ -202,7 +203,8 @@ def solve_ensemble[S: System](
     initial_conditions: tuple[
         np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
     ],
-    _key: jax.Array,
+    *,
+    _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of ULD Langevin trajectories in parallel via jax.vmap."""
     xs0_jax = jnp.asarray(initial_conditions[0])
@@ -218,7 +220,7 @@ def solve_ensemble[S: System](
             system.as_canonical(), xs0_jax, ps0_jax, times
         )
     else:
-        # Vectorized generation of independent noise seeds per run
+        _key = _key or jax.random.PRNGKey(0)
         keys = jax.random.split(_key, n_run)
 
         xs_batch, ps_batch = _run_langevin_ensemble_jit(
@@ -243,7 +245,8 @@ def _solve_single_path[S: System](
     system: S,
     time_span: TimeSpan,
     initial_condition: tuple[np.ndarray, np.ndarray],
-    _key: jax.Array,
+    *,
+    _key: jax.Array | None = None,
 ) -> Path:
     filename = f"{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{hash_array(initial_condition)}.npz"
     return Path("examples/data") / filename
@@ -257,7 +260,8 @@ def solve_single[S: System](
     initial_condition: tuple[
         np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
     ],
-    _key: jax.Array,
+    *,
+    _key: jax.Array | None = None,
 ) -> SingleLangevinSimulationResult[S]:
     """Solve the ULD Langevin equation for a single trajectory via vmap."""
     return solve_ensemble.load_or_call_uncached(
@@ -267,7 +271,7 @@ def solve_single[S: System](
             np.array([initial_condition[0]]),
             np.array([initial_condition[1]]),
         ),
-        _key,
+        _key=_key,
     )[0]
 
 
@@ -278,7 +282,8 @@ def solve_single_ballistic[S: System](
     initial_condition: tuple[
         np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
     ],
-    _key: jax.Array,
+    *,
+    _key: jax.Array | None = None,
 ) -> SingleLangevinSimulationResult[S]:
     """Solve the ULD Langevin equation for a single trajectory via vmap."""
     out = solve_ensemble.load_or_call_uncached(
@@ -288,7 +293,7 @@ def solve_single_ballistic[S: System](
             np.array([initial_condition[0]]),
             np.array([initial_condition[1]]),
         ),
-        _key,
+        _key=_key,
     )[0]
 
     return SingleLangevinSimulationResult(
@@ -303,7 +308,8 @@ def _solve_ballistic_ensemble_path[S: System](
     system: S,
     time_span: TimeSpan,
     n_samples: int,
-    _key: jax.Array,
+    *,
+    _key: jax.Array | None = None,
 ) -> Path:
     filename = (
         f"{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}.npz"
@@ -330,14 +336,15 @@ def solve_ballistic_ensemble[S: System](
     system: S,
     time_span: TimeSpan,
     n_samples: int,
-    _key: jax.Array,
+    *,
+    _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of ballistic trajectories in parallel via jax.vmap."""
     out = solve_ensemble.load_or_call_uncached(
         dataclasses.replace(system.as_canonical(), gamma=0.0),
         time_span,
         _get_initial_conditions(system, n_samples),
-        _key,
+        _key=_key,
     )
     return LangevinSimulationResult(
         times=out.times,
@@ -363,7 +370,8 @@ def _solve_over_barrier_ballistic_ensemble_path[S: System](
     time_span: TimeSpan,
     n_samples: int,
     barrier_energy: float,
-    _key: jax.Array,
+    *,
+    _key: jax.Array | None = None,
 ) -> Path:
     filename = f"over_barrier_{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}_{barrier_energy}.npz"
     return Path("examples/data") / filename
@@ -376,7 +384,8 @@ def solve_over_barrier_ballistic_ensemble[S: System](
     time_span: TimeSpan,
     n_samples: int,
     barrier_energy: float,
-    _key: jax.Array,
+    *,
+    _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of ballistic trajectories in parallel via jax.vmap."""
     out = solve_ensemble.load_or_call_uncached(
@@ -385,7 +394,7 @@ def solve_over_barrier_ballistic_ensemble[S: System](
         _get_over_barrier_initial_conditions(
             system, barrier_energy=barrier_energy, n_samples=n_samples
         ),
-        _key,
+        _key=_key,
     )
     return LangevinSimulationResult(
         times=out.times,
@@ -452,7 +461,8 @@ def _solve_overdamped_ensemble_path[S: System](
     initial_conditions: tuple[
         np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
     ],
-    _key: jax.Array,
+    *,
+    _key: jax.Array | None = None,
 ) -> Path:
     filename = f"overdamped_{hash(system)}_{hash(time_span)}_{hash_array(initial_conditions)}.npz"
     return Path("examples/data") / filename
@@ -466,7 +476,8 @@ def solve_overdamped_ensemble[S: System](
     initial_conditions: tuple[
         np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
     ],
-    _key: jax.Array,
+    *,
+    _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of overdamped Langevin trajectories in parallel via jax.vmap."""
     n_run = initial_conditions[0].shape[0]
@@ -474,7 +485,7 @@ def solve_overdamped_ensemble[S: System](
     times = jnp.linspace(
         time_span.t_start, time_span.t_end, time_span.n_steps + 1, endpoint=True
     )
-
+    _key = _key or jax.random.PRNGKey(0)
     keys = jax.random.split(_key, n_run)
 
     xs_batch = _run_overdamped_ensemble_jit(

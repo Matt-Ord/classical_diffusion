@@ -1,4 +1,3 @@
-import jax.random as jrandom
 import matplotlib.pyplot as plt
 
 from classical_diffusion.analysis import plot_p_evolution, plot_x_evolution
@@ -8,8 +7,6 @@ from classical_diffusion.langevin import (
     solve_ballistic_ensemble,
 )
 from classical_diffusion.simulation import TimeSpan
-
-key = jrandom.PRNGKey(100)
 
 system = PeriodicSystem1D(
     gamma=0,
@@ -29,7 +26,6 @@ result = solve_ballistic_ensemble(
         n_steps=1000,
     ),
     n_samples=1,
-    _key=key,
 )
 
 fig, axes = plt.subplots(3, 1)

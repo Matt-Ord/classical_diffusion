@@ -1,4 +1,3 @@
-import jax.random as jrandom
 import numpy as np
 
 from classical_diffusion.analysis import (
@@ -28,8 +27,6 @@ system = PeriodicSystemFCC(
 
 normalized_system = system.with_normalized_units()
 
-key = jrandom.PRNGKey(100)
-
 
 def _plot_effective_mass_isf() -> None:
 
@@ -44,7 +41,6 @@ def _plot_effective_mass_isf() -> None:
             n_steps=1000,
         ),
         n_samples=2000,
-        _key=key,
     )
 
     prob_under_barrier = get_under_barrier_probability_ballistic(
@@ -83,7 +79,6 @@ def _plot_effective_mass_isf() -> None:
         ),
         n_samples=500,
         barrier_energy=normalized_system.barrier_energy,
-        _key=key,
     )
 
     elastic_result_free, _ = breakdown_ballistic_trajectory(

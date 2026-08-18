@@ -108,9 +108,11 @@ def solve_ensemble[L: Lattice = Lattice](
     system: L,
     time_span: TimeSpan,
     initial_condition: np.ndarray[tuple[int, int], np.dtype[np.int_]],
-    key: jax.Array,
+    *,
+    key: jax.Array | None = None,
 ) -> HoppingSimulationResult[L]:
     """Solve the hopping ensemble."""
+    key = key or jax.random.PRNGKey(0)
     keys = jax.random.split(key, initial_condition.shape[0])
     times = jnp.linspace(time_span.t_start, time_span.t_end, time_span.n_steps)
 

@@ -1,4 +1,3 @@
-import jax.random as jrandom
 import numpy as np
 
 from classical_diffusion.analysis import (
@@ -24,7 +23,6 @@ def _plot_periodic_isf() -> None:
         barrier_energy=4e-21,
     ).with_normalized_units()
 
-    key = jrandom.PRNGKey(100)
     full_result = solve_ensemble(
         system,
         TimeSpan(
@@ -32,7 +30,6 @@ def _plot_periodic_isf() -> None:
             n_steps=1000,
         ),
         (np.full((500, 1), 0.0), np.full((500, 1), 0.0)),
-        _key=key,
     )
 
     fig, ax = get_fancy_figure()
@@ -52,7 +49,6 @@ def _plot_periodic_isf() -> None:
             n_steps=1000,
         ),
         n_samples=5000,
-        _key=key,
     )
 
     _, ax, line_1, _ = plot_isf(
@@ -79,15 +75,9 @@ def _plot_periodic_isf() -> None:
     line_3.set_label("inelastic")
     line_3.set_linestyle(":")
 
-    ax.set_xlim(
-        0,
-        2e-12,
-    )
+    ax.set_xlim(0, 2e-12)
 
-    ax.set_ylim(
-        0.6,
-        1.0,
-    )
+    ax.set_ylim(0.6, 1.0)
 
     ax.legend(handles=[line_0, line_1, line_2, line_3])
     fig.savefig(
