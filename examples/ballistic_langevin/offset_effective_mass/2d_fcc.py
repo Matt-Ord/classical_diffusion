@@ -1,6 +1,5 @@
 import dataclasses
 
-import jax.random as jrandom
 import numpy as np
 
 from classical_diffusion.analysis import (
@@ -29,8 +28,6 @@ system = PeriodicSystemFCC(
 
 normalized_system = system.with_normalized_units()
 
-key = jrandom.PRNGKey(100)
-
 
 def _plot_effective_mass_offset_isf() -> None:
 
@@ -47,7 +44,6 @@ def _plot_effective_mass_offset_isf() -> None:
             n_steps=1000,
         ),
         n_samples=2000,
-        _key=key,
     )
 
     under_barrier_prob = get_under_barrier_probability_ballistic(
@@ -87,7 +83,6 @@ def _plot_effective_mass_offset_isf() -> None:
             n_steps=1000,
         ),
         n_samples=1000,
-        _key=key,
     )
 
     elastic_result_free, _ = breakdown_ballistic_trajectory(

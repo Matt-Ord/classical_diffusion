@@ -282,12 +282,12 @@ def _get_potential_expr_fcc() -> sp.Expr:
     """Return the potential energy expression for a 2D FCC lattice."""
     x0, x1 = sp.symbols("x0 x1")
     s0, s1 = sp.symbols("s0 s1")
-    c = 2.0 * sp.pi / (sp.sqrt(3.0) * s0)
+    c = sp.Integer(2) * sp.pi / (sp.sqrt(3.0) * s0)
 
-    kx0 = c * (-1.0 / sp.sqrt(3.0))
-    kx1 = c * 1.0
+    kx0 = c * (sp.Integer(-1) / sp.sqrt(3.0))
+    kx1 = c * sp.Integer(1)
 
-    ky0 = c * (2.0 / sp.sqrt(3.0))
+    ky0 = c * (sp.Integer(2) / sp.sqrt(3.0))
     ky1 = 0.0
 
     arg1 = x0 * kx0 + x1 * kx1
@@ -296,7 +296,7 @@ def _get_potential_expr_fcc() -> sp.Expr:
 
     cos_sum = sp.cos(arg1) + sp.cos(arg2) + sp.cos(arg3)
 
-    return 2.0 * s1 * cos_sum + 3.0 * s1
+    return sp.Integer(2) * s1 * cos_sum + sp.Integer(3) * s1
 
 
 class PeriodicSystemFCC(System):

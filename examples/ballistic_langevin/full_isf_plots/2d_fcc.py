@@ -1,4 +1,3 @@
-import jax.random as jrandom
 import numpy as np
 
 from classical_diffusion.analysis import (
@@ -24,8 +23,6 @@ system = PeriodicSystemFCC(
 
 normalized_system = system.with_normalized_units()
 
-key = jrandom.PRNGKey(100)
-
 
 def _plot_periodic_isf() -> None:
 
@@ -36,7 +33,6 @@ def _plot_periodic_isf() -> None:
             n_steps=1000,
         ),
         (np.full((500, 2), 1.0), np.full((500, 2), 0.0)),
-        _key=key,
     )
 
     direction = np.array([0, 1])
@@ -57,7 +53,6 @@ def _plot_periodic_isf() -> None:
             n_steps=5000,
         ),
         n_samples=100000,
-        _key=key,
     )
 
     _, ax, line_1, _ = plot_isf(

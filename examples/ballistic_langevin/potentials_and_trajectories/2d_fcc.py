@@ -1,4 +1,3 @@
-import jax.random as jrandom
 import numpy as np
 
 from classical_diffusion.langevin import (
@@ -22,8 +21,6 @@ system = PeriodicSystemFCC(
 
 normalized_system = system.with_normalized_units()
 
-key = jrandom.PRNGKey(100)
-
 
 def _plot_periodic_system() -> None:
 
@@ -36,8 +33,6 @@ def _plot_periodic_system() -> None:
 
 def _plot_ballistic_trajectory() -> None:
 
-    key = jrandom.PRNGKey(100)
-
     result = solve_single_ballistic(
         normalized_system,
         TimeSpan(
@@ -45,7 +40,6 @@ def _plot_ballistic_trajectory() -> None:
             n_steps=1000,
         ),
         (np.full((2,), 1), np.full((2,), 0.01)),
-        _key=key,
     )
 
     elastic, inelastic = breakdown_ballistic_trajectory(

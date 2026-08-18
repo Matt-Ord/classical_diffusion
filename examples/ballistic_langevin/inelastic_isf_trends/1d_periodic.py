@@ -1,4 +1,3 @@
-import jax.random as jrandom
 import numpy as np
 
 from classical_diffusion.analysis import (
@@ -23,8 +22,6 @@ system = PeriodicSystem1D(
 
 normalized_system = system.with_normalized_units()
 
-key = jrandom.PRNGKey(100)
-
 
 def _plot_inelastic_trends() -> None:
 
@@ -35,7 +32,6 @@ def _plot_inelastic_trends() -> None:
             n_steps=1000,
         ),
         n_samples=2000,
-        _key=key,
     )
 
     _, inelastic_result = breakdown_ballistic_trajectory(
@@ -53,10 +49,7 @@ def _plot_inelastic_trends() -> None:
         delta_k_values=delta_k_values,
         pairwise=False,
     )
-    ax.set_xlim(
-        0,
-        1e-12,
-    )
+    ax.set_xlim(0, 1e-12)
     fig.savefig(
         "examples/ballistic_langevin/inelastic_isf_trends/1d_periodic.trend.pdf",
         dpi=300,

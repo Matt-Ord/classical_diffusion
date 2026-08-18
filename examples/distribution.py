@@ -1,6 +1,5 @@
 from typing import Any
 
-import jax.random as jrandom
 import numpy as np
 from matplotlib.animation import ArtistAnimation
 
@@ -33,7 +32,6 @@ def fold_results(
 
 
 def _plot_xp_distributions_periodic() -> None:
-    key = jrandom.PRNGKey(100)
 
     system = PeriodicSystem1D(
         gamma=5e11,
@@ -54,7 +52,6 @@ def _plot_xp_distributions_periodic() -> None:
             n_steps=1000,
         ),
         (np.full((10, 1), 0), np.full((10, 1), 0.0)),
-        _key=key,
     )
 
     fig, ax = get_fancy_figure()
@@ -95,7 +92,6 @@ def sample_results(
 
 
 def _plot_x_distribution_spread() -> None:
-    key = jrandom.PRNGKey(100)
 
     system = PeriodicSystem1D(
         gamma=0.5, temperature=0.5, m=1.0, delta_x=5, barrier_energy=2
@@ -105,7 +101,6 @@ def _plot_x_distribution_spread() -> None:
         system,
         TimeSpan(t_end=100 / system.gamma, n_steps=100),
         (np.full((4000, 1), 0.0), np.full((4000, 1), 0.0)),
-        _key=key,
     )
 
     fig, ax = get_fancy_figure()
@@ -131,8 +126,6 @@ def _plot_x_distribution_spread() -> None:
 
 
 def _plot_xp_distributions_harmonic() -> None:
-    key = jrandom.PRNGKey(100)
-
     system = HarmonicSystem(gamma=5e11, temperature=110, m=8e-27, omega=10e12)
 
     normalized_system = system.with_normalized_units()
@@ -146,7 +139,6 @@ def _plot_xp_distributions_harmonic() -> None:
             n_steps=2000,
         ),
         (np.full((10, 1), 0), np.full((10, 1), 0.0)),
-        _key=key,
     )
 
     fig, ax = get_fancy_figure()
