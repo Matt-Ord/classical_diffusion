@@ -103,6 +103,7 @@ class KramersParameters:
     omega_well: float
     omega_barrier: float
     barrier_energy: float
+    m: float
     kbt: float
     gamma: float
 
@@ -110,12 +111,9 @@ class KramersParameters:
     def delta_x(self) -> float:
         """The delta x of the system."""
         omegas_ss = self.omega_well**2 + self.omega_barrier**2
-        return float(
-            2
-            * np.sqrt(
-                (2 * omegas_ss * self.barrier_energy)
-                / (self.omega_barrier**2 * self.omega_well**2)
-            )
+        return 2 * np.sqrt(
+            (2 * omegas_ss * self.barrier_energy)
+            / (self.omega_barrier**2 * self.omega_well**2)
         )
 
 
@@ -137,6 +135,7 @@ def get_kramers_parameters_cosine(system: PeriodicSystem1D) -> KramersParameters
         omega_barrier=omega,
         omega_well=omega,
         barrier_energy=barrier_energy,
+        m=system.m,
         kbt=system.kbt,
         gamma=system.gamma,
     )

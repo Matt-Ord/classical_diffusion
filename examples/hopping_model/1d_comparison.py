@@ -73,9 +73,13 @@ def plot_relaxation_corrected_hopping_isf(
 @timed
 def _plot_kramers_system() -> None:
     system = KramersSystem1D(
-        m=1.0,
         params=KramersParameters(
-            omega_well=2.0, omega_barrier=1.0, barrier_energy=3.0, gamma=0.1, kbt=0.5
+            omega_well=2.0,
+            omega_barrier=1.0,
+            barrier_energy=3.0,
+            m=1.0,
+            gamma=0.1,
+            kbt=0.5,
         ),
     )
 
@@ -94,9 +98,13 @@ def _plot_kramers_system() -> None:
 def _kramers_harmonic_comparison() -> None:
 
     system = KramersSystem1D(
-        m=1.0,
         params=KramersParameters(
-            omega_well=2.0, omega_barrier=1.0, barrier_energy=3.0, gamma=0.1, kbt=0.5
+            omega_well=2.0,
+            omega_barrier=1.0,
+            barrier_energy=3.0,
+            m=1.0,
+            gamma=0.1,
+            kbt=0.5,
         ),
     )
 
@@ -142,7 +150,11 @@ def _kramers_harmonic_comparison() -> None:
     line_0.set_label("Hopping model")
 
     _, _, line, _ = plot_isf(
-        result=langevin_result, ax=ax, delta_k=delta_k, pairwise=True, measure="real"
+        result=langevin_result,
+        ax=ax,
+        delta_k=delta_k,
+        pairwise=True,
+        measure="real",
     )
     line.set_label("Overdamped Langevin")
 
@@ -181,7 +193,11 @@ def _kramers_sinusoid_comparison() -> None:
 
     delta_k = (0.5 * 2 * np.pi / system.delta_x,)
     _, _, line, _ = plot_isf(
-        result=langevin_result, ax=ax, delta_k=delta_k, pairwise=True, measure="real"
+        result=langevin_result,
+        ax=ax,
+        delta_k=delta_k,
+        pairwise=True,
+        measure="real",
     )
     line.set_label("Overdamped Langevin")
 

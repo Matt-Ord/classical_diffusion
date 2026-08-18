@@ -144,7 +144,7 @@ def _get_deterministic_probabilities_jit[L: Lattice](
         return jnp.sum(hop_rates * p[hop_sites], axis=-1) - p * total_outgoing_rates
 
     return dfx.diffeqsolve(
-        term=dfx.ODETerm(vector_field),
+        terms=dfx.ODETerm(vector_field),
         solver=Tsit5(),  # cspell: disable-line
         t0=0,
         t1=times[-1],

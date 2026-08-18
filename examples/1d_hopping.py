@@ -55,9 +55,9 @@ def _plot_1d_deterministic_isf() -> None:
 
     result = get_ensemble_probabilities(
         system,
-        (500001,),
+        (501,),
         TimeSpan(t_end=25, n_steps=200),
-        500,
+        250,
     )
 
     fig, ax = get_fancy_figure()
