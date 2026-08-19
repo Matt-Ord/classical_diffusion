@@ -4,7 +4,7 @@ from classical_diffusion.hopping._analysis import plot_deterministic_isf
 from classical_diffusion.hopping._hopping import (
     DeterministicSolverResult,
     HoppingSimulationResult,
-    get_ensemble_probabilities,
+    get_deterministic_probabilities,
     solve_ensemble,
 )
 from classical_diffusion.hopping._system import (
@@ -22,6 +22,7 @@ __all__ = [
     "KramersParameters",
     "Lattice",
     "Lattice1D",
+    "get_deterministic_probabilities",
     "get_ensemble_probabilities",
     "get_kramers_parameters_cosine",
     "get_kramers_rate",

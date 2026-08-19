@@ -47,10 +47,19 @@ class CanonicalLattice1D:
     hop_time: float
     lattice_spacing: float
 
+    @timed
     def get_rates(self, positions: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
-        hop_sites = positions + jnp.array([[1], [-1]])
-        hop_rates = jnp.array([1.0 / self.hop_time, 1.0 / self.hop_time])
-        return hop_sites, hop_rates
+
+        delta_site = jnp.array([-1, 1])
+        hop_sites = positions[:, jnp.newaxis] + delta_site[jnp.newaxis, :]
+        single_hop_rates = jnp.array(
+            [
+                1 / self.hop_time,
+                1 / self.hop_time,
+            ]
+        )
+        hop_rates = jnp.tile(single_hop_rates, (len(positions), 1))
+        return (hop_sites, hop_rates)
 
 
 class Lattice1D(Lattice):
