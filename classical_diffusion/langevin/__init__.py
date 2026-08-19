@@ -7,6 +7,7 @@ from classical_diffusion.langevin._langevin import (  # ruff:ignore[unsorted-imp
     LangevinSimulationResult,
     SingleLangevinSimulationResult,
     solve_overdamped_ensemble,
+    solve_overdamped_ensemble_jax,
 )
 
 from classical_diffusion.langevin._analysis import (
@@ -81,6 +82,7 @@ __all__ = [
     "solve_ballistic_ensemble",
     "solve_ensemble",
     "solve_overdamped_ensemble",
+    "solve_overdamped_ensemble_jax",
     "solve_single",
     "split_escaped_and_trapped",
 ]

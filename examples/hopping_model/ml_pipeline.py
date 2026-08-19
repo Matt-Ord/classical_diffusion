@@ -13,25 +13,25 @@ from classical_diffusion.analysis import get_isf
 from classical_diffusion.hopping import (
     KramersParameters,
     Lattice1D,
-    get_deterministic_probabilities,
-)
-from classical_diffusion.hopping._analysis import (
+    deterministic_probabilities_jax,
     get_deterministic_isf,
     get_deterministic_isf_jax,
+    get_deterministic_probabilities,
 )
-from classical_diffusion.hopping._hopping import deterministic_probabilities_jax
 from classical_diffusion.langevin import (
     CanonicalSystem,
     KramersSystem1D,
     solve_overdamped_ensemble,
+    solve_overdamped_ensemble_jax,
 )
-from classical_diffusion.langevin._langevin import solve_overdamped_ensemble_jax
 from classical_diffusion.plot import get_fancy_figure, get_figure, get_measured_data
 from classical_diffusion.simulation import TimeSpan
 from classical_diffusion.util import timed
 
 
 class JaxEnsembleResults(TypedDict):
+    """Jax compatible output from an ensemble run."""
+
     parameters: KramersParameters
     initial_conditions: tuple[
         np.ndarray[Any, np.dtype[np.floating[Any]]],
@@ -56,6 +56,7 @@ class ResidualBlock(eqx.Module):
         )
 
     def __call__(self, x: jax.Array) -> jax.Array:
+        """Run Residual Block layers."""
         residual = x
         x = jax.nn.relu(self.conv1(x))
         x = self.conv2(x)
@@ -104,16 +105,15 @@ class ResNet(eqx.Module):
 # Model functions
 
 
+@jax.jit
 def loss_fn(
     model: eqx.Module,
-    time_span: TimeSpan,
+    times: jnp.ndarray,
     delta_k: float,
     test_isfs: jnp.ndarray,
 ) -> jax.Array:
     """Loss function for an ISF hopping rate prediction model."""
-    # Pre calculate times from time_span - so messy!
-    times = jnp.linspace(time_span.t_start, time_span.t_end, time_span.n_steps + 1)
-
+    print("\nCompile Loss Function")
     # Pass batched isfs through the model to predict hopping rates and isf offsets
     predictions = jax.vmap(model)(test_isfs)  # ty: ignore[invalid-argument-type]
 
@@ -140,18 +140,22 @@ def loss_fn(
     return jnp.mean(errors)
 
 
-def training_step(
+@eqx.filter_jit
+def training_step(  # ruff: ignore[too-many-arguments]
     model: ResNet,
     optimizer_state: optax.OptState,
     optimizer: optax.GradientTransformationExtraArgs,
-    time_span: TimeSpan,
+    *,
+    times: jnp.ndarray,
     delta_k: float,
     test_isfs: jnp.ndarray,
 ) -> tuple[Any, Any, Any]:
+    """Progress the training of the model by one epoch by computing loss, gradients and updates."""
+    print("\nCompile Training Step\n")
 
     # Compute loss and gradients for trainable parameters only
     loss, gradients = eqx.filter_value_and_grad(loss_fn)(
-        model, time_span, delta_k, test_isfs
+        model, times, delta_k, test_isfs
     )
 
     # Calculate parameter updates using Optax
@@ -159,7 +163,6 @@ def training_step(
 
     # Apply updates to the model
     model = eqx.apply_updates(model, updates)
-
     return model, optimizer_state, loss
 
 
@@ -173,10 +176,12 @@ def get_hopping_time_and_offset(model: ResNet, isf: jnp.ndarray) -> tuple[float,
 
 
 def train_model(training_isfs: jnp.ndarray) -> ResNet:
-    """Train a ResNet model on a single ISF averaged over many Langevin runs."""
+    """Train a ResNet model."""
     # Set up constants
     key = jax.random.key(1)
     time_span = TimeSpan(t_start=0, t_end=40, n_steps=200)
+    times = jnp.linspace(time_span.t_start, time_span.t_end, time_span.n_steps + 1)
+
     delta_k = 0.5
 
     # Initialise the model and optimizer
@@ -186,13 +191,18 @@ def train_model(training_isfs: jnp.ndarray) -> ResNet:
     optimizer_state = optimizer.init(eqx.filter(model, eqx.is_array))
 
     # Define number of epochs to train for
-    num_epochs = 100
+    num_epochs = 10
 
     # Training loop
     for epoch in range(num_epochs):
-        # print(f"starting epoch {epoch + 1}")
+        print(f"starting epoch {epoch + 1}")
         model, optimizer_state, loss = training_step(
-            model, optimizer_state, optimizer, time_span, delta_k, training_isfs
+            model,
+            optimizer_state,
+            optimizer,
+            times=times,
+            delta_k=delta_k,
+            test_isfs=training_isfs,
         )
 
         if (epoch + 1) % 20 == 0:
@@ -246,8 +256,6 @@ def run_langevin_trajectories(
     keys: jax.Array,
 ) -> JaxEnsembleResults:
     """Run langevin trajectories."""
-    print("Compiling JAX function")
-
     # Times
     times = TimeSpan(t_start=0, t_end=40, n_steps=200)
 
@@ -276,6 +284,8 @@ def run_langevin_trajectories(
 
 
 # Training data generation functions
+
+
 @timed
 def generate_single_clean_isf(folderpath: str) -> None:
     """Run a langevin ensemble and save the resulting clean isf to file."""
@@ -330,40 +340,49 @@ def generate_single_clean_isf(folderpath: str) -> None:
 
 
 @timed
-def generate_langevin_trajectories(
-    folderpath: str,
-    n_samples: int,
-) -> None:
+def generate_many_equiv_isf(traj_filepath: str, n_isfs: int) -> None:
     """Run the langevin simulations and save to file."""
-    keys = jax.random.split(jax.random.key(100), n_samples)
+    keys = jnp.full(n_isfs, jax.random.key(100))
 
     batched_trajectories = jax.tree.map(np.asarray, run_langevin_trajectories(keys))
     trajectories = [
         jax.tree.map(operator.itemgetter(i), batched_trajectories)
-        for i in range(n_samples)
+        for i in range(n_isfs)
     ]
 
-    # Define file path
-    filepath = folderpath + "/langevin_traj.pkl"
-    with Path(filepath).open("wb") as file:
+    with Path(traj_filepath).open("wb") as file:
         pickle.dump(trajectories, file)
 
 
 @timed
-def generate_isfs(folderpath: str) -> None:
-    """Generate isfs from trajectories saved in ML pipeline and save to file."""
-    # Define local paths to save data to
-    trajectories_path = folderpath + "/langevin_traj.pkl"
-    isfs_path = folderpath + "/langevin_isfs.pkl"
+def generate_random_langevin_trajectories(
+    traj_filepath: str,
+    n_isfs: int,
+) -> None:
+    """Run the langevin simulations and save to file."""
+    keys = jax.random.split(jax.random.key(100), n_isfs)
 
+    batched_trajectories = jax.tree.map(np.asarray, run_langevin_trajectories(keys))
+    trajectories = [
+        jax.tree.map(operator.itemgetter(i), batched_trajectories)
+        for i in range(n_isfs)
+    ]
+
+    with Path(traj_filepath).open("wb") as file:
+        pickle.dump(trajectories, file)
+
+
+@timed
+def generate_isfs(traj_filepath: str, isfs_filepath: str) -> None:
+    """Generate isfs from trajectories saved in ML pipeline and save to file."""
     delta_k = 0.5
 
     # Open the trajectories file and load in the trajectories
-    with Path(trajectories_path).open("rb") as file:
+    with Path(traj_filepath).open("rb") as file:
         trajectory_records = pickle.load(file)
 
     # Open the isfs file and calculate, then save, the isfs
-    with Path(isfs_path).open("wb") as file:
+    with Path(isfs_filepath).open("wb") as file:
         for trajectory in trajectory_records:
             times, x_points = trajectory.get("result")
             isf = get_isf(x_points, (delta_k,))[0]
@@ -376,43 +395,13 @@ def generate_isfs(folderpath: str) -> None:
             pickle.dump(isf_record, file)
 
 
-# Delete soon
-@timed
-def plot_saved_isfs(folderpath: str, num_to_plot: int) -> None:
-    """Plot isfs saved in ML pipeline."""
-    isfs_path = folderpath + "/langevin_isfs.pkl"
-    isf_records = []
-    with Path(isfs_path).open("rb") as file:
-        while True:
-            try:
-                isf_records.append(pickle.load(file))
-            except EOFError:
-                break
-
-    for index in range(min(num_to_plot - 1, len(isf_records))):
-        isf_data = isf_records[index].get("isf")
-
-        fig, ax = get_fancy_figure()
-        fig, ax = get_figure(ax)
-        (line,) = ax.plot(isf_data.get("time"), isf_data.get("isf"))
-        line.set_label("ISF")
-
-        ax.set_xlabel("Time / s")
-        ax.set_ylabel("ISF")
-
-        ax.set_xlim(0, right=20)
-        ax.set_ylim(0, 1)
-        ax.legend()
-        ax.set_title("Langevin ISFs from pipeline")
-
-        fig.savefig(f"./examples/hopping_model/test_{index}.isf.pdf")
-
-
 # Train & Test functions
 
 
 def untrained_test(folderpath: str) -> None:
     """Test an untrained model with a clean isf input."""
+    print("\n\nRunning untrained test\n")
+
     key = jax.random.key(40)
     model = ResNet(key=key)
 
@@ -428,6 +417,7 @@ def untrained_test(folderpath: str) -> None:
 
 def single_clean_test(folderpath: str) -> None:
     """Train and test a model on a single, clean ISF."""
+    print("\n\nRunning test with a single, clean isf\n")
     clean_isf_path = folderpath + "/langevin_clean_isf.pkl"
 
     if not Path(clean_isf_path).exists():
@@ -477,15 +467,74 @@ def single_clean_test(folderpath: str) -> None:
     fig.savefig("./examples/hopping_model/model_test_single_clean.isf.pdf")
 
 
+def many_equiv_test(folderpath: str, n_isfs: int = 50) -> None:  # ruff: ignore[too-many-locals]
+    """Train and test a model on num equivalent but noisy ISFs."""
+    print(f"\n\nRunning test with {n_isfs} equivalent isfs\n")
+    traj_filepath = folderpath + f"/langevin_{n_isfs}_equivalent.pkl"
+    isfs_filepath = folderpath + f"/langevin_{n_isfs}_equivalent_isf.pkl"
+
+    if not Path(isfs_filepath).exists():
+        print("No data, generating new equivalent isfs")
+        generate_many_equiv_isf(traj_filepath, n_isfs)
+        generate_isfs(traj_filepath, isfs_filepath)
+
+    print("Loading equivalent isfs")
+    equivalent_isf_data = []
+    with Path(isfs_filepath).open("rb") as file:
+        while True:
+            try:
+                equivalent_isf_data.append(pickle.load(file))
+            except EOFError:
+                break
+
+    training_isf_data = equivalent_isf_data[:-1]
+
+    training_isfs = jnp.array(
+        [data.get("isf").get("isf") for data in training_isf_data]
+    )
+
+    print("Training model")
+    trained_model = train_model(training_isfs[:, None, :])
+
+    print("\nModel trained! Getting model's isf")
+    test_isf = equivalent_isf_data[-1].get("isf")
+    # Check output
+    hopping_time, _offset = get_hopping_time_and_offset(
+        trained_model, jnp.array([test_isf.get("isf")])
+    )
+
+    system = Lattice1D(1.0, hopping_time)
+    time_span = TimeSpan(t_start=0, t_end=40, n_steps=200)
+    model_isf = get_deterministic_isf(
+        system,
+        get_deterministic_probabilities(system, (1000,), time_span, 500).probabilities,
+        0.5,
+    )
+
+    print("Plotting ISFs")
+    fig, ax = get_fancy_figure()
+    fig, ax = get_figure(ax)
+    (line1,) = ax.plot(test_isf.get("time"), test_isf.get("isf"))
+    line1.set_label("Langevin ISF")
+
+    (line2,) = ax.plot(test_isf.get("time"), model_isf)
+    line2.set_label("Model ISF")
+
+    ax.set_xlabel("Time / s")
+    ax.set_ylabel("ISF")
+
+    ax.set_xlim(0, right=20)
+    ax.set_ylim(0, 1)
+    ax.legend()
+    ax.set_title(
+        "Model trained on many equivalent isfs, tested with this new one as input"
+    )
+
+    fig.savefig("./examples/hopping_model/model_test_many_equiv.isf.pdf")
+
+
 if __name__ == "__main__":
     path = "./examples/data"
-    # generate_single_clean_isf(path)  #  takes ~ 250s
-
-    # resnet_untrained_test(path)
-
-    # generate_langevin_trajectories(path, 10)
-    # generate_isfs(path)
-    # plot_saved_isfs(path, 3)
-
-    # test_loss_fn(path)
+    untrained_test(path)
     single_clean_test(path)
+    many_equiv_test(path)

@@ -6,8 +6,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from classical_diffusion.util import timed
-
 if TYPE_CHECKING:
     from classical_diffusion.langevin import PeriodicSystem1D
 
@@ -47,7 +45,6 @@ class CanonicalLattice1D:
     hop_time: float
     lattice_spacing: float
 
-    @timed
     def get_rates(self, positions: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
 
         delta_site = jnp.array([-1, 1])
@@ -82,7 +79,6 @@ class Lattice1D(Lattice):
     ) -> np.ndarray[Any, np.dtype[np.floating]]:
         return indices * self.lattice_spacing
 
-    @timed
     def get_rates(
         self, positions: np.ndarray[Any, np.dtype[np.int_]]
     ) -> tuple[
