@@ -29,7 +29,9 @@ def _sample_initial_conditions(
         "jax",
     )
 
-    # TODO: this is left to later
+    # TODO: the assumption here is that the minimum of the potential  # ruff: ignore[line-contains-todo]
+    # is at 0, which is not always true. Finding the minimum of the
+    # potential can be done in sympy automatically.
     v_min = 0
     p_std = jnp.sqrt(system.kbt * system.m)
 
