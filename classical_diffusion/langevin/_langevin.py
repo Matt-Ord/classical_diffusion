@@ -349,16 +349,18 @@ def solve_ballistic_ensemble[S: System](
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of ballistic trajectories in parallel via jax.vmap."""
     _key = _get_key(_key)
+
+    simulated_system = system.as_canonical().with_normalized_units()
     out = solve_ensemble.load_or_call_uncached(
-        dataclasses.replace(system.as_canonical(), gamma=0.0),
+        dataclasses.replace(simulated_system, gamma=0.0),
         time_span,
-        _get_initial_conditions(system, n_samples, _key=_key),
+        _get_initial_conditions(simulated_system, n_samples, _key=_key),
         _key=_key,
     )
-    return LangevinSimulationResult(
+    return LangevinSimulationResult[S](
         times=out.times,
-        x_points=out.x_points,
-        p_points=out.p_points,
+        x_points=simulated_system.units.length_into(out.x_points, system.units),
+        p_points=simulated_system.units.momentum_into(out.p_points, system.units),
         system=system,
     )
 
@@ -403,12 +405,16 @@ def solve_over_barrier_ballistic_ensemble[S: System](
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of ballistic trajectories in parallel via jax.vmap."""
     _key = _get_key(_key)
+
+    simulated_system = system.as_canonical().with_normalized_units()
     out = solve_ensemble.load_or_call_uncached(
-        dataclasses.replace(system.as_canonical(), gamma=0.0),
+        dataclasses.replace(simulated_system, gamma=0.0),
         time_span,
         _get_over_barrier_initial_conditions(
-            system,
-            barrier_energy=barrier_energy,
+            simulated_system,
+            barrier_energy=system.units.energy_into(
+                barrier_energy, simulated_system.units
+            ),
             n_samples=n_samples,
             _key=_key,
         ),
@@ -416,8 +422,8 @@ def solve_over_barrier_ballistic_ensemble[S: System](
     )
     return LangevinSimulationResult(
         times=out.times,
-        x_points=out.x_points,
-        p_points=out.p_points,
+        x_points=simulated_system.units.length_into(out.x_points, system.units),
+        p_points=simulated_system.units.momentum_into(out.p_points, system.units),
         system=system,
     )
 

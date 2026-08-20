@@ -1,8 +1,7 @@
-import dataclasses
 import zlib
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Self, final, override
+from typing import final, override
 
 import jax
 import numpy as np
@@ -17,6 +16,29 @@ def _hash_sympy_expr(expr: sp.Expr) -> int:
     return zlib.crc32(stable_string.encode("utf-8"))
 
 
+def max_force(system: System) -> sp.Expr:
+    """Find max ||F|| analytically."""
+    if not system.force_expr or system.potential_expr == 0:
+        return sp.Integer(0)
+
+    param_map = dict(zip(system.parameter_symbols, system.params, strict=False))
+    force = sp.Matrix(system.force_expr).subs(param_map)
+    max_square = sp.simplify(force.dot(force))
+
+    try:
+        for sym in system.coordinate_symbols:
+            max_square = sp.calculus.util.maximum(max_square, sym)
+        return sp.sqrt(max_square)
+    except NotImplementedError:
+        gradient = sp.Matrix([max_square]).jacobian(system.coordinate_symbols)
+        critical_points = sp.solve(gradient, system.coordinate_symbols, dict=True)
+
+        critical_values = [max_square.subs(pt) for pt in critical_points]
+        critical_values = [v for v in critical_values if v.is_real]
+
+        return sp.sqrt(sp.Max(*critical_values)) if critical_values else sp.Integer(0)
+
+
 @dataclass(frozen=True, kw_only=True)
 class System:
     """Parameters representing a physical system."""
@@ -25,7 +47,7 @@ class System:
     temperature: float
     m: float
     potential: tuple[int, sp.Expr]
-    params: tuple[float, ...] = ()
+    params: tuple[float, ...]
     units: UnitSystem = field(default_factory=UnitSystem)
 
     @property
@@ -93,8 +115,8 @@ class System:
 
     @property
     def kbt(self) -> float:
-        """Retrurn kbt."""
-        return self.units.Boltzmann * self.temperature
+        """Kbt."""
+        return self.units.boltzmann * self.temperature
 
     @property
     def lattice_vectors(self) -> np.ndarray:
@@ -106,35 +128,44 @@ class System:
         """The domain over which the equilibrium x-density should be sampled."""
         return (-np.inf, np.inf)
 
-    def with_units(self, units: UnitSystem) -> Self:
-        """Return the system with the given units."""
-        length_factor = units.angstrom / self.units.angstrom
-        mass_factor = units.atomic_mass / self.units.atomic_mass
-        energy_factor = units.Boltzmann / self.units.Boltzmann
-        time_factor = np.sqrt(length_factor**2 * mass_factor / energy_factor)
-        return dataclasses.replace(
-            self,
+    def with_units(self, units: UnitSystem) -> System:
+        """Return the system converted to the given units."""
+        time_factor = self.units.time_factor / units.time_factor
+        return System(
+            m=self.units.mass_into(self.m, units),
             gamma=self.gamma / time_factor,
-            temperature=self.temperature,
-            m=self.m * mass_factor,
             units=units,
+            temperature=self.temperature,
             potential=self.potential,
+            params=self.params,
         )
 
     @property
     def normalized_units(self) -> UnitSystem:
-        """The units suited to a simulation of the system."""
+        """Units scaled purely via intrinsic physical scales of V(x), T, m, and gamma."""
+        # Express rates in uniform units (s^-1)
+        rate_force = max_force(self) / np.sqrt(self.m * self.kbt)
+        rate_force = 0.0 if rate_force == sp.oo else float(rate_force)
+        rate_gamma = self.gamma
+
+        # Select dominant physical rate
+        # If gamma and force are both small, then dont scale the units
+        # Length is velocity * time, and time is 1 / nu_0
+        v_th = np.sqrt(self.kbt / self.m)
+        nu_0 = max(rate_force, rate_gamma, v_th / 1.0)
+        characteristic_length = v_th / nu_0
+
         return UnitSystem(
-            Boltzmann=1 / self.temperature,
-            angstrom=self.units.angstrom,
+            boltzmann=1 / self.temperature,
             atomic_mass=self.units.atomic_mass / self.m,
+            angstrom=self.units.angstrom / characteristic_length,
         )
 
-    def with_normalized_units(self) -> Self:
+    def with_normalized_units(self) -> System:
         """Return the parameters of the simulation in normalized units."""
         return self.with_units(self.normalized_units)
 
-    def with_si_units(self) -> Self:
+    def with_si_units(self) -> System:
         """Return the si parameters of the system."""
         return self.with_units(UnitSystem())
 
@@ -195,17 +226,6 @@ class HarmonicSystem(System):
             units=units,
         )
 
-    @property
-    def normalized_units(self) -> UnitSystem:
-        """The units suited to a simulation of the system."""
-        time_factor = 1 / self.omega
-        return UnitSystem(
-            Boltzmann=1 / self.temperature,
-            angstrom=self.units.angstrom
-            / (time_factor * np.sqrt(self.units.Boltzmann * self.temperature / self.m)),
-            atomic_mass=self.units.atomic_mass / self.m,
-        )
-
 
 class PeriodicSystem1D(System):
     """Parameters for a 1D cosine potential system."""
@@ -249,16 +269,6 @@ class PeriodicSystem1D(System):
     def sampling_domain(self) -> tuple:
         """The domain over which the equilibrium x-density should be sampled."""
         return ((-self.delta_x / 2, self.delta_x / 2),)
-
-    @override
-    @property
-    def normalized_units(self) -> UnitSystem:
-        """The units suited to a simulation of the system."""
-        return UnitSystem(
-            Boltzmann=1 / self.temperature,
-            angstrom=self.units.angstrom / self.delta_x,
-            atomic_mass=self.units.atomic_mass / self.m,
-        )
 
     @override
     def with_units(self, units: UnitSystem) -> PeriodicSystem1D:
@@ -348,16 +358,6 @@ class PeriodicSystemFCC(System):
         a1 = np.array([0.0, np.sqrt(3.0) * self.delta_x])
         a2 = np.array([1.5 * self.delta_x, np.sqrt(3.0) / 2.0 * self.delta_x])
         return np.stack([a1, a2], axis=1)
-
-    @override
-    @property
-    def normalized_units(self) -> UnitSystem:
-        """The units suited to a simulation of the system."""
-        return UnitSystem(
-            Boltzmann=1 / self.temperature,
-            angstrom=self.units.angstrom / self.delta_x,
-            atomic_mass=self.units.atomic_mass / self.m,
-        )
 
     @override
     def with_units(self, units: UnitSystem) -> PeriodicSystemFCC:
@@ -474,15 +474,7 @@ class KramersSystem1D(System):
         """The barrier energy of the system."""
         return self.kramers_params.barrier_energy
 
-    @property
-    def normalized_units(self) -> UnitSystem:
-        """The units suited to a simulation of the system."""
-        return UnitSystem(
-            Boltzmann=1 / self.temperature,
-            angstrom=self.units.angstrom / self.delta_x,
-            atomic_mass=self.units.atomic_mass / self.m,
-        )
-
+    @override
     def with_units(self, units: UnitSystem) -> KramersSystem1D:
         """Return the parameters of the system in the specified units."""
         mass_factor = units.mass_factor / self.units.mass_factor

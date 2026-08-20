@@ -23,7 +23,7 @@ class SingleSimulationResult[S: Any]:
         si_units = UnitSystem()
         length_factor = si_units.angstrom / self.system.units.angstrom
         mass_factor = si_units.atomic_mass / self.system.units.atomic_mass
-        energy_factor = si_units.Boltzmann / self.system.units.kb
+        energy_factor = si_units.boltzmann / self.system.units.boltzmann
         time_factor = np.sqrt(length_factor**2 * mass_factor / energy_factor)
         mass_factor * length_factor / time_factor
         return dataclasses.replace(
@@ -85,7 +85,7 @@ class SimulationResult[S: Any]:
         si_units = UnitSystem()
         length_factor = si_units.angstrom / self.system.units.angstrom
         mass_factor = si_units.atomic_mass / self.system.units.atomic_mass
-        energy_factor = si_units.Boltzmann / self.system.units.Boltzmann
+        energy_factor = si_units.boltzmann / self.system.units.boltzmann
         time_factor = np.sqrt(length_factor**2 * mass_factor / energy_factor)
         return type(self)(
             times=self.times * time_factor,
