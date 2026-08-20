@@ -397,11 +397,26 @@ class KramersSystem1D(System):
     def __init__(
         self,
         *,
-        m: float,
-        params: KramersParameters,
+        params: KramersParameters | None = None,
+        gamma: float | jax.Array | None = None,
+        kbt: float | jax.Array | None = None,
+        m: float | jax.Array | None = None,
+        omega_well: float | jax.Array | None = None,
+        omega_barrier: float | jax.Array | None = None,
+        barrier_energy: float | jax.Array | None = None,
         n_dim: int = 1,
         units: UnitSystem | None = None,
     ) -> None:
+        # Fallback to creating a local KramersParameters if individual arguments are passed
+        if params is None:
+            params = KramersParameters(
+                gamma=gamma,  # ty: ignore[invalid-argument-type]
+                kbt=kbt,  # ty: ignore[invalid-argument-type]
+                m=m,  # ty: ignore[invalid-argument-type]
+                omega_well=omega_well,  # ty: ignore[invalid-argument-type]
+                omega_barrier=omega_barrier,  # ty: ignore[invalid-argument-type]
+                barrier_energy=barrier_energy,  # ty: ignore[invalid-argument-type]
+            )
         x0 = sp.symbols("x0")
         s0 = sp.symbols("s0")
         s1 = sp.symbols("s1")
@@ -434,7 +449,7 @@ class KramersSystem1D(System):
             gamma=params.gamma,
             # Note: this currently assumes Boltzmann = 1
             temperature=params.kbt,
-            m=m,
+            m=params.m,
             potential=(n_dim, potential),
             params=(
                 params.omega_well,
@@ -455,6 +470,7 @@ class KramersSystem1D(System):
             omega_well=self.params[0],
             omega_barrier=self.params[1],
             barrier_energy=self.params[2],
+            m=self.m,
             kbt=self.temperature,
             gamma=self.gamma,
         )
@@ -494,12 +510,36 @@ class KramersSystem1D(System):
                 omega_well=self.omega_well / time_factor,
                 omega_barrier=self.omega_barrier / time_factor,
                 barrier_energy=self.barrier_energy * energy_factor,
+                m=self.m * mass_factor,
                 kbt=self.kbt * energy_factor,
                 gamma=self.gamma / time_factor,
             ),
             n_dim=self.n_dim,
             units=units,
         )
+
+    @classmethod
+    def create_canonical(
+        cls,
+        *,
+        gamma: float | jax.Array,
+        kbt: float | jax.Array,
+        m: float | jax.Array,
+        omega_well: float | jax.Array,
+        omega_barrier: float | jax.Array,
+        barrier_energy: float | jax.Array,
+        n_dim: int = 1,
+    ) -> CanonicalSystem:
+        """Helper to return the CanonicalSystem directly from JAX/float primitives."""
+        return cls(
+            gamma=gamma,
+            kbt=kbt,
+            m=m,
+            omega_well=omega_well,
+            omega_barrier=omega_barrier,
+            barrier_energy=barrier_energy,
+            n_dim=n_dim,
+        ).as_canonical()
 
 
 def get_diffusion_time(system: System, characteristic_length: float) -> float:

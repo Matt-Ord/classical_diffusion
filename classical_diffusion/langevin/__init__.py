@@ -24,6 +24,7 @@ from classical_diffusion.langevin._langevin import (
     solve_ensemble,
     solve_over_barrier_ballistic_ensemble,
     solve_overdamped_ensemble,
+    solve_overdamped_ensemble_jax,
     solve_single,
     solve_single_ballistic,
 )
@@ -101,6 +102,7 @@ __all__ = [
     "solve_ensemble",
     "solve_over_barrier_ballistic_ensemble",
     "solve_overdamped_ensemble",
+    "solve_overdamped_ensemble_jax",
     "solve_single",
     "solve_single_ballistic",
     "split_escaped_and_trapped",

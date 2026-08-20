@@ -7,7 +7,6 @@ import jax.numpy as jnp
 import numpy as np
 
 from classical_diffusion.system import UnitSystem
-from classical_diffusion.util import timed
 
 if TYPE_CHECKING:
     from classical_diffusion.langevin import PeriodicSystem1D
@@ -51,9 +50,16 @@ class CanonicalLattice1D:
     lattice_spacing: float
 
     def get_rates(self, positions: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
-        hop_sites = positions + jnp.array([[1], [-1]])
-        hop_rates = jnp.array([1.0 / self.hop_time, 1.0 / self.hop_time])
-        return hop_sites, hop_rates
+        delta_site = jnp.array([-1, 1])
+        hop_sites = positions[:, jnp.newaxis] + delta_site[jnp.newaxis, :]
+        single_hop_rates = jnp.array(
+            [
+                1 / self.hop_time,
+                1 / self.hop_time,
+            ]
+        )
+        hop_rates = jnp.tile(single_hop_rates, (len(positions), 1))
+        return (hop_sites, hop_rates)
 
 
 class Lattice1D(Lattice):
@@ -76,7 +82,6 @@ class Lattice1D(Lattice):
     ) -> np.ndarray[Any, np.dtype[np.floating]]:
         return indices * self.lattice_spacing
 
-    @timed
     def get_rates(
         self, positions: np.ndarray[Any, np.dtype[np.int_]]
     ) -> tuple[
@@ -106,6 +111,7 @@ class KramersParameters:
     omega_well: float
     omega_barrier: float
     barrier_energy: float
+    m: float
     kbt: float
     gamma: float
 
@@ -113,12 +119,9 @@ class KramersParameters:
     def delta_x(self) -> float:
         """The delta x of the system."""
         omegas_ss = self.omega_well**2 + self.omega_barrier**2
-        return float(
-            2
-            * np.sqrt(
-                (2 * omegas_ss * self.barrier_energy)
-                / (self.omega_barrier**2 * self.omega_well**2)
-            )
+        return 2 * np.sqrt(
+            (2 * omegas_ss * self.barrier_energy)
+            / (self.omega_barrier**2 * self.omega_well**2)
         )
 
 
@@ -140,6 +143,7 @@ def get_kramers_parameters_cosine(system: PeriodicSystem1D) -> KramersParameters
         omega_barrier=omega,
         omega_well=omega,
         barrier_energy=barrier_energy,
+        m=system.m,
         kbt=system.kbt,
         gamma=system.gamma,
     )

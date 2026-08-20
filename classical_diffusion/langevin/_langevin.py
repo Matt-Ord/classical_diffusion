@@ -458,8 +458,6 @@ def _solve_overdamped_ensemble_path[S: System](
     return Path("examples/data") / filename
 
 
-@cached(_solve_overdamped_ensemble_path)
-@timed
 def solve_overdamped_ensemble[S: System](
     system: S,
     time_span: TimeSpan,
@@ -483,9 +481,33 @@ def solve_overdamped_ensemble[S: System](
 
     xs_batch = jnp.transpose(xs_batch, (0, 2, 1))
 
-    return LangevinSimulationResult(
+    return LangevinSimulationResult[S](
         times=np.array(times),
         x_points=np.array(xs_batch),
         p_points=np.zeros_like(xs_batch),
         system=system,
     )
+
+
+def solve_overdamped_ensemble_jax[S: CanonicalSystem](
+    system: S,
+    time_span: TimeSpan,
+    initial_conditions: tuple[
+        np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
+    ],
+    _key: jax.Array,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Solve an ensemble of overdamped Langevin trajectories in parallel via jax.vmap."""
+    n_run = initial_conditions[0].shape[0]
+
+    times = jnp.linspace(
+        time_span.t_start, time_span.t_end, time_span.n_steps + 1, endpoint=True
+    )
+
+    keys = jax.random.split(_key, n_run)
+
+    xs_batch = _run_overdamped_ensemble_jit(system, initial_conditions[0], keys, times)
+
+    xs_batch = jnp.transpose(xs_batch, (0, 2, 1))
+
+    return (times, xs_batch)
