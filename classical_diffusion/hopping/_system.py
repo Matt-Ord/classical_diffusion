@@ -74,7 +74,7 @@ class Lattice1D(Lattice):
     def x_points_from_indices(
         self, indices: np.ndarray[Any, np.dtype[np.int_]]
     ) -> np.ndarray[Any, np.dtype[np.floating]]:
-        return indices * self.lattice_spacing
+        return indices.astype(np.float64) * self.lattice_spacing
 
     @timed
     def get_rates(

@@ -1,3 +1,5 @@
+import dataclasses
+
 import numpy as np
 
 from classical_diffusion.analysis import (
@@ -9,7 +11,7 @@ from classical_diffusion.langevin import (
     get_diffusion_time,
     get_full_effective_mass_from_free,
     get_under_barrier_probability_ballistic,
-    plot_exact_gaussian_isf,
+    plot_exact_flat_ballistic_isf,
     solve_ballistic_ensemble,
     solve_over_barrier_ballistic_ensemble,
 )
@@ -56,16 +58,11 @@ def _plot_effective_mass_isf() -> None:
     )
 
     _, ax, line_0, _ = plot_isf(
-        result=elastic_result.with_si_units(), ax=ax, delta_k=delta_k, pairwise=False
+        result=elastic_result, ax=ax, delta_k=delta_k, pairwise=False
     )
     line_0.set_label("elastic")
 
-    _, ax, line_1 = plot_exact_gaussian_isf(
-        system=system,
-        ax=ax,
-        delta_k=delta_k,
-        effective_mass=np.array([[system.m]]),
-    )
+    _, ax, line_1 = plot_exact_flat_ballistic_isf(system=system, ax=ax, delta_k=delta_k)
     line_1.set_label("actual mass")
     line_1.set_linestyle(":")
 
@@ -95,11 +92,10 @@ def _plot_effective_mass_isf() -> None:
     )
     print(effective_mass)
 
-    _, ax, line_2 = plot_exact_gaussian_isf(
-        system=system.with_si_units(),
+    _, ax, line_2 = plot_exact_flat_ballistic_isf(
+        system=dataclasses.replace(system, m=effective_mass),
         ax=ax,
         delta_k=delta_k,
-        effective_mass=effective_mass,
     )
     line_2.set_label("effective mass")
     line_2.set_linestyle(":")

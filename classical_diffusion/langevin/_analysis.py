@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, cast, overload
 
 import jax.numpy as jnp
 import numpy as np
@@ -530,14 +530,9 @@ def split_escaped_and_trapped(
     return free, trapped
 
 
-@timed
-def breakdown_ballistic_trajectory[S: System](
+def _breakdown_single_ballistic_trajectory[S: System](
     result: SingleLangevinSimulationResult[S], *, minimum_timescale: float = 0
-) -> tuple[
-    SingleLangevinSimulationResult[S],
-    SingleLangevinSimulationResult[S],
-]:
-    """Split a ballistic simulation into its elastic (slow) and inelastic (fast) components."""
+) -> tuple[SingleLangevinSimulationResult[S], SingleLangevinSimulationResult[S]]:
     times = result.times
     dt = times[1] - times[0]
 
@@ -575,6 +570,47 @@ def breakdown_ballistic_trajectory[S: System](
         system=result.system,
     )
     return elastic, inelastic
+
+
+@overload
+def breakdown_ballistic_trajectory[S: System](
+    result: SingleLangevinSimulationResult[S], *, minimum_timescale: float = 0
+) -> tuple[SingleLangevinSimulationResult[S], SingleLangevinSimulationResult[S]]: ...
+
+
+@overload
+def breakdown_ballistic_trajectory[S: System](
+    result: LangevinSimulationResult[S], *, minimum_timescale: float = 0
+) -> tuple[LangevinSimulationResult[S], LangevinSimulationResult[S]]: ...
+
+
+@timed
+def breakdown_ballistic_trajectory[S: System](
+    result: SingleLangevinSimulationResult[S] | LangevinSimulationResult[S],
+    *,
+    minimum_timescale: float = 0,
+) -> (
+    tuple[SingleLangevinSimulationResult[S], SingleLangevinSimulationResult[S]]
+    | tuple[LangevinSimulationResult[S], LangevinSimulationResult[S]]
+):
+    """Split a ballistic simulation into its elastic (slow) and inelastic (fast) components."""
+    if isinstance(result, SingleLangevinSimulationResult):
+        return _breakdown_single_ballistic_trajectory(
+            result, minimum_timescale=minimum_timescale
+        )
+    elastic_results, inelastic_results = zip(
+        *[
+            _breakdown_single_ballistic_trajectory(
+                single_result, minimum_timescale=minimum_timescale
+            )
+            for single_result in result
+        ],
+        strict=False,
+    )
+    return (
+        LangevinSimulationResult.from_iter(elastic_results),
+        LangevinSimulationResult.from_iter(inelastic_results),
+    )
 
 
 def plot_effective_mass_ratio(

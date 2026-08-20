@@ -19,7 +19,7 @@ from classical_diffusion.system import UnitSystem
 from classical_diffusion.util import _get_key, cached, hash_array, timed
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterable, Iterator
 
     from classical_diffusion.langevin import CanonicalSystem, System
 
@@ -77,6 +77,16 @@ class LangevinSimulationResult[S: System](SimulationResult[S]):
             x_points=self.system.units.length_into(self.x_points, si_units),
             p_points=self.system.units.momentum_into(self.p_points, si_units),
             system=self.system.with_si_units(),
+        )
+
+    @classmethod
+    def from_iter(cls, results: Iterable[SingleLangevinSimulationResult[S]]) -> Self:
+        results_list = list(results)
+        return cls(
+            times=results_list[0].times,
+            x_points=np.stack([r.x_points for r in results_list]),
+            p_points=np.stack([r.p_points for r in results_list]),
+            system=results_list[0].system,
         )
 
 
