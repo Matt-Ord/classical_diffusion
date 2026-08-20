@@ -4,6 +4,7 @@ import matplotlib as mpl
 import numpy as np
 import scipy
 
+from classical_diffusion.langevin._langevin import LangevinSimulationResult
 from classical_diffusion.plot import get_figure, get_measured_data
 from classical_diffusion.simulation import SimulationResult
 
@@ -13,7 +14,7 @@ if TYPE_CHECKING:
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
 
-    from classical_diffusion.langevin._langevin import LangevinSimulationResult
+    from classical_diffusion.langevin import SingleLangevinSimulationResult
     from classical_diffusion.plot import Measure
     from classical_diffusion.simulation import SingleSimulationResult
 
@@ -140,7 +141,7 @@ def plot_x_evolution_1d(
     ax: Axes | None = None,
     idx: int = 0,
 ) -> tuple[Figure, Axes, list[Line2D]]:
-    """Plot x against t for the first n_trajectories trajectories."""
+    """Plot x against t for each trajectory."""
     fig, ax = get_figure(ax)
 
     lines = []
@@ -160,7 +161,7 @@ def plot_x_evolution_2d(
     ax: Axes | None = None,
     idx: tuple[int, int] = (0, 1),
 ) -> tuple[Figure, Axes, list[Line2D]]:
-    """Plot x against y for 2d trajectory."""
+    """Plot x against y for each trajectory."""
     fig, ax = get_figure(ax)
 
     lines = []
@@ -174,31 +175,38 @@ def plot_x_evolution_2d(
     return fig, ax, lines
 
 
-def plot_p_evolution(
-    result: LangevinSimulationResult,
+def plot_p_evolution_1d(
+    result: LangevinSimulationResult | SingleLangevinSimulationResult,
     *,
     ax: Axes | None = None,
     idx: int = 0,
-    n_trajectories: int = 1,
 ) -> tuple[Figure, Axes, list[Line2D]]:
-    """Plot p against t for the first n_trajectories trajectories.
-
-    Raises
-    ------
-    ValueError
-        If `n_trajectories` exceeds the number of trajectories available in `result`.
-    """
+    """Plot p against t for each trajectory."""
     fig, ax = get_figure(ax)
 
-    if n_trajectories > result.p_points.shape[0]:
-        msg = f"n_trajectories={n_trajectories} exceeds available trajectories ({result.p_points.shape[0]})"
-        raise ValueError(msg)
+    lines = []
+    for res in result if isinstance(result, LangevinSimulationResult) else [result]:
+        (line,) = ax.plot(res.times, res.p_points[idx])
+        lines.append(line)
 
-    scaled_times = result.times
+    ax.set_xlabel("$t / characteristic time$")
+    ax.set_ylabel("$p$")
+
+    return fig, ax, lines
+
+
+def plot_p_evolution_2d(
+    result: LangevinSimulationResult | SingleLangevinSimulationResult,
+    *,
+    ax: Axes | None = None,
+    idx: tuple[int, int] = (0, 1),
+) -> tuple[Figure, Axes, list[Line2D]]:
+    """Plot p_{idx[0]} against p_{idx[1]} for each trajectory."""
+    fig, ax = get_figure(ax)
 
     lines = []
-    for trajectory in range(n_trajectories):
-        (line,) = ax.plot(scaled_times, result.p_points[trajectory, idx])
+    for res in result if isinstance(result, LangevinSimulationResult) else [result]:
+        (line,) = ax.plot(res.p_points[idx[0]], res.p_points[idx[1]])
         lines.append(line)
 
     ax.set_xlabel("$t / characteristic time$")
