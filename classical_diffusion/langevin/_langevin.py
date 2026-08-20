@@ -24,6 +24,10 @@ if TYPE_CHECKING:
     from classical_diffusion.simulation import TimeSpan
 
 
+def _get_key(key: jax.Array | None) -> jax.Array:
+    return key if key is not None else jax.random.PRNGKey(0)
+
+
 @dataclass(frozen=True, kw_only=True)
 class SingleLangevinSimulationResult[S: System](SingleSimulationResult[S]):
     """Results of a single simulation of the periodic Langevin equation."""
@@ -225,8 +229,7 @@ def solve_ensemble[S: System](
             system.as_canonical(), xs0_jax, ps0_jax, times
         )
     else:
-        _key = _key or jax.random.PRNGKey(0)
-        keys = jax.random.split(_key, n_run)
+        keys = jax.random.split(_get_key(_key), n_run)
 
         xs_batch, ps_batch = _run_langevin_ensemble_jit(
             system.as_canonical(), xs0_jax, ps0_jax, keys, times
@@ -327,9 +330,8 @@ def _get_initial_conditions(
 ) -> tuple[
     np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
 ]:
-    _key = _key or jax.random.PRNGKey(0)
     sampler = make_initial_conditions_sampler(system)
-    keys = jax.random.split(_key, n_samples)
+    keys = jax.random.split(_get_key(_key), n_samples)
     x_initial, p_initial = sampler(keys)
     x_initial = x_initial.reshape(-1, system.n_dim)
     p_initial = p_initial.reshape(-1, system.n_dim)
@@ -346,7 +348,7 @@ def solve_ballistic_ensemble[S: System](
     _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of ballistic trajectories in parallel via jax.vmap."""
-    _key = _key or jax.random.PRNGKey(0)
+    _key = _get_key(_key)
     out = solve_ensemble.load_or_call_uncached(
         dataclasses.replace(system.as_canonical(), gamma=0.0),
         time_span,
@@ -368,7 +370,7 @@ def _get_over_barrier_initial_conditions(
     *,
     _key: jax.Array | None = None,
 ) -> tuple:
-    _key = _key or jax.random.PRNGKey(0)
+    _key = _get_key(_key)
     sampler = make_free_point_sampler(system, barrier_energy)
     keys = jax.random.split(_key, n_samples)
     free_x_initial, free_p_initial = sampler(keys)
@@ -400,7 +402,7 @@ def solve_over_barrier_ballistic_ensemble[S: System](
     _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of ballistic trajectories in parallel via jax.vmap."""
-    _key = _key or jax.random.PRNGKey(0)
+    _key = _get_key(_key)
     out = solve_ensemble.load_or_call_uncached(
         dataclasses.replace(system.as_canonical(), gamma=0.0),
         time_span,
@@ -499,9 +501,8 @@ def solve_overdamped_ensemble[S: System](
     times = jnp.linspace(
         time_span.t_start, time_span.t_end, time_span.n_steps + 1, endpoint=True
     )
-    _key = _key or jax.random.PRNGKey(0)
-    keys = jax.random.split(_key, n_run)
 
+    keys = jax.random.split(_get_key(_key), n_run)
     xs_batch = _run_overdamped_ensemble_jit(
         system.as_canonical(), initial_conditions[0], keys, times
     )
