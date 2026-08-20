@@ -98,8 +98,9 @@ class ResNet(eqx.Module):
         x = self.residual_block(x)  # shape = (hidden_channels, n_time_steps)
 
         x = jnp.mean(x, axis=-1)  # shape = (hidden_channels,)
+        x = self.output_layer(x)  # shape = (2,)
 
-        return self.output_layer(x)  # shape = (2,)
+        return x.at[1].set(0.5 + 0.5 * jax.nn.tanh(x[1]))
 
 
 # Model functions
@@ -120,7 +121,6 @@ def loss_fn(
     # For each prediction, run a hopping model
     hopping_times = predictions[:, 0]
     offsets = predictions[:, 1]
-    bounded_offsets = 0.5 + 0.5 * jax.nn.tanh(offsets)
 
     probabilities = jax.vmap(deterministic_probabilities_jax, (0, None))(
         hopping_times, times
@@ -131,7 +131,7 @@ def loss_fn(
         probabilities, delta_k
     )  # These are already real
 
-    corrected_isfs = bounded_offsets[:, None] * isfs
+    corrected_isfs = offsets[:, None] * isfs
 
     # For each isf, compare to test isf
     errors = jnp.sum((corrected_isfs - test_isfs.squeeze(axis=1)) ** 2, axis=-1)
@@ -191,11 +191,12 @@ def train_model(training_isfs: jnp.ndarray) -> ResNet:
     optimizer_state = optimizer.init(eqx.filter(model, eqx.is_array))
 
     # Define number of epochs to train for
-    num_epochs = 10
+    num_epochs = 100
 
     # Training loop
     for epoch in range(num_epochs):
-        print(f"starting epoch {epoch + 1}")
+        if epoch > 0:
+            print(f"starting epoch {epoch + 1}")
         model, optimizer_state, loss = training_step(
             model,
             optimizer_state,
@@ -435,7 +436,7 @@ def single_clean_test(folderpath: str) -> None:
 
     print("\nModel trained! Getting model's isf")
     # Check output
-    hopping_time, _offset = get_hopping_time_and_offset(
+    hopping_time, offset = get_hopping_time_and_offset(
         trained_model, training_isf[None, :]
     )
 
@@ -447,13 +448,15 @@ def single_clean_test(folderpath: str) -> None:
         0.5,
     )
 
+    corrected_model_isf = offset * model_isf
+
     print("Plotting ISFs")
     fig, ax = get_fancy_figure()
     fig, ax = get_figure(ax)
     (line1,) = ax.plot(clean_isf.get("time"), clean_isf.get("isf"))
     line1.set_label("Langevin ISF")
 
-    (line2,) = ax.plot(clean_isf.get("time"), model_isf)
+    (line2,) = ax.plot(clean_isf.get("time"), corrected_model_isf)
     line2.set_label("Model ISF")
 
     ax.set_xlabel("Time / s")
@@ -467,7 +470,7 @@ def single_clean_test(folderpath: str) -> None:
     fig.savefig("./examples/hopping_model/model_test_single_clean.isf.pdf")
 
 
-def many_equiv_test(folderpath: str, n_isfs: int = 50) -> None:  # ruff: ignore[too-many-locals]
+def many_equiv_test(folderpath: str, n_isfs: int = 10) -> None:  # ruff: ignore[too-many-locals]
     """Train and test a model on num equivalent but noisy ISFs."""
     print(f"\n\nRunning test with {n_isfs} equivalent isfs\n")
     traj_filepath = folderpath + f"/langevin_{n_isfs}_equivalent.pkl"
@@ -499,7 +502,7 @@ def many_equiv_test(folderpath: str, n_isfs: int = 50) -> None:  # ruff: ignore[
     print("\nModel trained! Getting model's isf")
     test_isf = equivalent_isf_data[-1].get("isf")
     # Check output
-    hopping_time, _offset = get_hopping_time_and_offset(
+    hopping_time, offset = get_hopping_time_and_offset(
         trained_model, jnp.array([test_isf.get("isf")])
     )
 
@@ -511,13 +514,15 @@ def many_equiv_test(folderpath: str, n_isfs: int = 50) -> None:  # ruff: ignore[
         0.5,
     )
 
+    corrected_model_isf = offset * model_isf
+
     print("Plotting ISFs")
     fig, ax = get_fancy_figure()
     fig, ax = get_figure(ax)
     (line1,) = ax.plot(test_isf.get("time"), test_isf.get("isf"))
     line1.set_label("Langevin ISF")
 
-    (line2,) = ax.plot(test_isf.get("time"), model_isf)
+    (line2,) = ax.plot(test_isf.get("time"), corrected_model_isf)
     line2.set_label("Model ISF")
 
     ax.set_xlabel("Time / s")
@@ -537,4 +542,3 @@ if __name__ == "__main__":
     path = "./examples/data"
     untrained_test(path)
     single_clean_test(path)
-    many_equiv_test(path)
