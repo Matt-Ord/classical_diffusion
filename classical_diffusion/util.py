@@ -8,6 +8,7 @@ from functools import update_wrapper, wraps
 from types import FunctionType
 from typing import TYPE_CHECKING, Literal, TypeVar, overload
 
+import jax
 import numpy as np
 
 if TYPE_CHECKING:
@@ -230,3 +231,7 @@ def hash_array(arrays: tuple[np.ndarray, ...]) -> int:
         # Include shape just in case the same floats are reshaped
         chk = zlib.crc32(str(arr.shape).encode(), chk)
     return chk
+
+
+def _get_key(key: jax.Array | None) -> jax.Array:
+    return key if key is not None else jax.random.PRNGKey(0)

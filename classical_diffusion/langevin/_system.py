@@ -118,16 +118,6 @@ class System:
         """Kbt."""
         return self.units.boltzmann * self.temperature
 
-    @property
-    def lattice_vectors(self) -> np.ndarray:
-        """Primitive lattice vectors (as columns). Identity for a Cartesian/square domain."""
-        return np.eye(self.n_dim)
-
-    @property
-    def sampling_domain(self) -> tuple:
-        """The domain over which the equilibrium x-density should be sampled."""
-        return (-np.inf, np.inf)
-
     def with_units(self, units: UnitSystem) -> System:
         """Return the system converted to the given units."""
         time_factor = self.units.time_factor / units.time_factor
@@ -265,12 +255,6 @@ class PeriodicSystem1D(System):
         return self.params[1]
 
     @override
-    @property
-    def sampling_domain(self) -> tuple:
-        """The domain over which the equilibrium x-density should be sampled."""
-        return ((-self.delta_x / 2, self.delta_x / 2),)
-
-    @override
     def with_units(self, units: UnitSystem) -> PeriodicSystem1D:
         """Return the normalized parameters of the simulation."""
         mass_factor = units.mass_factor / self.units.mass_factor
@@ -342,22 +326,6 @@ class PeriodicSystemFCC(System):
     def barrier_energy(self) -> float:
         """The barrier energy of the system."""
         return self.params[1]
-
-    @override
-    @property
-    def sampling_domain(self) -> tuple:
-        """Fractional coordinate domain spanning one primitive cell."""
-        return (
-            (0, 1),
-            (0, 1),
-        )
-
-    @property
-    def lattice_vectors(self) -> np.ndarray:
-        """Primitive lattice vectors (as columns) for the hexagonal unit cell."""
-        a1 = np.array([0.0, np.sqrt(3.0) * self.delta_x])
-        a2 = np.array([1.5 * self.delta_x, np.sqrt(3.0) / 2.0 * self.delta_x])
-        return np.stack([a1, a2], axis=1)
 
     @override
     def with_units(self, units: UnitSystem) -> PeriodicSystemFCC:

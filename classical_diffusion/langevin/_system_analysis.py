@@ -6,8 +6,8 @@ from scipy import integrate
 from scipy.integrate import quad
 from scipy.optimize import brentq
 from scipy.special import ellipk, ellipkinc
+from scipy.stats.sampling import NumericalInversePolynomial
 
-from classical_diffusion.langevin._sample import sample_energy_1d_periodic
 from classical_diffusion.plot import get_figure
 
 if TYPE_CHECKING:
@@ -325,20 +325,20 @@ def _set_up_integral_1d(
     return integrand
 
 
-def _calculate_partition_function_1d(system: System) -> float:
+def _calculate_partition_function_1d(system: PeriodicSystem1D) -> float:
     integrand = _set_up_integral_1d(system)
     z, _ = integrate.dblquad(
         integrand,
         -np.inf,
         np.inf,  # p limits (outer)
-        lambda _p: system.sampling_domain[0][0],  # x lower (inner) — fixed, one period
-        lambda _p: system.sampling_domain[0][1],  # x upper (inner)
+        lambda _p: 0.0,  # x lower (inner) — fixed, one period
+        lambda _p: system.delta_x,  # x upper (inner)
     )
     return z
 
 
 def _get_x_domian_given_p_1d(
-    system: System, barrier_energy: float
+    system: PeriodicSystem1D, barrier_energy: float
 ) -> Callable[[float], float]:
     potential_func = sp.lambdify(system.lambda_symbols, system.potential_expr, "numpy")
     params = system.params
@@ -351,14 +351,14 @@ def _get_x_domian_given_p_1d(
         return brentq(
             lambda x: potential_func(x, *params) - target,
             0.0,
-            system.sampling_domain[0][1],
+            system.delta_x,
         )
 
     return x_t
 
 
 def calculate_probability_under_barrier_1d(
-    system: System, barrier_energy: float
+    system: PeriodicSystem1D, barrier_energy: float
 ) -> float:
 
     x_t = _get_x_domian_given_p_1d(system, barrier_energy)
@@ -377,10 +377,43 @@ def calculate_probability_under_barrier_1d(
     return integral_below / z
 
 
+def _period(energy: float, system: PeriodicSystem1D) -> float:
+    omega = (2 * np.pi / system.delta_x) * np.sqrt(energy / (2 * system.m))
+    q2 = system.barrier_energy / energy
+    return 2 * ellipkinc(np.pi, q2) / omega
+
+
+def _sample_energy_1d_periodic(
+    system: PeriodicSystem1D, n_samples: int, domain: tuple
+) -> np.ndarray[Any, np.dtype[np.floating]]:
+    kbt = system.kbt
+
+    class EnergyDensity:
+        @staticmethod
+        def pdf(energy: float) -> float:
+            return np.exp(-energy / kbt) * _period(energy, system)
+
+        @staticmethod
+        def cdf(energy: float) -> float:
+            msg = "CDF is not implemented for EnergyDensity."
+            raise NotImplementedError(msg)
+
+        @staticmethod
+        def logpdf(energy: float) -> float:
+            return -energy / kbt + np.log(_period(energy, system))
+
+    energy_sampler = NumericalInversePolynomial(
+        EnergyDensity(),
+        domain=domain,
+        center=domain[0],
+    )
+    return energy_sampler.rvs(size=n_samples)
+
+
 def _get_elastic_p_exact_1d_periodic(
     system: PeriodicSystem1D, n_samples: int
 ) -> np.ndarray:
-    energy = sample_energy_1d_periodic(
+    energy = _sample_energy_1d_periodic(
         system=system, n_samples=n_samples, domain=(system.barrier_energy, np.inf)
     )
     epsilon = energy / system.barrier_energy
