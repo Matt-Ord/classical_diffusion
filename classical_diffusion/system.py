@@ -18,7 +18,7 @@ from scipy.constants import (
 class UnitSystem:
     """Defines the units used in the scattering calculation."""
 
-    Boltzmann: float = Boltzmann_si
+    boltzmann: float = Boltzmann_si
     atomic_mass: float = atomic_mass_si
     angstrom: float = angstrom_si
 
@@ -30,7 +30,27 @@ class UnitSystem:
     @property
     def time_factor(self) -> float:
         """The time factor for the unit system."""
-        return np.sqrt(self.atomic_mass * self.angstrom**2 / self.Boltzmann)
+        return np.sqrt(self.atomic_mass * self.angstrom**2 / self.boltzmann)
+
+    @property
+    def mass_factor(self) -> float:
+        """The mass factor of the system."""
+        return self.atomic_mass / atomic_mass_si
+
+    @property
+    def length_factor(self) -> float:
+        """The length factor of the system."""
+        return self.angstrom / angstrom_si
+
+    @property
+    def momentum_factor(self) -> float:
+        """The momentum factor of the system."""
+        return self.mass_factor * self.length_factor / self.time_factor
+
+    @property
+    def energy_factor(self) -> float:
+        """The energy factor of the system."""
+        return self.boltzmann / Boltzmann_si
 
     @overload
     def time_into(self, value: float, units: UnitSystem | None = None) -> float: ...
@@ -43,60 +63,78 @@ class UnitSystem:
         value: float | np.ndarray[Any, np.dtype[np.number]],
         units: UnitSystem | None = None,
     ) -> float | np.ndarray[Any, np.dtype[np.number]]:
-        """Convert a time from SI units to the system's units."""
+        """Convert time from self units into target units (defaults to SI)."""
         units = units or UnitSystem.si()
-        time_factor = self.time_factor / units.time_factor
-        return value * time_factor
-
-    @property
-    def mass_factor(self) -> float:
-        """The mass factor of the system."""
-        return self.atomic_mass / atomic_mass_si
+        return value * (self.time_factor / units.time_factor)
 
     @overload
-    def mass_into(self, value: float, units: UnitSystem) -> float: ...
+    def mass_into(self, value: float, units: UnitSystem | None = None) -> float: ...
     @overload
     def mass_into[DT: np.dtype[np.number]](
-        self, value: np.ndarray[Any, DT], units: UnitSystem
+        self, value: np.ndarray[Any, DT], units: UnitSystem | None = None
     ) -> np.ndarray[Any, DT]: ...
     def mass_into(
-        self, value: float | np.ndarray[Any, np.dtype[np.number]], units: UnitSystem
+        self,
+        value: float | np.ndarray[Any, np.dtype[np.number]],
+        units: UnitSystem | None = None,
     ) -> float | np.ndarray[Any, np.dtype[np.number]]:
-        """Convert a time from SI units to the system's units."""
-        mass_factor = self.mass_factor / units.mass_factor
-        return value * mass_factor
+        """Convert mass from self units into target units (defaults to SI)."""
+        units = units or UnitSystem.si()
+        return value * (self.mass_factor / units.mass_factor)
+
+    @overload
+    def length_into(self, value: float, units: UnitSystem | None = None) -> float: ...
+    @overload
+    def length_into[DT: np.dtype[np.number]](
+        self, value: np.ndarray[Any, DT], units: UnitSystem | None = None
+    ) -> np.ndarray[Any, DT]: ...
+    def length_into(
+        self,
+        value: float | np.ndarray[Any, np.dtype[np.number]],
+        units: UnitSystem | None = None,
+    ) -> float | np.ndarray[Any, np.dtype[np.number]]:
+        """Convert length from self units into target units (defaults to SI)."""
+        units = units or UnitSystem.si()
+        return value * (self.length_factor / units.length_factor)
+
+    @overload
+    def momentum_into(self, value: float, units: UnitSystem | None = None) -> float: ...
+    @overload
+    def momentum_into[DT: np.dtype[np.number]](
+        self, value: np.ndarray[Any, DT], units: UnitSystem | None = None
+    ) -> np.ndarray[Any, DT]: ...
+    def momentum_into(
+        self,
+        value: float | np.ndarray[Any, np.dtype[np.number]],
+        units: UnitSystem | None = None,
+    ) -> float | np.ndarray[Any, np.dtype[np.number]]:
+        """Convert momentum from self units into target units (defaults to SI)."""
+        units = units or UnitSystem.si()
+        momentum_factor = self.momentum_factor / units.momentum_factor
+        return value * momentum_factor
+
+    @overload
+    def energy_into(self, value: float, units: UnitSystem | None = None) -> float: ...
+    @overload
+    def energy_into[DT: np.dtype[np.number]](
+        self, value: np.ndarray[Any, DT], units: UnitSystem | None = None
+    ) -> np.ndarray[Any, DT]: ...
+    def energy_into(
+        self,
+        value: float | np.ndarray[Any, np.dtype[np.number]],
+        units: UnitSystem | None = None,
+    ) -> float | np.ndarray[Any, np.dtype[np.number]]:
+        """Convert energy from self units into target units (defaults to SI)."""
+        units = units or UnitSystem.si()
+        return value * (self.energy_factor / units.energy_factor)
 
     def as_canonical(self) -> CanonicalUnitSystem:
         """Get a jax-compatible unit system."""
         return CanonicalUnitSystem(
-            Boltzmann=self.Boltzmann,
+            boltzmann=self.boltzmann,
             atomic_mass=self.atomic_mass,
             angstrom=self.angstrom,
         )
-
-    @property
-    def length_factor(self) -> float:
-        """The length factor of the system."""
-        return self.angstrom / angstrom_si
-
-    def length_into(
-        self, value: float | np.ndarray[Any, np.dtype[np.number]], units: UnitSystem
-    ) -> float | np.ndarray[Any, np.dtype[np.number]]:
-        """Convert a length from SI units to the system's units."""
-        length_factor = self.length_factor / units.length_factor
-        return value * length_factor
-
-    @property
-    def energy_factor(self) -> float:
-        """The energy factor of the system."""
-        return self.Boltzmann / Boltzmann_si
-
-    def energy_into(
-        self, value: float | np.ndarray[Any, np.dtype[np.number]], units: UnitSystem
-    ) -> float | np.ndarray[Any, np.dtype[np.number]]:
-        """Convert an energy from SI units to the system's units."""
-        energy_factor = self.energy_factor / units.energy_factor
-        return value * energy_factor
 
 
 @jax.tree_util.register_dataclass
