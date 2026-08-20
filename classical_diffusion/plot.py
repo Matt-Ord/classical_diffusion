@@ -206,3 +206,11 @@ def get_two_panel_figure() -> tuple[Figure, list[Axes]]:
     fig, ax = plt.subplots(layout="constrained", ncols=2, figsize=(6, 2.5))
     setup_fancy_figure(fig, ax)
     return fig, ax
+
+
+def get_three_panel_figure() -> tuple[Figure, list[Axes]]:
+    """Create a three-panel figure with fancy styling."""
+    setup_rc_params()
+    fig, ax = plt.subplots(layout="constrained", ncols=3, figsize=(9, 2.5))
+    setup_fancy_figure(fig, ax)
+    return fig, ax

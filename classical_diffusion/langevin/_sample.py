@@ -1,24 +1,28 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import sympy as sp
 
+from classical_diffusion.util import _get_key
+
 if TYPE_CHECKING:
-    from classical_diffusion.langevin import CanonicalSystem
+    from classical_diffusion.langevin import CanonicalSystem, System
 
 
-SAMPLE_REGION = 100
+SAMPLE_REGION = 10
 
 
 @jax.jit(static_argnames=("n_samples",))
 def _sample_initial_conditions(
     system: "CanonicalSystem",  # ruff: ignore[quoted-annotation]
     n_samples: int = 1,
-    minimum_energy: float = 0.0,
     *,
+    minimum_energy: float = 0.0,
     _key: jax.Array,
 ) -> tuple[jax.Array, jax.Array]:
+
     potential_fn = sp.lambdify(
         system.lambda_symbols,
         system.potential_expr,
@@ -56,29 +60,23 @@ def _sample_initial_conditions(
         return x_finals, p_finals
 
     keys = jax.random.split(_key, n_samples)
-    x_points, p_points = jax.vmap(_sample_one)(keys)
-    return x_points, p_points
+    return jax.vmap(_sample_one)(keys)
 
 
-def get_initial_conditions(
-    system: CanonicalSystem, n_samples: int, *, _key: jax.Array
-) -> tuple[jax.Array, jax.Array]:
-    x_points, p_points = _sample_initial_conditions(system, n_samples, _key=_key)
-    x_points = x_points.reshape(-1, system.n_dim)
-    p_points = p_points.reshape(-1, system.n_dim)
-    return x_points, p_points
-
-
-def get_over_barrier_initial_conditions(
-    system: CanonicalSystem,
-    barrier_energy: float,
+def get_random_initial_conditions(
+    system: System,
     n_samples: int,
     *,
-    _key: jax.Array,
-) -> tuple[jax.Array, jax.Array]:
+    minimum_energy: float = 0.0,
+    _key: jax.Array | None = None,
+) -> tuple[
+    np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
+]:
+    """Get random initial conditions for a given system."""
+    _key = _get_key(_key)
     x_points, p_points = _sample_initial_conditions(
-        system, n_samples, minimum_energy=barrier_energy, _key=_key
+        system.as_canonical(), n_samples, minimum_energy=minimum_energy, _key=_key
     )
     x_points = x_points.reshape(-1, system.n_dim)
     p_points = p_points.reshape(-1, system.n_dim)
-    return x_points, p_points
+    return np.array(x_points), np.array(p_points)

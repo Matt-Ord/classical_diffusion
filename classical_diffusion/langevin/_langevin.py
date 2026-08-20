@@ -9,11 +9,12 @@ import jax.numpy as jnp
 import numpy as np
 import sympy as sp
 
-from classical_diffusion.langevin._sample import (
-    get_initial_conditions,
-    get_over_barrier_initial_conditions,
+from classical_diffusion.langevin._sample import get_random_initial_conditions
+from classical_diffusion.simulation import (
+    SimulationResult,
+    SingleSimulationResult,
+    TimeSpan,
 )
-from classical_diffusion.simulation import SimulationResult, SingleSimulationResult
 from classical_diffusion.system import UnitSystem
 from classical_diffusion.util import _get_key, cached, hash_array, timed
 
@@ -21,7 +22,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     from classical_diffusion.langevin import CanonicalSystem, System
-    from classical_diffusion.simulation import TimeSpan
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -71,16 +71,11 @@ class LangevinSimulationResult[S: System](SimulationResult[S]):
     def with_si_units(self) -> Self:
         """Return the rescaled simulation of the system."""
         si_units = UnitSystem()
-        length_factor = si_units.angstrom / self.system.units.angstrom
-        mass_factor = si_units.atomic_mass / self.system.units.atomic_mass
-        energy_factor = si_units.Boltzmann / self.system.units.Boltzmann
-        time_factor = np.sqrt(length_factor**2 * mass_factor / energy_factor)
-        momentum_factor = mass_factor * length_factor / time_factor
 
         return type(self)(
-            times=self.times * time_factor,
-            x_points=self.x_points * length_factor,
-            p_points=self._p_points * momentum_factor,
+            times=self.system.units.time_into(self.times, si_units),
+            x_points=self.system.units.length_into(self.x_points, si_units),
+            p_points=self.system.units.momentum_into(self.p_points, si_units),
             system=self.system.with_si_units(),
         )
 
@@ -336,12 +331,16 @@ def solve_ballistic_ensemble[S: System](
     simulated_system = system.with_normalized_units().as_canonical()
     out = solve_ensemble.load_or_call_uncached(
         dataclasses.replace(simulated_system, gamma=0.0),
-        time_span,
-        get_initial_conditions(simulated_system, n_samples, _key=_key),
+        TimeSpan(
+            t_start=system.units.time_into(time_span.t_start, simulated_system.units),
+            t_end=system.units.time_into(time_span.t_end, simulated_system.units),
+            n_steps=time_span.n_steps,
+        ),
+        get_random_initial_conditions(simulated_system, n_samples, _key=_key),
         _key=_key,
     )
     return LangevinSimulationResult[S](
-        times=out.times,
+        times=simulated_system.units.time_into(out.times, system.units),
         x_points=simulated_system.units.length_into(out.x_points, system.units),
         p_points=simulated_system.units.momentum_into(out.p_points, system.units),
         system=system,
@@ -376,10 +375,14 @@ def solve_over_barrier_ballistic_ensemble[S: System](
     simulated_system = system.with_normalized_units().as_canonical()
     out = solve_ensemble.load_or_call_uncached(
         dataclasses.replace(simulated_system, gamma=0.0),
-        time_span,
-        get_over_barrier_initial_conditions(
+        TimeSpan(
+            t_start=system.units.time_into(time_span.t_start, simulated_system.units),
+            t_end=system.units.time_into(time_span.t_end, simulated_system.units),
+            n_steps=time_span.n_steps,
+        ),
+        get_random_initial_conditions(
             simulated_system,
-            barrier_energy=system.units.energy_into(
+            minimum_energy=system.units.energy_into(
                 barrier_energy, simulated_system.units
             ),
             n_samples=n_samples,
