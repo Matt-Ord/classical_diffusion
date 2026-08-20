@@ -21,8 +21,6 @@ system = PeriodicSystem1D(
     barrier_energy=10e-21,
 )
 
-normalized_system = system.with_normalized_units()
-
 
 def _plot_periodic_system() -> None:
 
@@ -36,9 +34,9 @@ def _plot_periodic_system() -> None:
 def _plot_ballistic_trajectory() -> None:
 
     result = solve_single_ballistic(
-        normalized_system,
+        system,
         TimeSpan(
-            t_end=normalized_system.units.time_into(10e-12),
+            t_end=system.units.time_into(10e-12),
             n_steps=1000,
         ),
         (np.full((1,), 0.0), np.full((1,), 2.43)),
@@ -47,7 +45,7 @@ def _plot_ballistic_trajectory() -> None:
     elastic, inelastic = breakdown_ballistic_trajectory(
         result,
         minimum_timescale=get_diffusion_time(
-            normalized_system, characteristic_length=normalized_system.delta_x / 0.1
+            system, characteristic_length=system.delta_x / 0.1
         ),
     )
 

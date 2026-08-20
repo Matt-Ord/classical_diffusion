@@ -19,8 +19,6 @@ system = PeriodicSystemFCC(
     barrier_energy=1.6e-21,
 )
 
-normalized_system = system.with_normalized_units()
-
 
 def _plot_periodic_system() -> None:
 
@@ -34,9 +32,9 @@ def _plot_periodic_system() -> None:
 def _plot_ballistic_trajectory() -> None:
 
     result = solve_single_ballistic(
-        normalized_system,
+        system,
         TimeSpan(
-            t_end=normalized_system.units.time_into(50e-12),
+            t_end=system.units.time_into(50e-12),
             n_steps=1000,
         ),
         (np.full((2,), 1), np.full((2,), 0.01)),
@@ -44,9 +42,7 @@ def _plot_ballistic_trajectory() -> None:
 
     elastic, inelastic = breakdown_ballistic_trajectory(
         result,
-        minimum_timescale=get_diffusion_time(
-            normalized_system, 1 / normalized_system.gamma
-        ),
+        minimum_timescale=get_diffusion_time(system, 1 / system.gamma),
     )
 
     fig, ax = get_two_panel_figure()

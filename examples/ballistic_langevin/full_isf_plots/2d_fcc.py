@@ -21,15 +21,13 @@ system = PeriodicSystemFCC(
     barrier_energy=4e-21,
 )
 
-normalized_system = system.with_normalized_units()
-
 
 def _plot_periodic_isf() -> None:
 
     full_result = solve_ensemble(
-        normalized_system,
+        system,
         TimeSpan(
-            t_end=normalized_system.units.time_into(10e-12),
+            t_end=system.units.time_into(10e-12),
             n_steps=1000,
         ),
         (np.full((500, 2), 1.0), np.full((500, 2), 0.0)),
@@ -47,9 +45,9 @@ def _plot_periodic_isf() -> None:
     line_0.set_label("full simulation")
 
     ballistic_result = solve_ballistic_ensemble(
-        normalized_system,
+        system,
         TimeSpan(
-            t_end=normalized_system.units.time_into(10e-12),
+            t_end=system.units.time_into(10e-12),
             n_steps=5000,
         ),
         n_samples=100000,
@@ -63,7 +61,7 @@ def _plot_periodic_isf() -> None:
     elastic_result, inelastic_result = breakdown_ballistic_trajectory(
         ballistic_result,
         minimum_timescale=get_diffusion_time(
-            normalized_system, characteristic_length=normalized_system.delta_x
+            system, characteristic_length=system.delta_x
         ),
     )
 
@@ -79,15 +77,9 @@ def _plot_periodic_isf() -> None:
     line_3.set_label("inelastic")
     line_3.set_linestyle(":")
 
-    ax.set_xlim(
-        0,
-        2e-12,
-    )
+    ax.set_xlim(0, 2e-12)
 
-    ax.set_ylim(
-        0.0,
-        1.0,
-    )
+    ax.set_ylim(0.0, 1.0)
 
     ax.legend(handles=[line_0, line_1, line_2, line_3])
     fig.savefig(

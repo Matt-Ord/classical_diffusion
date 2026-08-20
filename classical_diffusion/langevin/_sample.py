@@ -20,7 +20,7 @@ def _sample_initial_conditions(
     _key: jax.Array,
 ) -> tuple[jax.Array, jax.Array]:
     potential_fn = sp.lambdify(
-        (*system.coordinate_symbols, *system.parameter_symbols),
+        system.lambda_symbols,
         system.potential_expr,
         "jax",
     )

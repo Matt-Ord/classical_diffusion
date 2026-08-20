@@ -41,14 +41,12 @@ def _plot_xp_distributions_periodic() -> None:
         barrier_energy=1.6e-21,
     )
 
-    normalized_system = system.with_normalized_units()
-
     fig, ax = get_fancy_figure()
 
     result = solve_ensemble(
-        normalized_system,
+        system,
         TimeSpan(
-            t_end=normalized_system.units.time_into(1000 / system.gamma),
+            t_end=system.units.time_into(1000 / system.gamma),
             n_steps=1000,
         ),
         (np.full((10, 1), 0), np.full((10, 1), 0.0)),
@@ -65,7 +63,7 @@ def _plot_xp_distributions_periodic() -> None:
     ax.set_ylim(-1e23, 1e-23)
     fig.savefig("examples/distribution.1d_periodic.p.pdf")
 
-    result_folded = fold_results(result, delta=normalized_system.delta_x)
+    result_folded = fold_results(result, delta=system.delta_x)
 
     fig, ax = get_fancy_figure()
     _, ax, _bars = plot_x_histogram(result=result_folded.with_si_units(), ax=ax)
@@ -128,14 +126,12 @@ def _plot_x_distribution_spread() -> None:
 def _plot_xp_distributions_harmonic() -> None:
     system = HarmonicSystem(gamma=5e11, temperature=110, m=8e-27, omega=10e12)
 
-    normalized_system = system.with_normalized_units()
-
     fig, ax = get_fancy_figure()
 
     result = solve_ensemble(
-        normalized_system,
+        system,
         TimeSpan(
-            t_end=normalized_system.units.time_into(2000 / system.gamma),
+            t_end=system.units.time_into(2000 / system.gamma),
             n_steps=2000,
         ),
         (np.full((10, 1), 0), np.full((10, 1), 0.0)),

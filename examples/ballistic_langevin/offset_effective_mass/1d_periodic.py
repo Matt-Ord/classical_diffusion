@@ -27,16 +27,14 @@ system = PeriodicSystem1D(
     barrier_energy=1.6e-21,
 )
 
-normalized_system = system.with_normalized_units()
-
 
 def _plot_effective_mass_offset_isf() -> None:
     fig, ax = get_fancy_figure()
 
     result = solve_ballistic_ensemble(
-        normalized_system,
+        system,
         TimeSpan(
-            t_end=normalized_system.units.time_into(5e-12),
+            t_end=system.units.time_into(5e-12),
             n_steps=1000,
         ),
         n_samples=2000,
@@ -45,7 +43,7 @@ def _plot_effective_mass_offset_isf() -> None:
     elastic_result, _ = breakdown_ballistic_trajectory(
         result,
         minimum_timescale=get_diffusion_time(
-            normalized_system, characteristic_length=normalized_system.delta_x / 0.5
+            system, characteristic_length=system.delta_x / 0.5
         ),
     )
 
@@ -57,16 +55,16 @@ def _plot_effective_mass_offset_isf() -> None:
     line_0.set_label("elastic")
 
     result_free = solve_ballistic_ensemble(
-        normalized_system,
+        system,
         TimeSpan(
-            t_end=normalized_system.units.time_into(50e-12),
+            t_end=system.units.time_into(50e-12),
             n_steps=1000,
         ),
         n_samples=5000,
     )
 
     prob_under_barrier = calculate_probability_under_barrier_1d(
-        normalized_system, barrier_energy=normalized_system.barrier_energy
+        system, barrier_energy=system.barrier_energy
     )
 
     _, ax, line_1 = plot_exact_flat_ballistic_isf(
@@ -80,7 +78,7 @@ def _plot_effective_mass_offset_isf() -> None:
 
     effective_mass = UnitSystem().mass_into(
         get_effective_mass(result_free),
-        units=normalized_system.units,
+        units=system.units,
     )
 
     _, ax, line_2 = plot_exact_flat_ballistic_isf(
@@ -95,8 +93,8 @@ def _plot_effective_mass_offset_isf() -> None:
     line_2.set_linestyle(":")
 
     effective_mass_exact = UnitSystem().mass_into(
-        get_free_effective_mass_exact_1d_periodic_directly(normalized_system),
-        units=normalized_system.units,
+        get_free_effective_mass_exact_1d_periodic_directly(system),
+        units=system.units,
     )
 
     _, ax, line_3 = plot_exact_flat_ballistic_isf(

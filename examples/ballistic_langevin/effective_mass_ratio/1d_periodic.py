@@ -29,7 +29,6 @@ system = PeriodicSystem1D(
     barrier_energy=4e-21,
 )
 
-normalized_system = system.with_normalized_units()
 
 key = jrandom.PRNGKey(100)
 
@@ -82,7 +81,7 @@ def _plot_effective_mass_ratio() -> None:  # ruff:ignore[too-many-statements]
                     m=m_grid[i, j],
                     delta_x=delta_x,
                     barrier_energy=barrier_energy_grid[i, j],
-                ).with_normalized_units()
+                )
 
                 result = solve_over_barrier_ballistic_ensemble(
                     system,
