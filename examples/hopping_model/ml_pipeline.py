@@ -107,6 +107,16 @@ class ResNet(eqx.Module):
 
 
 @jax.jit
+def get_deterministic_isf_directly(
+    hop_time: float, times: jnp.ndarray, delta_k: float
+) -> jnp.ndarray:
+
+    probabilities = deterministic_probabilities_jax(hop_time, times)
+
+    return get_deterministic_isf_jax(probabilities, delta_k)
+
+
+@jax.jit
 def loss_fn(
     model: eqx.Module,
     times: jnp.ndarray,
@@ -118,17 +128,12 @@ def loss_fn(
     # Pass batched isfs through the model to predict hopping rates and isf offsets
     predictions = jax.vmap(model)(test_isfs)  # ty: ignore[invalid-argument-type]
 
-    # For each prediction, run a hopping model
+    # For each prediction, generate an isf
     hopping_times = predictions[:, 0]
     offsets = predictions[:, 1]
 
-    probabilities = jax.vmap(deterministic_probabilities_jax, (0, None))(
-        hopping_times, times
-    )
-
-    # For each hopping model, generate an isf
-    isfs = jax.vmap(get_deterministic_isf_jax, (0, None))(
-        probabilities, delta_k
+    isfs = jax.vmap(get_deterministic_isf_directly, (0, None, None))(
+        hopping_times, times, delta_k
     )  # These are already real
 
     corrected_isfs = offsets[:, None] * isfs
