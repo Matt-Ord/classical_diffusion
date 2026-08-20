@@ -2,12 +2,12 @@ import dataclasses
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Self
 
-import numpy as np
-
 from classical_diffusion.system import UnitSystem
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    import numpy as np
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -17,19 +17,19 @@ class SingleSimulationResult[S: Any]:
     system: S
     times: np.ndarray
     x_points: np.ndarray[tuple[int, int], np.dtype[np.floating]]
+    """The positions of the particle at each time point.
+
+    stored as a 2D array of shape (n_dimensions, n_time_points).
+    """
 
     def with_si_units(self) -> Self:
         """Return the rescaled simulation of the system."""
         si_units = UnitSystem()
-        length_factor = si_units.angstrom / self.system.units.angstrom
-        mass_factor = si_units.atomic_mass / self.system.units.atomic_mass
-        energy_factor = si_units.boltzmann / self.system.units.boltzmann
-        time_factor = np.sqrt(length_factor**2 * mass_factor / energy_factor)
-        mass_factor * length_factor / time_factor
+
         return dataclasses.replace(
             self,
-            times=self.times * time_factor,
-            x_points=self.x_points * length_factor,
+            times=self.system.units.time_into(self.times, si_units),
+            x_points=self.system.units.length_into(self.x_points, si_units),
             system=self.system.with_si_units(),
         )
 
@@ -59,7 +59,10 @@ class SimulationResult[S: Any]:
 
     @property
     def x_points(self) -> np.ndarray[tuple[int, int, int], np.dtype[np.floating]]:
-        """The positions of the particles at each time point."""
+        """The positions of the particles at each time point.
+
+        stored as a 3D array of shape (n_samples, n_dimensions, n_time_points).
+        """
         return self._x_points
 
     @property
@@ -82,14 +85,9 @@ class SimulationResult[S: Any]:
 
     def with_si_units(self) -> Self:
         """Return the rescaled simulation of the system."""
-        si_units = UnitSystem()
-        length_factor = si_units.angstrom / self.system.units.angstrom
-        mass_factor = si_units.atomic_mass / self.system.units.atomic_mass
-        energy_factor = si_units.boltzmann / self.system.units.boltzmann
-        time_factor = np.sqrt(length_factor**2 * mass_factor / energy_factor)
         return type(self)(
-            times=self.times * time_factor,
-            x_points=self.x_points * length_factor,
+            times=self.system.units.time_into(self.times, UnitSystem()),
+            x_points=self.system.units.length_into(self.x_points, UnitSystem()),
             system=self.system.with_si_units(),
         )
 

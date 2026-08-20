@@ -153,7 +153,9 @@ def split_result(
     return first, second
 
 
-def x_exact_pdf(result: LangevinSimulationResult, *, n_grid: int = 10_000) -> tuple:
+def _get_exact_x_distribution_pdf(
+    result: LangevinSimulationResult, *, n_grid: int = 10_000
+) -> tuple:
     """Return x boltzman pdf for given potential."""
     potential = sp.lambdify(
         (*result.system.coordinate_symbols, *result.system.parameter_symbols),
@@ -163,17 +165,44 @@ def x_exact_pdf(result: LangevinSimulationResult, *, n_grid: int = 10_000) -> tu
     x_grid = np.linspace(result.x_points.min(), result.x_points.max(), n_grid)
     v_grid = np.broadcast_to(potential(x_grid, *result.system.params), x_grid.shape)
 
-    kbt = result.system.kbt
-
     v_shifted = v_grid - v_grid.min()
-    unnormalised = np.exp(-v_shifted / kbt)
+    unnormalised = np.exp(-v_shifted / result.system.kbt)
 
     z = np.trapezoid(unnormalised, x_grid)
 
     return x_grid, unnormalised / z
 
 
-def plot_x_distribution(
+def plot_x_distribution_histogram(
+    result: LangevinSimulationResult,
+    *,
+    ax: Axes | None = None,
+    bins: int | None = None,
+) -> tuple[Figure, Axes, tuple[Line2D, BarContainer]]:
+    """Plot a fancy histogram of periodically sampled position or momentum.
+
+    Subsamples the trajectory every `sample_every` steps (to reduce
+    autocorrelation between adjacent time points) before histogramming.
+    """
+    fig, ax = get_figure(ax)
+
+    _bin_counts, _bin_edges, bars = ax.hist(
+        result.x_points[1:].reshape(-1),
+        bins=bins or int(np.sqrt(result.x_points.size)),
+        density=True,
+        alpha=1.0,
+    )
+
+    x_grid, x_pdf = _get_exact_x_distribution_pdf(result)
+    ax.plot(x_grid, x_pdf, lw=1.5)
+
+    ax.set_xlabel("x")
+    ax.set_ylabel("Probability Density")
+
+    return fig, ax, cast("BarContainer", bars)
+
+
+def plot_x_distribution_kde(
     result: LangevinSimulationResult,
     *,
     ax: Axes | None = None,
@@ -211,35 +240,6 @@ def plot_x_distribution(
     ax.set_xlim(x_points[0], x_points[-1])
 
     return fig, ax, lines
-
-
-def plot_x_histogram(
-    result: LangevinSimulationResult,
-    *,
-    ax: Axes | None = None,
-    bins: int = 100,
-) -> tuple[Figure, Axes, tuple[Line2D, BarContainer]]:
-    """Plot a fancy histogram of periodically sampled position or momentum.
-
-    Subsamples the trajectory every `sample_every` steps (to reduce
-    autocorrelation between adjacent time points) before histogramming.
-    """
-    fig, ax = get_figure(ax)
-
-    _bin_counts, _bin_edges, bars = ax.hist(
-        result.x_points[1:].reshape(-1),
-        bins=bins,
-        density=True,
-        alpha=1.0,
-    )
-
-    x_grid, x_pdf = x_exact_pdf(result)
-    ax.plot(x_grid, x_pdf, lw=1.5)
-
-    ax.set_xlabel("x")
-    ax.set_ylabel("Probability Density")
-
-    return fig, ax, cast("BarContainer", bars)
 
 
 def p_exact_pdf(result: LangevinSimulationResult, *, n_grid: int = 10_000) -> tuple:

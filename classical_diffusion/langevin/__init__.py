@@ -12,8 +12,8 @@ from classical_diffusion.langevin._analysis import (
     plot_kinetic_probability,
     plot_p_histogram,
     plot_phase_space_density,
-    plot_x_distribution,
-    plot_x_histogram,
+    plot_x_distribution_histogram,
+    plot_x_distribution_kde,
     split_escaped_and_trapped,
 )
 from classical_diffusion.langevin._langevin import (
@@ -26,6 +26,7 @@ from classical_diffusion.langevin._langevin import (
     solve_single,
     solve_single_ballistic,
 )
+from classical_diffusion.langevin._sample import get_random_initial_conditions
 from classical_diffusion.langevin._system import (
     CanonicalSystem,
     HarmonicSystem,
@@ -77,10 +78,9 @@ __all__ = [
     "get_full_effective_mass_exact_1d_periodic",
     "get_full_effective_mass_exact_1d_periodic_directly",
     "get_full_effective_mass_from_free",
+    "get_random_initial_conditions",
     "get_under_barrier_probability_ballistic",
     "plot_2d_gradient",
-    "plot_2d_trajectory",
-    "plot_2d_trajectory_single",
     "plot_effective_mass_ratio",
     "plot_elastic_p",
     "plot_energy",
@@ -95,8 +95,8 @@ __all__ = [
     "plot_phase_space_density",
     "plot_potential_1d",
     "plot_potential_2d",
-    "plot_x_distribution",
-    "plot_x_histogram",
+    "plot_x_distribution_histogram",
+    "plot_x_distribution_kde",
     "solve_ballistic_ensemble",
     "solve_ensemble",
     "solve_over_barrier_ballistic_ensemble",
