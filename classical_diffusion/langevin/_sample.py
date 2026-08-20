@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 SAMPLE_REGION = 100
 
 
-@jax.jit
+@jax.jit(static_argnames=("n_samples",))
 def _sample_initial_conditions(
     system: "CanonicalSystem",  # ruff: ignore[quoted-annotation]
     n_samples: int = 1,
