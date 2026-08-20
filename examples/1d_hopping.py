@@ -1,6 +1,6 @@
 import numpy as np
 
-from classical_diffusion.analysis import plot_isf, plot_x_evolution
+from classical_diffusion.analysis import plot_isf, plot_x_evolution_1d
 from classical_diffusion.hopping import (
     Lattice1D,
     get_ensemble_probabilities,
@@ -23,7 +23,7 @@ def _plot_1d_hopping_isf() -> None:
 
     fig, ax = get_fancy_figure()
 
-    fig, ax, _ = plot_x_evolution(result=results, ax=ax)
+    fig, ax, _ = plot_x_evolution_1d(result=results, ax=ax)
     ax.set_xlim(0, results.times[-1])
     fig.savefig("./examples/1d_hopping.trajectory.pdf")
 

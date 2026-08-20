@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 
-from classical_diffusion.analysis import plot_p_evolution, plot_x_evolution
+from classical_diffusion.analysis import plot_p_evolution, plot_x_evolution_1d
 from classical_diffusion.langevin import (
     PeriodicSystem1D,
     plot_energy,
@@ -29,7 +29,7 @@ result = solve_ballistic_ensemble(
 )
 
 fig, axes = plt.subplots(3, 1)
-_, ax0, _ = plot_x_evolution(result.with_si_units(), ax=axes[0])
+_, ax0, _ = plot_x_evolution_1d(result.with_si_units(), ax=axes[0])
 
 _, ax1, _ = plot_p_evolution(result.with_si_units(), ax=axes[1])
 

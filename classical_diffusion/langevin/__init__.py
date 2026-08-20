@@ -6,8 +6,6 @@ from classical_diffusion.langevin._analysis import (
     get_full_effective_mass_from_free,
     get_under_barrier_probability_ballistic,
     plot_2d_gradient,
-    plot_2d_trajectory,
-    plot_2d_trajectory_single,
     plot_effective_mass_ratio,
     plot_elastic_p,
     plot_energy,
