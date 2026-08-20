@@ -169,6 +169,10 @@ class CanonicalSystem(System):
     potential: tuple[int, sp.Expr] = field(metadata={"static": True})
     units: CanonicalUnitSystem = field(default_factory=CanonicalUnitSystem)
 
+    def with_units(self, units: UnitSystem) -> CanonicalSystem:
+        """Return the system converted to the given units."""
+        return super().with_units(units).as_canonical()
+
 
 class HarmonicSystem(System):
     """Parameters representing a simple harmonic oscillator system."""
