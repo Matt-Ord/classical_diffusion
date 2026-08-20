@@ -10,22 +10,18 @@ import numpy as np
 import sympy as sp
 
 from classical_diffusion.langevin._sample import (
-    make_free_point_sampler,
-    make_initial_conditions_sampler,
+    get_initial_conditions,
+    get_over_barrier_initial_conditions,
 )
 from classical_diffusion.simulation import SimulationResult, SingleSimulationResult
 from classical_diffusion.system import UnitSystem
-from classical_diffusion.util import cached, hash_array, timed
+from classical_diffusion.util import _get_key, cached, hash_array, timed
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     from classical_diffusion.langevin import CanonicalSystem, System
     from classical_diffusion.simulation import TimeSpan
-
-
-def _get_key(key: jax.Array | None) -> jax.Array:
-    return key if key is not None else jax.random.PRNGKey(0)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -325,19 +321,6 @@ def _solve_ballistic_ensemble_path[S: System](
     return Path("examples/data") / filename
 
 
-def _get_initial_conditions(
-    system: System, n_samples: int, *, _key: jax.Array | None = None
-) -> tuple[
-    np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
-]:
-    sampler = make_initial_conditions_sampler(system)
-    keys = jax.random.split(_get_key(_key), n_samples)
-    x_initial, p_initial = sampler(keys)
-    x_initial = x_initial.reshape(-1, system.n_dim)
-    p_initial = p_initial.reshape(-1, system.n_dim)
-    return x_initial, p_initial
-
-
 @cached(_solve_ballistic_ensemble_path)
 @timed
 def solve_ballistic_ensemble[S: System](
@@ -354,7 +337,7 @@ def solve_ballistic_ensemble[S: System](
     out = solve_ensemble.load_or_call_uncached(
         dataclasses.replace(simulated_system, gamma=0.0),
         time_span,
-        _get_initial_conditions(simulated_system, n_samples, _key=_key),
+        get_initial_conditions(simulated_system, n_samples, _key=_key),
         _key=_key,
     )
     return LangevinSimulationResult[S](
@@ -363,22 +346,6 @@ def solve_ballistic_ensemble[S: System](
         p_points=simulated_system.units.momentum_into(out.p_points, system.units),
         system=system,
     )
-
-
-def _get_over_barrier_initial_conditions(
-    system: System,
-    barrier_energy: float,
-    n_samples: int,
-    *,
-    _key: jax.Array | None = None,
-) -> tuple:
-    _key = _get_key(_key)
-    sampler = make_free_point_sampler(system, barrier_energy)
-    keys = jax.random.split(_key, n_samples)
-    free_x_initial, free_p_initial = sampler(keys)
-    free_x_initial = free_x_initial.reshape(-1, system.n_dim)
-    free_p_initial = free_p_initial.reshape(-1, system.n_dim)
-    return free_x_initial, free_p_initial
 
 
 def _solve_over_barrier_ballistic_ensemble_path[S: System](
@@ -410,7 +377,7 @@ def solve_over_barrier_ballistic_ensemble[S: System](
     out = solve_ensemble.load_or_call_uncached(
         dataclasses.replace(simulated_system, gamma=0.0),
         time_span,
-        _get_over_barrier_initial_conditions(
+        get_over_barrier_initial_conditions(
             simulated_system,
             barrier_energy=system.units.energy_into(
                 barrier_energy, simulated_system.units
