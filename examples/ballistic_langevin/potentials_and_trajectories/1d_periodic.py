@@ -51,10 +51,10 @@ def _plot_ballistic_trajectory() -> None:
 
     fig, ax = get_two_panel_figure()
 
-    _, _ax_0, [line] = plot_x_evolution_1d(result=result.with_si_units(), ax=ax[0])
-    _, _ax_0, [line_e] = plot_x_evolution_1d(result=elastic.with_si_units(), ax=ax[0])
+    _, _ax_0, [line] = plot_x_evolution_1d(result=result, ax=ax[0])
+    _, _ax_0, [line_e] = plot_x_evolution_1d(result=elastic, ax=ax[0])
 
-    _, _ax_1, [line_i] = plot_x_evolution_1d(result=inelastic.with_si_units(), ax=ax[1])
+    _, _ax_1, [line_i] = plot_x_evolution_1d(result=inelastic, ax=ax[1])
 
     line_i.set_color("C2")
 

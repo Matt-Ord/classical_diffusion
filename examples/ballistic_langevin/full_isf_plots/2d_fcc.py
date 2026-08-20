@@ -38,7 +38,7 @@ def _plot_periodic_isf() -> None:
 
     fig, ax = get_fancy_figure()
     _, ax, line_0, _fill_0 = plot_isf(
-        result=full_result.with_si_units(),
+        result=full_result,
         ax=ax,
         delta_k=delta_k,
     )
@@ -54,7 +54,7 @@ def _plot_periodic_isf() -> None:
     )
 
     _, ax, line_1, _ = plot_isf(
-        result=ballistic_result.with_si_units(), ax=ax, delta_k=delta_k, pairwise=False
+        result=ballistic_result, ax=ax, delta_k=delta_k, pairwise=False
     )
     line_1.set_label("ballistic simulation")
 
@@ -66,13 +66,13 @@ def _plot_periodic_isf() -> None:
     )
 
     _, ax, line_2, _ = plot_isf(
-        result=elastic_result.with_si_units(), ax=ax, delta_k=delta_k, pairwise=False
+        result=elastic_result, ax=ax, delta_k=delta_k, pairwise=False
     )
     line_2.set_label("elastic")
     line_2.set_linestyle(":")
 
     _, ax, line_3, _ = plot_isf(
-        result=inelastic_result.with_si_units(), ax=ax, delta_k=delta_k, pairwise=False
+        result=inelastic_result, ax=ax, delta_k=delta_k, pairwise=False
     )
     line_3.set_label("inelastic")
     line_3.set_linestyle(":")

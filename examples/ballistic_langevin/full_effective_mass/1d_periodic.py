@@ -49,7 +49,7 @@ def _plot_effective_mass_isf() -> None:
     )
 
     _, ax, line_0, _ = plot_isf(
-        result=elastic_result.with_si_units(), ax=ax, delta_k=delta_k, pairwise=False
+        result=elastic_result, ax=ax, delta_k=delta_k, pairwise=False
     )
     line_0.set_label("elastic")
 
@@ -90,9 +90,7 @@ def _plot_effective_mass_isf() -> None:
     )
 
     _, ax, line_2 = plot_exact_flat_ballistic_isf(
-        system=dataclasses.replace(
-            system.with_si_units().as_canonical(), m=effective_mass
-        ),
+        system=dataclasses.replace(system.as_canonical(), m=effective_mass),
         ax=ax,
         delta_k=delta_k,
     )
@@ -104,9 +102,7 @@ def _plot_effective_mass_isf() -> None:
         units=system.units,
     )
     _, ax, line_3 = plot_exact_flat_ballistic_isf(
-        system=dataclasses.replace(
-            system.with_si_units().as_canonical(), m=effective_mass_exact
-        ),
+        system=dataclasses.replace(system.as_canonical(), m=effective_mass_exact),
         ax=ax,
         delta_k=delta_k,
     )

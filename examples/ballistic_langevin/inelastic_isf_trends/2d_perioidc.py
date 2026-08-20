@@ -45,7 +45,7 @@ def _plot_inelastic_trends() -> None:
 
     fig, ax = get_fancy_figure()
     _, ax = plot_isf_with_delta_k(
-        result=inelastic_result.with_si_units(),
+        result=inelastic_result,
         ax=ax,
         delta_k_values=delta_k_values,
         pairwise=False,

@@ -26,8 +26,6 @@ system = PeriodicSystemFCC(
     barrier_energy=5e-21,
 )
 
-normalized_system = system.with_normalized_units()
-
 
 def _plot_effective_mass_offset_isf() -> None:
 
@@ -38,19 +36,19 @@ def _plot_effective_mass_offset_isf() -> None:
     )
 
     result_full = solve_ballistic_ensemble(
-        normalized_system,
+        system,
         TimeSpan(
-            t_end=normalized_system.units.time_into(5e-12),
+            t_end=system.units.time_into(5e-12),
             n_steps=1000,
         ),
         n_samples=2000,
     )
 
     under_barrier_prob = get_under_barrier_probability_ballistic(
-        normalized_system,
+        system,
         result_full.x_points,
         result_full.p_points,
-        normalized_system.barrier_energy,
+        system.barrier_energy,
     )
 
     print(under_barrier_prob)
@@ -58,12 +56,12 @@ def _plot_effective_mass_offset_isf() -> None:
     elastic_result, _ = breakdown_ballistic_trajectory(
         result_full,
         minimum_timescale=get_diffusion_time(
-            normalized_system, characteristic_length=normalized_system.delta_x / 0.5
+            system, characteristic_length=system.delta_x / 0.5
         ),
     )
 
     _, ax, line_0, _ = plot_isf(
-        result=elastic_result.with_si_units(), ax=ax, delta_k=delta_k, pairwise=False
+        result=elastic_result, ax=ax, delta_k=delta_k, pairwise=False
     )
     line_0.set_label("elastic")
 
@@ -77,9 +75,9 @@ def _plot_effective_mass_offset_isf() -> None:
     line_1.set_linestyle(":")
 
     result_free = solve_ballistic_ensemble(
-        normalized_system,
+        system,
         TimeSpan(
-            t_end=normalized_system.units.time_into(50e-12),
+            t_end=system.units.time_into(50e-12),
             n_steps=1000,
         ),
         n_samples=1000,
@@ -88,21 +86,19 @@ def _plot_effective_mass_offset_isf() -> None:
     elastic_result_free, _ = breakdown_ballistic_trajectory(
         result_free,
         minimum_timescale=get_diffusion_time(
-            normalized_system, characteristic_length=normalized_system.delta_x / 0.5
+            system, characteristic_length=system.delta_x / 0.5
         ),
     )
 
     effective_mass = UnitSystem().mass_into(
         get_effective_mass(elastic_result_free),
-        units=normalized_system.units,
+        units=system.units,
     )
 
     print(effective_mass)
 
     _, ax, line_2 = plot_exact_flat_ballistic_isf(
-        system=dataclasses.replace(
-            system.with_si_units().as_canonical(), m=effective_mass
-        ),
+        system=dataclasses.replace(system.as_canonical(), m=effective_mass),
         ax=ax,
         delta_k=delta_k,
         offset=under_barrier_prob,

@@ -1,10 +1,10 @@
 import numpy as np
 
+from classical_diffusion.analysis import plot_x_evolution_2d
 from classical_diffusion.langevin import (
     PeriodicSystemFCC,
     breakdown_ballistic_trajectory,
     get_diffusion_time,
-    plot_2d_trajectory_single,
     plot_periodic_potential_fcc,
     solve_single_ballistic,
 )
@@ -47,18 +47,12 @@ def _plot_ballistic_trajectory() -> None:
 
     fig, ax = get_two_panel_figure()
 
-    _, _ax_0, line = plot_2d_trajectory_single(
-        result=result.with_si_units(), ax=ax[0], start_step=30, end_step=30
-    )
-    _, _ax_0, line_e = plot_2d_trajectory_single(
-        result=elastic.with_si_units(), ax=ax[0], start_step=30, end_step=30
-    )
+    _, _ax_0, line = plot_x_evolution_2d(result=result, ax=ax[0])
+    _, _ax_0, line_e = plot_x_evolution_2d(result=elastic, ax=ax[0])
 
-    _, _ax_1, line_i = plot_2d_trajectory_single(
-        result=inelastic.with_si_units(), ax=ax[1], start_step=30, end_step=30
-    )
+    _, _ax_1, line_i = plot_x_evolution_2d(result=inelastic, ax=ax[1])
 
-    line_i.set_color("C2")
+    line_i[0].set_color("C2")
 
     ax[0].legend(
         handles=[line, line_e],
