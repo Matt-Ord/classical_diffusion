@@ -18,7 +18,7 @@ from classical_diffusion.system import UnitSystem
 from classical_diffusion.util import cached, hash_array, timed
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
     from classical_diffusion.langevin import CanonicalSystem, System
     from classical_diffusion.simulation import TimeSpan
@@ -61,6 +61,11 @@ class LangevinSimulationResult[S: System](SimulationResult[S]):
             x_points=self.x_points[idx],
             p_points=self.p_points[idx],
         )
+
+    def __iter__(self) -> Iterator[SingleLangevinSimulationResult[S]]:
+        """Iterate over the trajectories in the ensemble."""
+        for i in range(self.x_points.shape[0]):
+            yield self[i]
 
     @override
     def with_si_units(self) -> Self:
@@ -318,12 +323,13 @@ def _solve_ballistic_ensemble_path[S: System](
 
 
 def _get_initial_conditions(
-    system: System, n_samples: int
+    system: System, n_samples: int, *, _key: jax.Array | None = None
 ) -> tuple[
     np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
 ]:
+    _key = _key or jax.random.PRNGKey(0)
     sampler = make_initial_conditions_sampler(system)
-    keys = jax.random.split(jax.random.PRNGKey(0), n_samples)
+    keys = jax.random.split(_key, n_samples)
     x_initial, p_initial = sampler(keys)
     x_initial = x_initial.reshape(-1, system.n_dim)
     p_initial = p_initial.reshape(-1, system.n_dim)
@@ -340,10 +346,11 @@ def solve_ballistic_ensemble[S: System](
     _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of ballistic trajectories in parallel via jax.vmap."""
+    _key = _key or jax.random.PRNGKey(0)
     out = solve_ensemble.load_or_call_uncached(
         dataclasses.replace(system.as_canonical(), gamma=0.0),
         time_span,
-        _get_initial_conditions(system, n_samples),
+        _get_initial_conditions(system, n_samples, _key=_key),
         _key=_key,
     )
     return LangevinSimulationResult(
@@ -355,10 +362,15 @@ def solve_ballistic_ensemble[S: System](
 
 
 def _get_over_barrier_initial_conditions(
-    system: System, barrier_energy: float, n_samples: int
+    system: System,
+    barrier_energy: float,
+    n_samples: int,
+    *,
+    _key: jax.Array | None = None,
 ) -> tuple:
+    _key = _key or jax.random.PRNGKey(0)
     sampler = make_free_point_sampler(system, barrier_energy)
-    keys = jax.random.split(jax.random.PRNGKey(0), n_samples)
+    keys = jax.random.split(_key, n_samples)
     free_x_initial, free_p_initial = sampler(keys)
     free_x_initial = free_x_initial.reshape(-1, system.n_dim)
     free_p_initial = free_p_initial.reshape(-1, system.n_dim)
@@ -388,11 +400,15 @@ def solve_over_barrier_ballistic_ensemble[S: System](
     _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of ballistic trajectories in parallel via jax.vmap."""
+    _key = _key or jax.random.PRNGKey(0)
     out = solve_ensemble.load_or_call_uncached(
         dataclasses.replace(system.as_canonical(), gamma=0.0),
         time_span,
         _get_over_barrier_initial_conditions(
-            system, barrier_energy=barrier_energy, n_samples=n_samples
+            system,
+            barrier_energy=barrier_energy,
+            n_samples=n_samples,
+            _key=_key,
         ),
         _key=_key,
     )
