@@ -207,35 +207,39 @@ def solve_ensemble[S: System](
     _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of ULD Langevin trajectories in parallel via jax.vmap."""
-    xs0_jax = jnp.asarray(initial_conditions[0])
-    ps0_jax = jnp.asarray(initial_conditions[1])
-    n_run = xs0_jax.shape[0]
-
-    times = jnp.linspace(
+    times = np.linspace(
         time_span.t_start, time_span.t_end, time_span.n_steps + 1, endpoint=True
     )
+    normalized_system = system.with_normalized_units().as_canonical()
+    xs0_jax = jnp.asarray(
+        system.units.length_into(initial_conditions[0], normalized_system.units)
+    )
+    ps0_jax = jnp.asarray(
+        system.units.momentum_into(initial_conditions[1], normalized_system.units)
+    )
+    times_jax = jnp.asarray(system.units.time_into(times, normalized_system.units))
+    n_run = xs0_jax.shape[0]
 
     if np.isclose(system.gamma, 0.0):
         xs_batch, ps_batch = _run_deterministic_ensemble_jit(
-            system.as_canonical(), xs0_jax, ps0_jax, times
+            normalized_system, xs0_jax, ps0_jax, times_jax
         )
     else:
         keys = jax.random.split(_get_key(_key), n_run)
 
         xs_batch, ps_batch = _run_langevin_ensemble_jit(
-            system.as_canonical(), xs0_jax, ps0_jax, keys, times
+            normalized_system, xs0_jax, ps0_jax, keys, times_jax
         )
 
-    # --- SHAPE TRANSFORMATION ---
     # Diffrax + vmap naturally outputs: (n_run, n_time, n_dim)
     # We transpose axes 1 and 2 to match your target layout: (n_run, n_dim, n_time)
-    xs_batch = jnp.transpose(xs_batch, (0, 2, 1))
-    ps_batch = jnp.transpose(ps_batch, (0, 2, 1))
+    xs_batch = np.array(jnp.transpose(xs_batch, (0, 2, 1)))
+    ps_batch = np.array(jnp.transpose(ps_batch, (0, 2, 1)))
 
     return LangevinSimulationResult(
         times=np.array(times),
-        x_points=np.array(xs_batch),
-        p_points=np.array(ps_batch),
+        x_points=normalized_system.units.length_into(xs_batch, system.units),
+        p_points=normalized_system.units.momentum_into(ps_batch, system.units),
         system=system,
     )
 
