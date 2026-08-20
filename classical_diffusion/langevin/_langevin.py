@@ -333,7 +333,7 @@ def solve_ballistic_ensemble[S: System](
     """Solve an ensemble of ballistic trajectories in parallel via jax.vmap."""
     _key = _get_key(_key)
 
-    simulated_system = system.as_canonical().with_normalized_units()
+    simulated_system = system.with_normalized_units().as_canonical()
     out = solve_ensemble.load_or_call_uncached(
         dataclasses.replace(simulated_system, gamma=0.0),
         time_span,
@@ -373,7 +373,7 @@ def solve_over_barrier_ballistic_ensemble[S: System](
     """Solve an ensemble of ballistic trajectories in parallel via jax.vmap."""
     _key = _get_key(_key)
 
-    simulated_system = system.as_canonical().with_normalized_units()
+    simulated_system = system.with_normalized_units().as_canonical()
     out = solve_ensemble.load_or_call_uncached(
         dataclasses.replace(simulated_system, gamma=0.0),
         time_span,

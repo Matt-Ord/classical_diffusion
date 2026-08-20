@@ -20,15 +20,13 @@ system = PeriodicSystemFCC(
     barrier_energy=4e-21,
 )
 
-normalized_system = system.with_normalized_units()
-
 
 def _plot_inelastic_trends() -> None:
 
     ballistic_result = solve_ballistic_ensemble(
-        normalized_system,
+        system,
         TimeSpan(
-            t_end=normalized_system.units.time_into(6e-12),
+            t_end=system.units.time_into(6e-12),
             n_steps=1000,
         ),
         n_samples=2000,
@@ -37,7 +35,7 @@ def _plot_inelastic_trends() -> None:
     _, inelastic_result = breakdown_ballistic_trajectory(
         ballistic_result,
         minimum_timescale=get_diffusion_time(
-            normalized_system, characteristic_length=normalized_system.delta_x / 0.5
+            system, characteristic_length=system.delta_x / 0.5
         ),
     )
     direction = np.array([1, 1])

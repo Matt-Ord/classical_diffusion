@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 
-from classical_diffusion.analysis import plot_p_evolution, plot_x_evolution_1d
+from classical_diffusion.analysis import plot_p_evolution_1d, plot_x_evolution_1d
 from classical_diffusion.langevin import (
     PeriodicSystem1D,
     plot_energy,
@@ -16,13 +16,11 @@ system = PeriodicSystem1D(
     barrier_energy=1.6e-21,
 )
 
-normalized_system = system.with_normalized_units()
-
 
 result = solve_ballistic_ensemble(
-    normalized_system,
+    system,
     TimeSpan(
-        t_end=normalized_system.units.time_into(5e-12),
+        t_end=system.units.time_into(5e-12),
         n_steps=1000,
     ),
     n_samples=1,
@@ -31,7 +29,7 @@ result = solve_ballistic_ensemble(
 fig, axes = plt.subplots(3, 1)
 _, ax0, _ = plot_x_evolution_1d(result.with_si_units(), ax=axes[0])
 
-_, ax1, _ = plot_p_evolution(result.with_si_units(), ax=axes[1])
+_, ax1, _ = plot_p_evolution_1d(result.with_si_units(), ax=axes[1])
 
 _, ax2 = plot_energy(result, ax=axes[2])
 ax2.set_ylabel("Energy / kbt")

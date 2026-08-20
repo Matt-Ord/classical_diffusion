@@ -26,8 +26,6 @@ system = PeriodicSystem1D(
     barrier_energy=4e-21,
 )
 
-normalized_system = system.with_normalized_units()
-
 
 def _plot_effective_mass_isf() -> None:
 
@@ -35,9 +33,9 @@ def _plot_effective_mass_isf() -> None:
     delta_k = (7e9,)
 
     result_full = solve_ballistic_ensemble(
-        normalized_system,
+        system,
         TimeSpan(
-            t_end=normalized_system.units.time_into(5e-12),
+            t_end=system.units.time_into(5e-12),
             n_steps=1000,
         ),
         n_samples=5000,
@@ -46,7 +44,7 @@ def _plot_effective_mass_isf() -> None:
     elastic_result, _ = breakdown_ballistic_trajectory(
         result_full,
         minimum_timescale=get_diffusion_time(
-            normalized_system, characteristic_length=normalized_system.delta_x / 0.5
+            system, characteristic_length=system.delta_x / 0.5
         ),
     )
 
@@ -64,36 +62,36 @@ def _plot_effective_mass_isf() -> None:
     line_1.set_linestyle(":")
 
     result_free = solve_over_barrier_ballistic_ensemble(
-        normalized_system,
+        system,
         TimeSpan(
-            t_end=normalized_system.units.time_into(10e-12),
+            t_end=system.units.time_into(10e-12),
             n_steps=1000,
         ),
-        barrier_energy=normalized_system.barrier_energy,
+        barrier_energy=system.barrier_energy,
         n_samples=2000,
     )
 
     elastic_result_free, _ = breakdown_ballistic_trajectory(
         result_free,
         minimum_timescale=get_diffusion_time(
-            normalized_system, characteristic_length=normalized_system.delta_x / 0.5
+            system, characteristic_length=system.delta_x / 0.5
         ),
     )
 
     prob_under_barrier = calculate_probability_under_barrier_1d(
-        normalized_system, barrier_energy=normalized_system.barrier_energy
+        system, barrier_energy=system.barrier_energy
     )
     effective_mass = UnitSystem().mass_into(
         get_full_effective_mass_from_free(
             elastic_result_free,
             prob_under_barrier=prob_under_barrier,
         ),
-        units=normalized_system.units,
+        units=system.units,
     )
 
     _, ax, line_2 = plot_exact_flat_ballistic_isf(
         system=dataclasses.replace(
-            normalized_system.with_si_units().as_canonical(), m=effective_mass
+            system.with_si_units().as_canonical(), m=effective_mass
         ),
         ax=ax,
         delta_k=delta_k,
@@ -102,12 +100,12 @@ def _plot_effective_mass_isf() -> None:
     line_2.set_linestyle(":")
 
     effective_mass_exact = UnitSystem().mass_into(
-        get_full_effective_mass_exact_1d_periodic_directly(system=normalized_system),
-        units=normalized_system.units,
+        get_full_effective_mass_exact_1d_periodic_directly(system=system),
+        units=system.units,
     )
     _, ax, line_3 = plot_exact_flat_ballistic_isf(
         system=dataclasses.replace(
-            normalized_system.with_si_units().as_canonical(), m=effective_mass_exact
+            system.with_si_units().as_canonical(), m=effective_mass_exact
         ),
         ax=ax,
         delta_k=delta_k,

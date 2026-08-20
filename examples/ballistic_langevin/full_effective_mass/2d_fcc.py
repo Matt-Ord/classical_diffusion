@@ -25,8 +25,6 @@ system = PeriodicSystemFCC(
     barrier_energy=1.6e-21,
 )
 
-normalized_system = system.with_normalized_units()
-
 
 def _plot_effective_mass_isf() -> None:
 
@@ -35,25 +33,25 @@ def _plot_effective_mass_isf() -> None:
     delta_k = tuple(7e9 * direction / np.linalg.norm(direction))
 
     result_full = solve_ballistic_ensemble(
-        normalized_system,
+        system,
         TimeSpan(
-            t_end=normalized_system.units.time_into(5e-12),
+            t_end=system.units.time_into(5e-12),
             n_steps=1000,
         ),
         n_samples=2000,
     )
 
     prob_under_barrier = get_under_barrier_probability_ballistic(
-        normalized_system,
+        system,
         result_full.x_points,
         result_full.p_points,
-        normalized_system.barrier_energy,
+        system.barrier_energy,
     )
 
     elastic_result, _ = breakdown_ballistic_trajectory(
         result_full,
         minimum_timescale=get_diffusion_time(
-            normalized_system, characteristic_length=normalized_system.delta_x / 0.5
+            system, characteristic_length=system.delta_x / 0.5
         ),
     )
 
@@ -72,19 +70,19 @@ def _plot_effective_mass_isf() -> None:
     line_1.set_linestyle(":")
 
     result_free = solve_over_barrier_ballistic_ensemble(
-        normalized_system,
+        system,
         TimeSpan(
-            t_end=normalized_system.units.time_into(5e-12),
+            t_end=system.units.time_into(5e-12),
             n_steps=1000,
         ),
         n_samples=500,
-        barrier_energy=normalized_system.barrier_energy,
+        barrier_energy=system.barrier_energy,
     )
 
     elastic_result_free, _ = breakdown_ballistic_trajectory(
         result_free,
         minimum_timescale=get_diffusion_time(
-            normalized_system, characteristic_length=normalized_system.delta_x / 0.5
+            system, characteristic_length=system.delta_x / 0.5
         ),
     )
 
@@ -93,7 +91,7 @@ def _plot_effective_mass_isf() -> None:
             elastic_result_free,
             prob_under_barrier=prob_under_barrier,
         ),
-        units=normalized_system.units,
+        units=system.units,
     )
     print(effective_mass)
 

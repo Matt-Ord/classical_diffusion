@@ -120,13 +120,21 @@ class System:
 
     def with_units(self, units: UnitSystem) -> System:
         """Return the system converted to the given units."""
-        time_factor = self.units.time_factor / units.time_factor
+        length_factor = self.units.length_factor / units.length_factor
+        energy_factor = self.units.energy_factor / units.energy_factor
+
+        scaled_expr = (
+            self.potential_expr.subs(
+                {sym: sym * length_factor for sym in self.coordinate_symbols}
+            )
+            / energy_factor
+        )
         return System(
             m=self.units.mass_into(self.m, units),
-            gamma=self.gamma / time_factor,
+            gamma=self.units.frequency_into(self.gamma, units),
             units=units,
             temperature=self.temperature,
-            potential=self.potential,
+            potential=(self.n_dim, scaled_expr),
             params=self.params,
         )
 
@@ -173,6 +181,10 @@ class CanonicalSystem(System):
         """Return the system converted to the given units."""
         return super().with_units(units).as_canonical()
 
+    def with_normalized_units(self) -> CanonicalSystem:
+        """Return the parameters of the simulation in normalized units."""
+        return self.with_units(self.normalized_units).as_canonical()
+
 
 class HarmonicSystem(System):
     """Parameters representing a simple harmonic oscillator system."""
@@ -209,13 +221,11 @@ class HarmonicSystem(System):
     @override
     def with_units(self, units: UnitSystem) -> HarmonicSystem:
 
-        mass_factor = units.mass_factor / self.units.mass_factor
-        time_factor = units.time_factor / self.units.time_factor
         return HarmonicSystem(
-            gamma=self.gamma / time_factor,
+            gamma=self.units.frequency_into(self.gamma, units),
             temperature=self.temperature,
-            m=self.m * mass_factor,
-            omega=self.omega / time_factor,
+            m=self.units.mass_into(self.m, units),
+            omega=self.units.frequency_into(self.omega, units),
             n_dim=self.n_dim,
             units=units,
         )
@@ -261,16 +271,12 @@ class PeriodicSystem1D(System):
     @override
     def with_units(self, units: UnitSystem) -> PeriodicSystem1D:
         """Return the normalized parameters of the simulation."""
-        mass_factor = units.mass_factor / self.units.mass_factor
-        time_factor = units.time_factor / self.units.time_factor
-        length_factor = units.length_factor / self.units.length_factor
-        energy_factor = units.energy_factor / self.units.energy_factor
         return PeriodicSystem1D(
-            gamma=self.gamma / time_factor,
+            gamma=self.units.frequency_into(self.gamma, units),
             temperature=self.temperature,
-            m=self.m * mass_factor,
-            delta_x=self.delta_x * length_factor,
-            barrier_energy=self.barrier_energy * energy_factor,
+            m=self.units.mass_into(self.m, units),
+            delta_x=self.units.length_into(self.delta_x, units),
+            barrier_energy=self.units.energy_into(self.barrier_energy, units),
             n_dim=self.n_dim,
             units=units,
         )
@@ -334,16 +340,12 @@ class PeriodicSystemFCC(System):
     @override
     def with_units(self, units: UnitSystem) -> PeriodicSystemFCC:
         """Return the parameters of the system in the specified units."""
-        length_factor = units.length_factor / self.units.length_factor
-        mass_factor = units.mass_factor / self.units.mass_factor
-        energy_factor = units.energy_factor / self.units.energy_factor
-        time_factor = units.time_factor / self.units.time_factor
         return PeriodicSystemFCC(
-            gamma=self.gamma / time_factor,
+            gamma=self.units.frequency_into(self.gamma, units),
             temperature=self.temperature,
-            m=self.m * mass_factor,
-            delta_x=self.delta_x * length_factor,
-            barrier_energy=self.barrier_energy * energy_factor,
+            m=self.units.mass_into(self.m, units),
+            delta_x=self.units.length_into(self.delta_x, units),
+            barrier_energy=self.units.energy_into(self.barrier_energy, units),
             units=units,
         )
 
@@ -449,17 +451,14 @@ class KramersSystem1D(System):
     @override
     def with_units(self, units: UnitSystem) -> KramersSystem1D:
         """Return the parameters of the system in the specified units."""
-        mass_factor = units.mass_factor / self.units.mass_factor
-        time_factor = units.time_factor / self.units.time_factor
-        energy_factor = units.energy_factor / self.units.energy_factor
         return KramersSystem1D(
-            m=self.m * mass_factor,
+            m=self.units.mass_into(self.m, units),
             params=KramersParameters(
-                omega_well=self.omega_well / time_factor,
-                omega_barrier=self.omega_barrier / time_factor,
-                barrier_energy=self.barrier_energy * energy_factor,
-                kbt=self.kbt * energy_factor,
-                gamma=self.gamma / time_factor,
+                omega_well=self.units.frequency_into(self.omega_well, units),
+                omega_barrier=self.units.frequency_into(self.omega_barrier, units),
+                barrier_energy=self.units.energy_into(self.barrier_energy, units),
+                kbt=self.units.energy_into(self.kbt, units),
+                gamma=self.units.frequency_into(self.gamma, units),
             ),
             n_dim=self.n_dim,
             units=units,

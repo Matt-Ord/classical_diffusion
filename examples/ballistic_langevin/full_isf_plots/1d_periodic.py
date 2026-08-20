@@ -21,7 +21,7 @@ def _plot_periodic_isf() -> None:
         m=8e-27,
         delta_x=5e-10,
         barrier_energy=4e-21,
-    ).with_normalized_units()
+    )
 
     full_result = solve_ensemble(
         system,
