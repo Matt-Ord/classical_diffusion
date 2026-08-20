@@ -1,10 +1,13 @@
 import dataclasses
 from dataclasses import dataclass
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 
 import numpy as np
 
 from classical_diffusion.system import UnitSystem
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -13,7 +16,7 @@ class SingleSimulationResult[S: Any]:
 
     system: S
     times: np.ndarray
-    x_points: np.ndarray[Any, np.dtype[np.floating]]
+    x_points: np.ndarray[tuple[int, int], np.dtype[np.floating]]
 
     def with_si_units(self) -> Self:
         """Return the rescaled simulation of the system."""
@@ -34,7 +37,7 @@ class SingleSimulationResult[S: Any]:
 class SimulationResult[S: Any]:
     """Results of a simulation ensemble."""
 
-    _times: np.ndarray
+    _times: np.ndarray[Any, np.dtype[np.floating]]
     _x_points: np.ndarray[Any, np.dtype[np.floating]]
     _system: S
 
@@ -50,12 +53,12 @@ class SimulationResult[S: Any]:
         _system = system
 
     @property
-    def times(self) -> np.ndarray[Any, np.dtype[np.floating]]:
+    def times(self) -> np.ndarray[tuple[int], np.dtype[np.floating]]:
         """The time points at which the simulation was sampled."""
         return self._times
 
     @property
-    def x_points(self) -> np.ndarray[Any, np.dtype[np.floating]]:
+    def x_points(self) -> np.ndarray[tuple[int, int, int], np.dtype[np.floating]]:
         """The positions of the particles at each time point."""
         return self._x_points
 
@@ -71,6 +74,11 @@ class SimulationResult[S: Any]:
             times=self._times,
             x_points=self.x_points[idx],
         )
+
+    def __iter__(self) -> Iterator[SingleSimulationResult[S]]:
+        """Iterate over the trajectories in the ensemble."""
+        for i in range(self.x_points.shape[0]):
+            yield self[i]
 
     def with_si_units(self) -> Self:
         """Return the rescaled simulation of the system."""

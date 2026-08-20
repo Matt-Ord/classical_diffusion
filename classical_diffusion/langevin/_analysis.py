@@ -401,47 +401,6 @@ def plot_initial_p(
 _EXPECTED_NDIM = 2
 
 
-def plot_2d_trajectory(
-    result: LangevinSimulationResult,
-    *,
-    ax: Axes | None = None,
-    n_trajectories: int = 1,
-) -> tuple[Figure, Axes, list[Line2D]]:
-    """Plot x against y for 2d trajectory."""
-    fig, ax = get_figure(ax)
-
-    lines = []
-    for t in range(n_trajectories):
-        (line,) = ax.plot(result.x_points[t, 0, :], result.x_points[t, 1, :])
-        lines.append(line)
-
-    ax.set_xlabel("$x$")
-    ax.set_ylabel("$y$")
-
-    return fig, ax, lines
-
-
-def plot_2d_trajectory_single(
-    result: LangevinSimulationResult,
-    *,
-    ax: Axes | None = None,
-    start_step: float = 0,
-    end_step: float = 0,
-) -> tuple[Figure, Axes, Line2D]:
-    """Plot x against y for 2d trajectory."""
-    end_step = len(result.x_points) - end_step
-    fig, ax = get_figure(ax)
-
-    (line,) = ax.plot(
-        result.x_points[0, start_step:end_step], result.x_points[1, start_step:end_step]
-    )
-
-    ax.set_xlabel("$x$")
-    ax.set_ylabel("$y$")
-
-    return fig, ax, line
-
-
 def _partition_result(
     result: LangevinSimulationResult, mask: np.ndarray[Any, np.dtype[np.bool_]]
 ) -> tuple[

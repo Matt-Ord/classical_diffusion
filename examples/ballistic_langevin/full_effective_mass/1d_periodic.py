@@ -1,22 +1,22 @@
-import numpy as np
+import dataclasses
 
 from classical_diffusion.analysis import (
     plot_isf,
 )
 from classical_diffusion.langevin import (
     PeriodicSystem1D,
-    UnitSystem,
     breakdown_ballistic_trajectory,
     calculate_probability_under_barrier_1d,
     get_diffusion_time,
     get_full_effective_mass_exact_1d_periodic_directly,
     get_full_effective_mass_from_free,
-    plot_exact_gaussian_isf,
+    plot_exact_flat_ballistic_isf,
     solve_ballistic_ensemble,
     solve_over_barrier_ballistic_ensemble,
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.simulation import TimeSpan
+from classical_diffusion.system import UnitSystem
 
 system = PeriodicSystem1D(
     gamma=4e11,
@@ -55,11 +55,10 @@ def _plot_effective_mass_isf() -> None:
     )
     line_0.set_label("elastic")
 
-    _, ax, line_1 = plot_exact_gaussian_isf(
+    _, ax, line_1 = plot_exact_flat_ballistic_isf(
         system=system,
         ax=ax,
         delta_k=delta_k,
-        effective_mass=np.array([[system.m]]),
     )
     line_1.set_label("actual mass")
     line_1.set_linestyle(":")
@@ -92,11 +91,12 @@ def _plot_effective_mass_isf() -> None:
         units=normalized_system.units,
     )
 
-    _, ax, line_2 = plot_exact_gaussian_isf(
-        system=system.with_si_units(),
+    _, ax, line_2 = plot_exact_flat_ballistic_isf(
+        system=dataclasses.replace(
+            normalized_system.with_si_units().as_canonical(), m=effective_mass
+        ),
         ax=ax,
         delta_k=delta_k,
-        effective_mass=effective_mass,
     )
     line_2.set_label("effective mass")
     line_2.set_linestyle(":")
@@ -105,11 +105,12 @@ def _plot_effective_mass_isf() -> None:
         get_full_effective_mass_exact_1d_periodic_directly(system=normalized_system),
         units=normalized_system.units,
     )
-    _, ax, line_3 = plot_exact_gaussian_isf(
-        system=system.with_si_units(),
+    _, ax, line_3 = plot_exact_flat_ballistic_isf(
+        system=dataclasses.replace(
+            normalized_system.with_si_units().as_canonical(), m=effective_mass_exact
+        ),
         ax=ax,
         delta_k=delta_k,
-        effective_mass=np.array([[effective_mass_exact]]),
     )
     line_3.set_label("effective mass exact")
     line_3.set_linestyle(":")

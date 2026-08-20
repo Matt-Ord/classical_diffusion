@@ -5,6 +5,7 @@ import numpy as np
 import scipy
 
 from classical_diffusion.plot import get_figure, get_measured_data
+from classical_diffusion.simulation import SimulationResult
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -14,7 +15,7 @@ if TYPE_CHECKING:
 
     from classical_diffusion.langevin._langevin import LangevinSimulationResult
     from classical_diffusion.plot import Measure
-    from classical_diffusion.simulation import SimulationResult
+    from classical_diffusion.simulation import SingleSimulationResult
 
 
 def _calculate_total_offsset_multiplications_complex(
@@ -133,29 +134,18 @@ def plot_isf_with_delta_k(
     return fig, ax
 
 
-def plot_x_evolution(
-    result: SimulationResult,
+def plot_x_evolution_1d(
+    result: SimulationResult | SingleSimulationResult,
     *,
     ax: Axes | None = None,
     idx: int = 0,
-    n_trajectories: int = 1,
 ) -> tuple[Figure, Axes, list[Line2D]]:
-    """Plot x against t for the first n_trajectories trajectories.
-
-    Raises
-    ------
-    ValueError
-        If `n_trajectories` exceeds the number of trajectories available in `result`.
-    """
+    """Plot x against t for the first n_trajectories trajectories."""
     fig, ax = get_figure(ax)
 
-    if n_trajectories > result.x_points.shape[0]:
-        msg = f"n_trajectories={n_trajectories} exceeds available trajectories ({result.x_points.shape[0]})"
-        raise ValueError(msg)
-
     lines = []
-    for trajectory in range(n_trajectories):
-        (line,) = ax.plot(result.times, result.x_points[trajectory, idx])
+    for res in result if isinstance(result, SimulationResult) else [result]:
+        (line,) = ax.plot(res.times, res.x_points[idx])
         lines.append(line)
 
     ax.set_xlabel("$time$")
@@ -164,21 +154,24 @@ def plot_x_evolution(
     return fig, ax, lines
 
 
-def plot_single_x_evolution(
-    result: SimulationResult,
+def plot_x_evolution_2d(
+    result: SimulationResult | SingleSimulationResult,
     *,
     ax: Axes | None = None,
-    idx: int = 0,
-) -> tuple[Figure, Axes, Line2D]:
-    """Plot x against t for the first n_trajectories trajectories."""
+    idx: tuple[int, int] = (0, 1),
+) -> tuple[Figure, Axes, list[Line2D]]:
+    """Plot x against y for 2d trajectory."""
     fig, ax = get_figure(ax)
 
-    (line,) = ax.plot(result.times, result.x_points[idx, :])
+    lines = []
+    for res in result if isinstance(result, SimulationResult) else [result]:
+        (line,) = ax.plot(res.x_points[idx[0]], res.x_points[idx[1]])
+        lines.append(line)
 
-    ax.set_xlabel("$time$")
-    ax.set_ylabel("$x$")
+    ax.set_xlabel("$x$")
+    ax.set_ylabel("$y$")
 
-    return fig, ax, line
+    return fig, ax, lines
 
 
 def plot_p_evolution(
