@@ -13,7 +13,7 @@ SAMPLE_REGION = 100
 
 @jax.jit
 def _sample_initial_conditions(
-    system: CanonicalSystem,
+    system: "CanonicalSystem",  # ruff: ignore[quoted-annotation]
     n_samples: int = 1,
     minimum_energy: float = 0.0,
     *,
