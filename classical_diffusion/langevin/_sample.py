@@ -84,6 +84,6 @@ def get_random_initial_conditions(
     x_points = np.array(x_points.reshape(-1, system.n_dim))
     p_points = np.array(p_points.reshape(-1, system.n_dim))
     return (
-        normalized_system.units.length_into(x_points),
-        normalized_system.units.momentum_into(p_points),
+        normalized_system.units.length_into(x_points, system.units),
+        normalized_system.units.momentum_into(p_points, system.units),
     )
