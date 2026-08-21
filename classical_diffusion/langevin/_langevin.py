@@ -127,7 +127,7 @@ def _run_deterministic_ensemble_jit(
     def solve_one(x0: jnp.ndarray, p0: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
         sol_fwd = dfx.diffeqsolve(
             term,
-            solver=dfx.Tsit5(),
+            solver=dfx.Tsit5(),  # cspell: disable-line
             t0=0.0,
             t1=jnp.maximum(0.0, times[-1]),
             dt0=dt0,
@@ -139,7 +139,7 @@ def _run_deterministic_ensemble_jit(
 
         sol_bwd = dfx.diffeqsolve(
             term,
-            solver=dfx.Tsit5(),
+            solver=dfx.Tsit5(),  # cspell: disable-line
             t0=0.0,
             t1=jnp.minimum(0.0, times[0]),
             dt0=-dt0,
@@ -181,7 +181,7 @@ def _run_deterministic_ensemble_jit_forward(
     def solve_one(x0: jnp.ndarray, p0: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
         return dfx.diffeqsolve(
             term,
-            solver=dfx.Tsit5(),
+            solver=dfx.Tsit5(),  # cspell: disable-line
             t0=0.0,
             t1=jnp.maximum(0.0, times[-1]),
             dt0=jnp.abs(times[1] - times[0]),
