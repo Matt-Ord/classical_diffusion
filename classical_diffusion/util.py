@@ -1,5 +1,6 @@
 import datetime
 import pickle  # ruff:ignore[suspicious-pickle-import]
+import random
 import types
 import zlib
 from contextlib import contextmanager
@@ -234,4 +235,4 @@ def hash_array(arrays: tuple[np.ndarray, ...]) -> int:
 
 
 def _get_key(key: jax.Array | None) -> jax.Array:
-    return key if key is not None else jax.random.PRNGKey(0)
+    return key if key is not None else jax.random.PRNGKey(random.randint(0, 2**32 - 1))  # ruff: ignore[suspicious-non-cryptographic-random-usage]
