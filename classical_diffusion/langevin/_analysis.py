@@ -291,8 +291,8 @@ def plot_phase_space_density(
     fig, ax = get_figure(ax)
 
     _counts, _xedges, _yedges, mesh = ax.hist2d(
-        result.x_points[1:].reshape(-1),
-        result.p_points[1:].reshape(-1),
+        result.x_points[..., 1:].reshape(-1),
+        result.p_points[..., 1:].reshape(-1),
         bins=bins,
         density=True,
         cmap="viridis",
@@ -337,9 +337,6 @@ def plot_elastic_p(
     ax.set_ylabel("p_elastic")
 
     return fig, ax
-
-
-_EXPECTED_NDIM = 2
 
 
 def get_under_barrier_occupation(
