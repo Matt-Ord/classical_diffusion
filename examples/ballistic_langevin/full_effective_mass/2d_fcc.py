@@ -13,7 +13,6 @@ from classical_diffusion.langevin import (
     get_under_barrier_occupation,
     plot_exact_flat_ballistic_isf,
     solve_ballistic_ensemble,
-    solve_over_barrier_ballistic_ensemble,
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.simulation import TimeSpan
@@ -66,14 +65,14 @@ def _plot_effective_mass_isf() -> None:
     line_1.set_label("actual mass")
     line_1.set_linestyle(":")
 
-    result_free = solve_over_barrier_ballistic_ensemble(
+    result_free = solve_ballistic_ensemble(
         system,
         TimeSpan(
             t_end=system.units.time_into(5e-12),
             n_steps=1000,
         ),
         n_samples=500,
-        barrier_energy=system.barrier_energy,
+        minimum_energy=system.barrier_energy,
     )
 
     effective_mass = UnitSystem().mass_into(
