@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from classical_diffusion.hopping._system import Lattice
+from classical_diffusion.hopping._system import CanonicalLattice, Lattice
 from classical_diffusion.plot import get_figure
 from classical_diffusion.util import timed
 
@@ -28,11 +28,12 @@ def get_deterministic_isf[L: Lattice](
 
 
 @jax.jit
-def get_deterministic_isf_jax[L: Lattice](
+def get_deterministic_isf_jax[L: CanonicalLattice](
+    system: L,
     probabilities: jnp.ndarray,
     delta_k: float,
 ) -> jnp.ndarray:
-    distances = jnp.arange(probabilities.shape[1])
+    distances = system.x_points_from_indices(jnp.arange(probabilities.shape[1]))
     phase_factors = jnp.exp(1j * delta_k * distances)
     return jnp.abs(jnp.dot(probabilities, phase_factors))
 

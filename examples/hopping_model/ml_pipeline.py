@@ -11,6 +11,7 @@ import optax
 
 from classical_diffusion.analysis import get_isf
 from classical_diffusion.hopping import (
+    CanonicalLattice1D,
     KramersParameters,
     Lattice1D,
     deterministic_probabilities_jax,
@@ -111,9 +112,11 @@ def get_deterministic_isf_directly(
     hop_time: float, times: jnp.ndarray, delta_k: float
 ) -> jnp.ndarray:
 
+    lattice = CanonicalLattice1D(1.0, hop_time)
+
     probabilities = deterministic_probabilities_jax(hop_time, times)
 
-    return get_deterministic_isf_jax(probabilities, delta_k)
+    return get_deterministic_isf_jax(lattice, probabilities, delta_k)
 
 
 @jax.jit
@@ -547,4 +550,3 @@ if __name__ == "__main__":
     path = "./examples/data"
     single_clean_test(path)
     untrained_test(path)
-    many_equiv_test(path)

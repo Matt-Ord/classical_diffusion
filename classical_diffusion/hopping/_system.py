@@ -17,6 +17,8 @@ class CanonicalLattice(Protocol):
 
     def get_rates(self, positions: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]: ...
 
+    def x_points_from_indices(self, indices: jnp.ndarray) -> jnp.ndarray: ...
+
 
 @dataclass(frozen=True, kw_only=True)
 class Lattice(ABC):
@@ -46,8 +48,8 @@ class Lattice(ABC):
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
 class CanonicalLattice1D:
-    hop_time: float
     lattice_spacing: float
+    hop_time: float
 
     def get_rates(self, positions: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
         delta_site = jnp.array([-1, 1])
@@ -60,6 +62,9 @@ class CanonicalLattice1D:
         )
         hop_rates = jnp.tile(single_hop_rates, (len(positions), 1))
         return (hop_sites, hop_rates)
+
+    def x_points_from_indices(self, indices: jnp.ndarray) -> jnp.ndarray:
+        return indices * self.lattice_spacing
 
 
 class Lattice1D(Lattice):

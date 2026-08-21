@@ -13,6 +13,8 @@ from classical_diffusion.hopping._hopping import (
     solve_ensemble,
 )
 from classical_diffusion.hopping._system import (
+    CanonicalLattice,
+    CanonicalLattice1D,
     KramersParameters,
     Lattice,
     Lattice1D,
@@ -22,6 +24,8 @@ from classical_diffusion.hopping._system import (
 )
 
 __all__ = [
+    "CanonicalLattice",
+    "CanonicalLattice1D",
     "DeterministicSolverResult",
     "HoppingSimulationResult",
     "KramersParameters",
