@@ -2,13 +2,12 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import Any
 
-import diffrax as dfx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from diffrax import Tsit5  # cspell: disable-line
 
-from classical_diffusion.hopping._system import CanonicalLattice, Lattice, Lattice1D
+import classical_diffusion.jax as jx
+from classical_diffusion.hopping._system import CanonicalLattice, Lattice
 from classical_diffusion.simulation import SimulationResult, TimeSpan
 from classical_diffusion.util import _get_key, timed
 
@@ -129,40 +128,6 @@ def solve_ensemble[L: Lattice = Lattice](
     )
 
 
-@jax.jit
-def _get_deterministic_probabilities_jit[L: Lattice](
-    initial_p: jnp.ndarray,
-    times: jnp.ndarray,
-    hop_sites: jnp.ndarray,
-    hop_rates: jnp.ndarray,
-) -> jnp.ndarray:
-    """Use deterministic formula to return the ISF, inefficiently."""
-    total_outgoing_rates = jnp.sum(hop_rates, axis=-1)
-
-    def vector_field(
-        _t: Any,  # ruff:ignore[any-type]
-        p: jnp.ndarray,
-        _args: Any,  # ruff:ignore[any-type]
-    ) -> jnp.ndarray:
-        return jnp.sum(hop_rates * p[hop_sites], axis=-1) - p * total_outgoing_rates
-
-    return dfx.diffeqsolve(
-        terms=dfx.ODETerm(vector_field),
-        solver=Tsit5(),  # cspell: disable-line
-        t0=0,
-        t1=times[-1],
-        dt0=times[1] - times[0],
-        y0=initial_p,
-        args=None,
-        saveat=dfx.SaveAt(ts=times),
-        stepsize_controller=dfx.PIDController(
-            rtol=1e-6,  # cspell: disable-line
-            atol=1e-8,
-        ),
-        max_steps=100_000_000,
-    ).ys
-
-
 def get_deterministic_probabilities[L: Lattice](
     system: L,
     max_lattice_shape: tuple[int, ...],
@@ -170,37 +135,12 @@ def get_deterministic_probabilities[L: Lattice](
     initial_position: int,
 ) -> DeterministicSolverResult:
     """Use a deterministic PDE to find the ensemble probabilities at all times."""
-    times = jnp.linspace(time_span.t_start, time_span.t_end, time_span.n_steps + 1)
+    times = np.linspace(time_span.t_start, time_span.t_end, time_span.n_steps + 1)
 
-    initial_p = jnp.full(np.prod(max_lattice_shape), 0.0, dtype=jnp.float32)
-    initial_p = initial_p.at[initial_position].set(1)
-
-    hop_sites, hop_rates = system.get_rates(np.arange(np.prod(max_lattice_shape)))
-
-    sol = _get_deterministic_probabilities_jit(initial_p, times, hop_sites, hop_rates)
+    sol = jx.get_deterministic_probabilities(
+        system.as_canonical(), time_span, int(np.prod(max_lattice_shape))
+    )
 
     return DeterministicSolverResult(
         system=system, times=np.array(times), probabilities=np.array(sol)
     )
-
-
-@jax.jit
-def deterministic_probabilities_jax(
-    hopping_time: float,
-    times: jnp.ndarray,
-) -> jnp.ndarray:
-    """Generate the Lattice then use a deterministic PDE to find the probabilities at all times."""
-    # Hacky current approach: Hard code max_lattice_shape = 1000
-    lattice = Lattice1D(1.0, hopping_time).as_canonical()
-    initial_position = 500  # = max_lattice_shape / 2
-
-    initial_p = jnp.full(
-        1000, 0.0, dtype=jnp.float32
-    )  # jnp.full(max_lattice_shape, 0.0)
-    initial_p = initial_p.at[initial_position].set(1)
-
-    hop_sites, hop_rates = lattice.get_rates(
-        jnp.arange(1000)
-    )  # jnp.arange(jnp.prod(max_lattice_shape))
-
-    return _get_deterministic_probabilities_jit(initial_p, times, hop_sites, hop_rates)

@@ -7,7 +7,6 @@ from classical_diffusion.hopping._analysis import (
 from classical_diffusion.hopping._hopping import (
     DeterministicSolverResult,
     HoppingSimulationResult,
-    deterministic_probabilities_jax,
     get_deterministic_probabilities,
     solve_ensemble,
 )

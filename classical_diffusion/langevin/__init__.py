@@ -15,11 +15,11 @@ from classical_diffusion.langevin._analysis import (
 from classical_diffusion.langevin._langevin import (
     LangevinSimulationResult,
     SingleLangevinSimulationResult,
+    get_force_fn,
     solve_ballistic_ensemble,
     solve_ensemble,
     solve_over_barrier_ballistic_ensemble,
     solve_overdamped_ensemble,
-    solve_overdamped_ensemble_jax,
     solve_single,
     solve_single_ballistic,
 )
@@ -70,6 +70,7 @@ __all__ = [
     "get_exact_flat_ballistic_isf",
     "get_exact_flat_isf",
     "get_exact_harmonic_isf",
+    "get_force_fn",
     "get_free_effective_mass_exact_1d_periodic",
     "get_free_effective_mass_exact_1d_periodic_directly",
     "get_full_effective_mass_exact_1d_periodic",
@@ -95,7 +96,6 @@ __all__ = [
     "solve_ensemble",
     "solve_over_barrier_ballistic_ensemble",
     "solve_overdamped_ensemble",
-    "solve_overdamped_ensemble_jax",
     "solve_single",
     "solve_single_ballistic",
 ]

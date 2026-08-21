@@ -15,7 +15,6 @@ from classical_diffusion.hopping import (
     CanonicalLattice1D,
     KramersParameters,
     Lattice1D,
-    deterministic_probabilities_jax,
     get_deterministic_isf,
     get_deterministic_probabilities,
 )
@@ -23,7 +22,6 @@ from classical_diffusion.langevin import (
     CanonicalSystem,
     KramersSystem1D,
     solve_overdamped_ensemble,
-    solve_overdamped_ensemble_jax,
 )
 from classical_diffusion.plot import get_fancy_figure, get_figure, get_measured_data
 from classical_diffusion.simulation import TimeSpan
@@ -113,9 +111,8 @@ def get_deterministic_isf_directly(
 ) -> jnp.ndarray:
 
     lattice = CanonicalLattice1D(1.0, hop_time)
-    times = jnp.linspace(time_span.t_start, time_span.t_end, time_span.n_steps + 1)
 
-    probabilities = deterministic_probabilities_jax(hop_time, times)
+    probabilities = jx.get_deterministic_probabilities(lattice, time_span)
 
     return jx.get_deterministic_isf(lattice, probabilities, delta_k)
 
@@ -277,7 +274,7 @@ def run_langevin_trajectories(
 
         initial_conditions = _inits_constant(cond_key)
 
-        result = solve_overdamped_ensemble_jax(
+        result = jx.solve_overdamped_ensemble(
             system,
             time_span,
             initial_conditions,
