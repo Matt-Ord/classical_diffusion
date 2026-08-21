@@ -23,11 +23,7 @@ def _sample_initial_conditions(
     _key: jax.Array,
 ) -> tuple[jax.Array, jax.Array]:
 
-    potential_fn = sp.lambdify(
-        system.lambda_symbols,
-        system.potential_expr,
-        "jax",
-    )
+    potential_fn = sp.lambdify(system.lambda_symbols, system.potential_expr, "jax")
 
     # TODO: the assumption here is that the minimum of the potential  # ruff: ignore[line-contains-todo]
     # is at 0, which is not always true. Finding the minimum of the

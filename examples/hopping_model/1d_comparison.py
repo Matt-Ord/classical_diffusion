@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING
 
 import numpy as np
+from scipy.constants import Boltzmann
 
 from classical_diffusion.analysis import (
     get_isf,
@@ -74,7 +75,11 @@ def _plot_kramers_system() -> None:
     system = KramersSystem1D(
         m=1.0,
         params=KramersParameters(
-            omega_well=2.0, omega_barrier=1.0, barrier_energy=3.0, gamma=0.1, kbt=0.5
+            omega_well=2.0,
+            omega_barrier=1.0,
+            barrier_energy=3.0,
+            gamma=0.1,
+            temperature=0.5 / Boltzmann,
         ),
     )
 
@@ -95,7 +100,11 @@ def _kramers_harmonic_comparison() -> None:
     system = KramersSystem1D(
         m=1.0,
         params=KramersParameters(
-            omega_well=2.0, omega_barrier=1.0, barrier_energy=3.0, gamma=0.1, kbt=0.5
+            omega_well=2.0,
+            omega_barrier=1.0,
+            barrier_energy=3.0,
+            gamma=0.1,
+            temperature=0.5 / Boltzmann,
         ),
     )
 
