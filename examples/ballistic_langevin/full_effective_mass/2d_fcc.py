@@ -9,8 +9,8 @@ from classical_diffusion.langevin import (
     PeriodicSystemFCC,
     breakdown_ballistic_trajectory,
     get_diffusion_time,
-    get_full_effective_mass_from_free,
-    get_under_barrier_probability_ballistic,
+    get_effective_mass,
+    get_under_barrier_occupation,
     plot_exact_flat_ballistic_isf,
     solve_ballistic_ensemble,
     solve_over_barrier_ballistic_ensemble,
@@ -43,7 +43,7 @@ def _plot_effective_mass_isf() -> None:
         n_samples=2000,
     )
 
-    prob_under_barrier = get_under_barrier_probability_ballistic(
+    prob_under_barrier = get_under_barrier_occupation(
         system,
         result_full.x_points,
         result_full.p_points,
@@ -52,7 +52,7 @@ def _plot_effective_mass_isf() -> None:
 
     elastic_result, _ = breakdown_ballistic_trajectory(
         result_full,
-        minimum_timescale=get_diffusion_time(
+        filter_timescale=get_diffusion_time(
             system, characteristic_length=system.delta_x / 0.5
         ),
     )
@@ -76,17 +76,13 @@ def _plot_effective_mass_isf() -> None:
         barrier_energy=system.barrier_energy,
     )
 
-    elastic_result_free, _ = breakdown_ballistic_trajectory(
-        result_free,
-        minimum_timescale=get_diffusion_time(
-            system, characteristic_length=system.delta_x / 0.5
-        ),
-    )
-
     effective_mass = UnitSystem().mass_into(
-        get_full_effective_mass_from_free(
-            elastic_result_free,
-            prob_under_barrier=prob_under_barrier,
+        get_effective_mass(
+            result_free,
+            under_barrier_probability=prob_under_barrier,
+            filter_timescale=get_diffusion_time(
+                system, characteristic_length=system.delta_x / 0.5
+            ),
         ),
         units=system.units,
     )

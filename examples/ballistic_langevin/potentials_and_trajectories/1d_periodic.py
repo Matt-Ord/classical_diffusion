@@ -44,7 +44,7 @@ def _plot_ballistic_trajectory() -> None:
 
     elastic, inelastic = breakdown_ballistic_trajectory(
         result,
-        minimum_timescale=get_diffusion_time(
+        filter_timescale=get_diffusion_time(
             system, characteristic_length=system.delta_x / 0.1
         ),
     )

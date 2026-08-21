@@ -1,6 +1,5 @@
 from typing import TYPE_CHECKING
 
-import jax
 import numpy as np
 
 from classical_diffusion.analysis import (
@@ -50,9 +49,9 @@ def plot_relaxation_corrected_hopping_isf(
     fig, ax = get_figure(ax)
 
     isf = get_isf(result.x_points, delta_k) * correction_factor
-    n_trajectories = isf.shape[0]
+
     avg_isf = np.mean(isf, axis=0)
-    sem_isf = np.std(isf, axis=0) / np.sqrt(n_trajectories)
+    sem_isf = np.std(isf, axis=0) / np.sqrt(isf.shape[0])
 
     avg_data = get_measured_data(avg_isf, measure)
     sem_data = get_measured_data(sem_isf, measure)
@@ -108,7 +107,6 @@ def _kramers_harmonic_comparison() -> None:
         system,
         time_span,
         (initial_position, np.full(initial_position.shape, 0.0)),
-        _key=jax.random.PRNGKey(seed=100),
     )
 
     delta_k = (0.5 * 2 * np.pi / system.delta_x,)
@@ -119,7 +117,6 @@ def _kramers_harmonic_comparison() -> None:
         system=lattice,
         time_span=time_span,
         initial_condition=initial_position,
-        key=jax.random.PRNGKey(seed=100),
     )
 
     relaxation_correction_factor = get_exact_harmonic_isf(
@@ -176,7 +173,6 @@ def _kramers_sinusoid_comparison() -> None:
         system,
         time_span,
         (initial_position, np.full(initial_position.shape, 0.0)),
-        _key=jax.random.PRNGKey(seed=100),
     )
 
     delta_k = (0.5 * 2 * np.pi / system.delta_x,)
@@ -192,7 +188,6 @@ def _kramers_sinusoid_comparison() -> None:
         system=lattice,
         time_span=time_span,
         initial_condition=initial_position,
-        key=jax.random.PRNGKey(seed=100),
     )
 
     relaxation_correction_factor = get_exact_harmonic_isf(

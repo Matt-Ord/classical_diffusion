@@ -80,9 +80,9 @@ def plot_isf(
     fig, ax = get_figure(ax)
 
     isf = get_isf(result.x_points, **kwargs)
-    n_trajectories = isf.shape[0]
+
     avg_isf = np.mean(isf, axis=0)
-    sem_isf = np.std(isf, axis=0) / np.sqrt(n_trajectories)
+    sem_isf = np.std(isf, axis=0) / np.sqrt(isf.shape[0])
 
     avg_data = get_measured_data(avg_isf, measure)
     sem_data = get_measured_data(sem_isf, measure)
@@ -92,10 +92,7 @@ def plot_isf(
 
     fill = ax.fill_between(result.times, avg_data - sem_data, avg_data + sem_data)
     fill.set_alpha(0.3)
-    fill.set_label("SEM")
     fill.set_color(line.get_color())
-
-    line.set_label("SEM")
 
     ax.set_xlabel("Time / s")
     ax.set_ylabel("ISF")

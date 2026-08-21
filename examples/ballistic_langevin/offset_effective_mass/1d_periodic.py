@@ -42,7 +42,7 @@ def _plot_effective_mass_offset_isf() -> None:
 
     elastic_result, _ = breakdown_ballistic_trajectory(
         result,
-        minimum_timescale=get_diffusion_time(
+        filter_timescale=get_diffusion_time(
             system, characteristic_length=system.delta_x / 0.5
         ),
     )

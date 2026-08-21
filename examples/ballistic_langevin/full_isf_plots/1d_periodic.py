@@ -58,7 +58,7 @@ def _plot_periodic_isf() -> None:
 
     elastic_result, inelastic_result = breakdown_ballistic_trajectory(
         ballistic_result,
-        minimum_timescale=get_diffusion_time(
+        filter_timescale=get_diffusion_time(
             system, characteristic_length=system.delta_x
         ),
     )
