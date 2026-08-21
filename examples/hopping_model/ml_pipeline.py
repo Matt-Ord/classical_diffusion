@@ -99,7 +99,6 @@ class ResNet(eqx.Module):
 
         x = jnp.mean(x, axis=-1)  # shape = (hidden_channels,)
         x = self.output_layer(x)  # shape = (2,)
-
         return x.at[1].set(0.5 + 0.5 * jax.nn.tanh(x[1]))
 
 
@@ -346,7 +345,7 @@ def generate_single_clean_isf(folderpath: str) -> None:
 
 
 @timed
-def generate_many_equiv_isf(traj_filepath: str, n_isfs: int) -> None:
+def generate_many_equiv_trajectories(traj_filepath: str, n_isfs: int) -> None:
     """Run the langevin simulations and save to file."""
     keys = jnp.full(n_isfs, jax.random.key(100))
 
@@ -483,7 +482,7 @@ def many_equiv_test(folderpath: str, n_isfs: int = 10) -> None:  # ruff: ignore[
 
     if not Path(isfs_filepath).exists():
         print("No data, generating new equivalent isfs")
-        generate_many_equiv_isf(traj_filepath, n_isfs)
+        generate_many_equiv_trajectories(traj_filepath, n_isfs)
         generate_isfs(traj_filepath, isfs_filepath)
 
     print("Loading equivalent isfs")
@@ -545,5 +544,4 @@ def many_equiv_test(folderpath: str, n_isfs: int = 10) -> None:  # ruff: ignore[
 
 if __name__ == "__main__":
     path = "./examples/data"
-    untrained_test(path)
     single_clean_test(path)
