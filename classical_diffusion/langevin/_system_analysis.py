@@ -319,33 +319,33 @@ def _get_under_barrier_probability_jax(
     n_samples: int,
     key: jax.Array,
 ) -> jax.Array:
+    # To find the under barrier probability, the V(x) is sampled at x
+    # points centered around the origin, and the momentum is sampled from the Maxwell-Boltzmann distribution.
+    # The fraction of phase space under the barrier is then computed using importance sampling:
+    # P(under barrier) = sum(w(x) * I(V(x) + K(p) < barrier)) / sum(w(x))
+    # where w(x) = exp(-V(x)/kBT) / q(x) is the importance weight, and q(x) is the sampling distribution.
     key_x, key_p = jax.random.split(key)
 
-    # 1. Sample position candidate biased at origin: x ~ N(0, sample_region^2 * I)
+    # Sample positions according to q(x)
     x_samples = (
         jax.random.normal(key_x, shape=(n_samples, system.n_dim)) * SAMPLE_REGION
     )
+    p_standard_deviation = jnp.sqrt(system.m * system.kbt)
+    p_samples = (
+        jax.random.normal(key_p, shape=(n_samples, system.n_dim)) * p_standard_deviation
+    )
 
-    # 2. Sample momentum directly from Maxwell-Boltzmann: p ~ N(0, m * kBT)
-    p_std = jnp.sqrt(system.kbt * system.m)
-    p_samples = jax.random.normal(key_p, shape=(n_samples, system.n_dim)) * p_std
-
-    # 3. Evaluate potential and kinetic energies
     potential_fn = sp.lambdify(system.lambda_symbols, system.potential_expr, "jax")
-    v_func = jax.vmap(lambda x: potential_fn(*x, *system.params))
-    v_energies = v_func(x_samples)
-    ke_energies = jnp.sum(p_samples**2, axis=-1) / (2.0 * system.m)
-    total_energies = v_energies + ke_energies
+    v_energies = jax.vmap(lambda x: potential_fn(*x, *system.params))(x_samples)
+    kinetic_energies = jnp.sum(p_samples**2, axis=-1) / (2.0 * system.m)
+    total_energies = v_energies + kinetic_energies
 
-    # 4. Compute importance weights for x: w(x) = exp(-V(x)/kBT) / q(x)
+    # Importance weights for x: w(x) = exp(-V(x)/kBT) / q(x)
     log_weights = -v_energies / system.kbt + jnp.sum(x_samples**2, axis=-1) / (
         2.0 * SAMPLE_REGION**2
     )
-    weights = jnp.exp(log_weights - jnp.max(log_weights))  # Shift for stability
-
-    # 5. Weighted fraction of phase space under barrier
-    is_under_barrier = (total_energies < barrier_energy).astype(jnp.float32)
-    return jnp.sum(weights * is_under_barrier) / jnp.sum(weights)
+    weights = jnp.exp(log_weights - jnp.max(log_weights))
+    return jnp.average(total_energies < barrier_energy, weights=weights)
 
 
 N_SAMPLES = 100000
