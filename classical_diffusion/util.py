@@ -1,12 +1,14 @@
 import datetime
 import pickle  # ruff:ignore[suspicious-pickle-import]
 import types
+import zlib
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import update_wrapper, wraps
 from types import FunctionType
 from typing import TYPE_CHECKING, Literal, TypeVar, overload
 
+import jax
 import numpy as np
 
 if TYPE_CHECKING:
@@ -213,8 +215,23 @@ def cached[**P, R](
 
     def _cached(f: Callable[P, R]) -> CachedFunction[P, R]:
         return update_wrapper(  # type: ignore aaa
-            CachedFunction(f, path, default_call=default_call),
+            CachedFunction(f, path, default_call=default_call),  # ty: ignore[invalid-argument-type]
             f,
         )
 
     return _cached
+
+
+def hash_array(arrays: tuple[np.ndarray, ...]) -> int:
+    """Hash a tuple of arrays using CRC32."""
+    chk = 0
+    for arr in arrays:
+        # Chain the CRC32 checksums of the raw float bytes
+        chk = zlib.crc32(arr.tobytes(), chk)  # cspell: disable-line
+        # Include shape just in case the same floats are reshaped
+        chk = zlib.crc32(str(arr.shape).encode(), chk)
+    return chk
+
+
+def _get_key(key: jax.Array | None) -> jax.Array:
+    return key if key is not None else jax.random.PRNGKey(0)

@@ -10,7 +10,7 @@ from diffrax import Tsit5  # cspell: disable-line
 
 from classical_diffusion.hopping._system import CanonicalLattice, Lattice
 from classical_diffusion.simulation import SimulationResult, TimeSpan
-from classical_diffusion.util import timed
+from classical_diffusion.util import _get_key, timed
 
 
 class HoppingSimulationResult[L: Lattice](SimulationResult[L]):
@@ -108,10 +108,11 @@ def solve_ensemble[L: Lattice = Lattice](
     system: L,
     time_span: TimeSpan,
     initial_condition: np.ndarray[tuple[int, int], np.dtype[np.int_]],
-    key: jax.Array,
+    *,
+    _key: jax.Array | None = None,
 ) -> HoppingSimulationResult[L]:
     """Solve the hopping ensemble."""
-    keys = jax.random.split(key, initial_condition.shape[0])
+    keys = jax.random.split(_get_key(_key), initial_condition.shape[0])
     times = jnp.linspace(time_span.t_start, time_span.t_end, time_span.n_steps)
 
     results = jax.vmap(

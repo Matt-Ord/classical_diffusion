@@ -1,24 +1,27 @@
 import dataclasses
-import zlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self, override
 
 import diffrax as dfx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import sympy as sp
-from scipy.stats.sampling import NumericalInversePolynomial
 
-from classical_diffusion.simulation import SimulationResult, SingleSimulationResult
-from classical_diffusion.util import cached, timed
+from classical_diffusion.langevin._sample import get_random_initial_conditions
+from classical_diffusion.simulation import (
+    SimulationResult,
+    SingleSimulationResult,
+    TimeSpan,
+)
+from classical_diffusion.util import _get_key, cached, hash_array, timed
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable, Iterator
 
     from classical_diffusion.langevin import CanonicalSystem, System
-    from classical_diffusion.simulation import TimeSpan
+    from classical_diffusion.system import UnitSystem
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -57,6 +60,31 @@ class LangevinSimulationResult[S: System](SimulationResult[S]):
             times=self._times,
             x_points=self.x_points[idx],
             p_points=self.p_points[idx],
+        )
+
+    def __iter__(self) -> Iterator[SingleLangevinSimulationResult[S]]:
+        """Iterate over the trajectories in the ensemble."""
+        for i in range(self.x_points.shape[0]):
+            yield self[i]
+
+    @override
+    def with_units(self, units: UnitSystem) -> Self:
+        """Return the rescaled simulation of the system."""
+        return type(self)(
+            times=self.system.units.time_into(self.times, units),
+            x_points=self.system.units.length_into(self.x_points, units),
+            p_points=self.system.units.momentum_into(self.p_points, units),
+            system=self.system.with_units(units),
+        )
+
+    @classmethod
+    def from_iter(cls, results: Iterable[SingleLangevinSimulationResult[S]]) -> Self:
+        results_list = list(results)
+        return cls(
+            times=results_list[0].times,
+            x_points=np.stack([r.x_points for r in results_list]),
+            p_points=np.stack([r.p_points for r in results_list]),
+            system=results_list[0].system,
         )
 
 
@@ -164,23 +192,14 @@ def _run_langevin_ensemble_jit(
     return jax.vmap(solve_one, in_axes=(0, 0, 0))(xs0, ps0, keys)
 
 
-def _hash_initial_conditions(initial_conditions: tuple[np.ndarray, np.ndarray]) -> int:
-    chk = 0
-    for arr in initial_conditions:
-        # Chain the CRC32 checksums of the raw float bytes
-        chk = zlib.crc32(arr.tobytes(), chk)  # cspell: disable-line
-        # Include shape just in case the same floats are reshaped
-        chk = zlib.crc32(str(arr.shape).encode(), chk)
-    return chk
-
-
 def _solve_ensemble_path[S: System](
     system: S,
     time_span: TimeSpan,
     initial_conditions: tuple[np.ndarray, np.ndarray],
-    _key: jax.Array,
+    *,
+    _key: jax.Array | None = None,
 ) -> Path:
-    filename = f"{hash(system)}_{hash(time_span)}_{_hash_initial_conditions(initial_conditions)}.npz"
+    filename = f"{hash(system)}_{hash(time_span)}_{hash_array(initial_conditions)}.npz"
     return Path("examples/data") / filename
 
 
@@ -192,39 +211,43 @@ def solve_ensemble[S: System](
     initial_conditions: tuple[
         np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
     ],
-    _key: jax.Array,
+    *,
+    _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of ULD Langevin trajectories in parallel via jax.vmap."""
-    xs0_jax = jnp.asarray(initial_conditions[0])
-    ps0_jax = jnp.asarray(initial_conditions[1])
-    n_run = xs0_jax.shape[0]
-
-    times = jnp.linspace(
+    times = np.linspace(
         time_span.t_start, time_span.t_end, time_span.n_steps + 1, endpoint=True
     )
+    normalized_system = system.with_normalized_units().as_canonical()
+    xs0_jax = jnp.asarray(
+        system.units.length_into(initial_conditions[0], normalized_system.units)
+    )
+    ps0_jax = jnp.asarray(
+        system.units.momentum_into(initial_conditions[1], normalized_system.units)
+    )
+    times_jax = jnp.asarray(system.units.time_into(times, normalized_system.units))
+    n_run = xs0_jax.shape[0]
 
     if np.isclose(system.gamma, 0.0):
         xs_batch, ps_batch = _run_deterministic_ensemble_jit(
-            system.as_canonical(), xs0_jax, ps0_jax, times
+            normalized_system, xs0_jax, ps0_jax, times_jax
         )
     else:
-        # Vectorized generation of independent noise seeds per run
-        keys = jax.random.split(_key, n_run)
+        keys = jax.random.split(_get_key(_key), n_run)
 
         xs_batch, ps_batch = _run_langevin_ensemble_jit(
-            system.as_canonical(), xs0_jax, ps0_jax, keys, times
+            normalized_system, xs0_jax, ps0_jax, keys, times_jax
         )
 
-    # --- SHAPE TRANSFORMATION ---
     # Diffrax + vmap naturally outputs: (n_run, n_time, n_dim)
     # We transpose axes 1 and 2 to match your target layout: (n_run, n_dim, n_time)
-    xs_batch = jnp.transpose(xs_batch, (0, 2, 1))
-    ps_batch = jnp.transpose(ps_batch, (0, 2, 1))
+    xs_batch = np.array(jnp.transpose(xs_batch, (0, 2, 1)))
+    ps_batch = np.array(jnp.transpose(ps_batch, (0, 2, 1)))
 
     return LangevinSimulationResult(
         times=np.array(times),
-        x_points=np.array(xs_batch),
-        p_points=np.array(ps_batch),
+        x_points=normalized_system.units.length_into(xs_batch, system.units),
+        p_points=normalized_system.units.momentum_into(ps_batch, system.units),
         system=system,
     )
 
@@ -233,9 +256,10 @@ def _solve_single_path[S: System](
     system: S,
     time_span: TimeSpan,
     initial_condition: tuple[np.ndarray, np.ndarray],
-    _key: jax.Array,
+    *,
+    _key: jax.Array | None = None,
 ) -> Path:
-    filename = f"{hash(system)}_{hash(time_span)}_{_hash_initial_conditions(initial_condition)}.npz"
+    filename = f"{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{hash_array(initial_condition)}.npz"
     return Path("examples/data") / filename
 
 
@@ -247,7 +271,8 @@ def solve_single[S: System](
     initial_condition: tuple[
         np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
     ],
-    _key: jax.Array,
+    *,
+    _key: jax.Array | None = None,
 ) -> SingleLangevinSimulationResult[S]:
     """Solve the ULD Langevin equation for a single trajectory via vmap."""
     return solve_ensemble.load_or_call_uncached(
@@ -257,58 +282,50 @@ def solve_single[S: System](
             np.array([initial_condition[0]]),
             np.array([initial_condition[1]]),
         ),
-        _key,
+        _key=_key,
     )[0]
+
+
+@timed
+def solve_single_ballistic[S: System](
+    system: S,
+    time_span: TimeSpan,
+    initial_condition: tuple[
+        np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
+    ],
+    *,
+    _key: jax.Array | None = None,
+) -> SingleLangevinSimulationResult[S]:
+    """Solve the ULD Langevin equation for a single trajectory via vmap."""
+    out = solve_ensemble.load_or_call_uncached(
+        dataclasses.replace(system.as_canonical(), gamma=0.0),
+        time_span,
+        (
+            np.array([initial_condition[0]]),
+            np.array([initial_condition[1]]),
+        ),
+        _key=_key,
+    )[0]
+
+    return SingleLangevinSimulationResult(
+        times=out.times,
+        x_points=out.x_points,
+        p_points=out.p_points,
+        system=system,
+    )
 
 
 def _solve_ballistic_ensemble_path[S: System](
     system: S,
     time_span: TimeSpan,
     n_samples: int,
-    _key: jax.Array,
+    *,
+    _key: jax.Array | None = None,
 ) -> Path:
-    filename = f"{hash(system)}_{hash(time_span)}_{n_samples}.npz"
-    return Path("examples/data") / filename
-
-
-def sample_x_initial(
-    system: System, n_samples: int
-) -> np.ndarray[Any, np.dtype[np.floating]]:
-    x0, *_ = system.coordinate_symbols
-    potential_fn = sp.lambdify(
-        (x0, *system.parameter_symbols),
-        system.potential_expr,
-        modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
+    filename = (
+        f"{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}.npz"
     )
-    kbt = system.kbt
-    params = system.params
-
-    class XDensity:
-        @staticmethod
-        def pdf(x: float) -> float:
-            return np.exp(-potential_fn(x, *params) / kbt)
-
-        @staticmethod
-        def cdf(x: float) -> float:
-            msg = "CDF is not implemented for XDensity."
-            raise NotImplementedError(msg)
-
-        @staticmethod
-        def logpdf(x: float) -> float:
-            return -potential_fn(x, *params) / kbt
-
-    x_sampler = NumericalInversePolynomial(XDensity(), domain=system.sampling_domain)
-    return x_sampler.rvs(size=n_samples).reshape(n_samples, system.n_dim)
-
-
-def sample_p_initial(
-    system: System, n_samples: int
-) -> np.ndarray[Any, np.dtype[np.floating]]:
-
-    rng = np.random.default_rng()
-    p_std = np.sqrt(system.kbt * system.m)
-
-    return rng.normal(0.0, p_std, size=(n_samples, system.n_dim))
+    return Path("examples/data") / filename
 
 
 @cached(_solve_ballistic_ensemble_path)
@@ -317,22 +334,78 @@ def solve_ballistic_ensemble[S: System](
     system: S,
     time_span: TimeSpan,
     n_samples: int,
-    _key: jax.Array,
+    *,
+    _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of ballistic trajectories in parallel via jax.vmap."""
+    _key = _get_key(_key)
+
+    simulated_system = system.with_normalized_units().as_canonical()
     out = solve_ensemble.load_or_call_uncached(
-        dataclasses.replace(system.as_canonical(), gamma=0.0),
-        time_span,
-        (
-            sample_x_initial(system=system, n_samples=n_samples),
-            sample_p_initial(system=system, n_samples=n_samples),
+        dataclasses.replace(simulated_system, gamma=0.0),
+        TimeSpan(
+            t_start=system.units.time_into(time_span.t_start, simulated_system.units),
+            t_end=system.units.time_into(time_span.t_end, simulated_system.units),
+            n_steps=time_span.n_steps,
         ),
-        _key,
+        get_random_initial_conditions(simulated_system, n_samples, _key=_key),
+        _key=_key,
+    )
+    return LangevinSimulationResult[S](
+        times=simulated_system.units.time_into(out.times, system.units),
+        x_points=simulated_system.units.length_into(out.x_points, system.units),
+        p_points=simulated_system.units.momentum_into(out.p_points, system.units),
+        system=system,
+    )
+
+
+def _solve_over_barrier_ballistic_ensemble_path[S: System](
+    system: S,
+    time_span: TimeSpan,
+    n_samples: int,
+    barrier_energy: float,
+    *,
+    _key: jax.Array | None = None,
+) -> Path:
+    filename = f"over_barrier_{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}_{barrier_energy}.npz"
+    return Path("examples/data") / filename
+
+
+@cached(_solve_over_barrier_ballistic_ensemble_path)
+@timed
+def solve_over_barrier_ballistic_ensemble[S: System](
+    system: S,
+    time_span: TimeSpan,
+    n_samples: int,
+    barrier_energy: float,
+    *,
+    _key: jax.Array | None = None,
+) -> LangevinSimulationResult[S]:
+    """Solve an ensemble of ballistic trajectories in parallel via jax.vmap."""
+    _key = _get_key(_key)
+
+    simulated_system = system.with_normalized_units().as_canonical()
+    out = solve_ensemble.load_or_call_uncached(
+        dataclasses.replace(simulated_system, gamma=0.0),
+        TimeSpan(
+            t_start=system.units.time_into(time_span.t_start, simulated_system.units),
+            t_end=system.units.time_into(time_span.t_end, simulated_system.units),
+            n_steps=time_span.n_steps,
+        ),
+        get_random_initial_conditions(
+            simulated_system,
+            minimum_energy=system.units.energy_into(
+                barrier_energy, simulated_system.units
+            ),
+            n_samples=n_samples,
+            _key=_key,
+        ),
+        _key=_key,
     )
     return LangevinSimulationResult(
         times=out.times,
-        x_points=out.x_points,
-        p_points=out.p_points,
+        x_points=simulated_system.units.length_into(out.x_points, system.units),
+        p_points=simulated_system.units.momentum_into(out.p_points, system.units),
         system=system,
     )
 
@@ -394,9 +467,10 @@ def _solve_overdamped_ensemble_path[S: System](
     initial_conditions: tuple[
         np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
     ],
-    _key: jax.Array,
+    *,
+    _key: jax.Array | None = None,
 ) -> Path:
-    filename = f"overdamped_{hash(system)}_{hash(time_span)}_{_hash_initial_conditions(initial_conditions)}.npz"
+    filename = f"overdamped_{hash(system)}_{hash(time_span)}_{hash_array(initial_conditions)}.npz"
     return Path("examples/data") / filename
 
 
@@ -408,7 +482,8 @@ def solve_overdamped_ensemble[S: System](
     initial_conditions: tuple[
         np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
     ],
-    _key: jax.Array,
+    *,
+    _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of overdamped Langevin trajectories in parallel via jax.vmap."""
     n_run = initial_conditions[0].shape[0]
@@ -417,8 +492,7 @@ def solve_overdamped_ensemble[S: System](
         time_span.t_start, time_span.t_end, time_span.n_steps + 1, endpoint=True
     )
 
-    keys = jax.random.split(_key, n_run)
-
+    keys = jax.random.split(_get_key(_key), n_run)
     xs_batch = _run_overdamped_ensemble_jit(
         system.as_canonical(), initial_conditions[0], keys, times
     )

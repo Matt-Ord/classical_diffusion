@@ -4,7 +4,9 @@ import matplotlib as mpl
 import numpy as np
 import scipy
 
+from classical_diffusion.langevin._langevin import LangevinSimulationResult
 from classical_diffusion.plot import get_figure, get_measured_data
+from classical_diffusion.simulation import SimulationResult
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -12,9 +14,9 @@ if TYPE_CHECKING:
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
 
-    from classical_diffusion.langevin._langevin import LangevinSimulationResult
+    from classical_diffusion.langevin import SingleLangevinSimulationResult
     from classical_diffusion.plot import Measure
-    from classical_diffusion.simulation import SimulationResult
+    from classical_diffusion.simulation import SingleSimulationResult
 
 
 def _calculate_total_offsset_multiplications_complex(
@@ -78,9 +80,9 @@ def plot_isf(
     fig, ax = get_figure(ax)
 
     isf = get_isf(result.x_points, **kwargs)
-    n_trajectories = isf.shape[0]
+
     avg_isf = np.mean(isf, axis=0)
-    sem_isf = np.std(isf, axis=0) / np.sqrt(n_trajectories)
+    sem_isf = np.std(isf, axis=0) / np.sqrt(isf.shape[0])
 
     avg_data = get_measured_data(avg_isf, measure)
     sem_data = get_measured_data(sem_isf, measure)
@@ -90,10 +92,7 @@ def plot_isf(
 
     fill = ax.fill_between(result.times, avg_data - sem_data, avg_data + sem_data)
     fill.set_alpha(0.3)
-    fill.set_label("SEM")
     fill.set_color(line.get_color())
-
-    line.set_label("SEM")
 
     ax.set_xlabel("Time / s")
     ax.set_ylabel("ISF")
@@ -124,7 +123,6 @@ def plot_isf_with_delta_k(
         avg_data = get_measured_data(avg_isf, measure)
         ax.plot(result.times, avg_data, color=cmap(norm(dk)))
 
-    ax.set_title("Intermediate Scattering Function Over Time")
     ax.set_xlabel("Time / s")
     ax.set_ylabel("ISF")
     fig.colorbar(
@@ -134,62 +132,82 @@ def plot_isf_with_delta_k(
     return fig, ax
 
 
-def plot_x_evolution(
-    result: SimulationResult,
+def plot_x_evolution_1d(
+    result: SimulationResult | SingleSimulationResult,
     *,
     ax: Axes | None = None,
     idx: int = 0,
-    n_trajectories: int = 1,
 ) -> tuple[Figure, Axes, list[Line2D]]:
-    """Plot x against t for the first n_trajectories trajectories.
-
-    Raises
-    ------
-    ValueError
-        If `n_trajectories` exceeds the number of trajectories available in `result`.
-    """
+    """Plot x against t for each trajectory."""
     fig, ax = get_figure(ax)
 
-    if n_trajectories > result.x_points.shape[0]:
-        msg = f"n_trajectories={n_trajectories} exceeds available trajectories ({result.x_points.shape[0]})"
-        raise ValueError(msg)
-
     lines = []
-    for trajectory in range(n_trajectories):
-        (line,) = ax.plot(result.times, result.x_points[trajectory, idx])
+    for res in result if isinstance(result, SimulationResult) else [result]:
+        (line,) = ax.plot(res.times, res.x_points[idx])
+        line.set_color("C0")
         lines.append(line)
 
-    ax.set_xlabel("$t / characteristic time$")
+    lines[-1].set_color("C1")
+
+    ax.set_xlabel("$time$")
     ax.set_ylabel("$x$")
+    ax.set_xlim(res.times[0], res.times[-1])
 
     return fig, ax, lines
 
 
-def plot_p_evolution(
-    result: LangevinSimulationResult,
+def plot_x_evolution_2d(
+    result: SimulationResult | SingleSimulationResult,
+    *,
+    ax: Axes | None = None,
+    idx: tuple[int, int] = (0, 1),
+) -> tuple[Figure, Axes, list[Line2D]]:
+    """Plot x against y for each trajectory."""
+    fig, ax = get_figure(ax)
+
+    lines = []
+    for res in result if isinstance(result, SimulationResult) else [result]:
+        (line,) = ax.plot(res.x_points[idx[0]], res.x_points[idx[1]])
+        lines.append(line)
+
+    ax.set_xlabel("$x$")
+    ax.set_ylabel("$y$")
+
+    return fig, ax, lines
+
+
+def plot_p_evolution_1d(
+    result: LangevinSimulationResult | SingleLangevinSimulationResult,
     *,
     ax: Axes | None = None,
     idx: int = 0,
-    n_trajectories: int = 1,
 ) -> tuple[Figure, Axes, list[Line2D]]:
-    """Plot p against t for the first n_trajectories trajectories.
-
-    Raises
-    ------
-    ValueError
-        If `n_trajectories` exceeds the number of trajectories available in `result`.
-    """
+    """Plot p against t for each trajectory."""
     fig, ax = get_figure(ax)
 
-    if n_trajectories > result.p_points.shape[0]:
-        msg = f"n_trajectories={n_trajectories} exceeds available trajectories ({result.p_points.shape[0]})"
-        raise ValueError(msg)
+    lines = []
+    for res in result if isinstance(result, LangevinSimulationResult) else [result]:
+        (line,) = ax.plot(res.times, res.p_points[idx])
+        lines.append(line)
 
-    scaled_times = result.times
+    ax.set_xlabel("$t / characteristic time$")
+    ax.set_ylabel("$p$")
+
+    return fig, ax, lines
+
+
+def plot_p_evolution_2d(
+    result: LangevinSimulationResult | SingleLangevinSimulationResult,
+    *,
+    ax: Axes | None = None,
+    idx: tuple[int, int] = (0, 1),
+) -> tuple[Figure, Axes, list[Line2D]]:
+    """Plot p_{idx[0]} against p_{idx[1]} for each trajectory."""
+    fig, ax = get_figure(ax)
 
     lines = []
-    for trajectory in range(n_trajectories):
-        (line,) = ax.plot(scaled_times, result.p_points[trajectory, idx])
+    for res in result if isinstance(result, LangevinSimulationResult) else [result]:
+        (line,) = ax.plot(res.p_points[idx[0]], res.p_points[idx[1]])
         lines.append(line)
 
     ax.set_xlabel("$t / characteristic time$")

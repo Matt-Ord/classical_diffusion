@@ -1,11 +1,12 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
+from classical_diffusion.system import UnitSystem
 from classical_diffusion.util import timed
 
 if TYPE_CHECKING:
@@ -21,6 +22,8 @@ class CanonicalLattice(Protocol):
 @dataclass(frozen=True, kw_only=True)
 class Lattice(ABC):
     """Parameters representing a simplified, discrete lattice representing a physical potential."""
+
+    units: UnitSystem = field(default_factory=UnitSystem)
 
     @abstractmethod
     def x_points_from_indices(
@@ -71,7 +74,7 @@ class Lattice1D(Lattice):
     def x_points_from_indices(
         self, indices: np.ndarray[Any, np.dtype[np.int_]]
     ) -> np.ndarray[Any, np.dtype[np.floating]]:
-        return indices * self.lattice_spacing
+        return indices.astype(np.float64) * self.lattice_spacing
 
     @timed
     def get_rates(
@@ -103,8 +106,9 @@ class KramersParameters:
     omega_well: float
     omega_barrier: float
     barrier_energy: float
-    kbt: float
+    temperature: float
     gamma: float
+    units: UnitSystem = field(default_factory=UnitSystem)
 
     @property
     def delta_x(self) -> float:
@@ -118,11 +122,26 @@ class KramersParameters:
             )
         )
 
+    @property
+    def kbt(self) -> float:
+        return self.temperature * self.units.boltzmann
+
+    def with_units(self, units: UnitSystem) -> KramersParameters:
+        """Return the parameters of the system in the specified units."""
+        return KramersParameters(
+            omega_well=self.units.frequency_into(self.omega_well, units),
+            omega_barrier=self.units.frequency_into(self.omega_barrier, units),
+            barrier_energy=self.units.energy_into(self.barrier_energy, units),
+            temperature=self.temperature,
+            gamma=self.units.frequency_into(self.gamma, units),
+            units=units,
+        )
+
 
 def get_kramers_rate(params: KramersParameters) -> float:
     return (
         (params.omega_well * params.omega_barrier) / (2 * np.pi * params.gamma)
-    ) * np.exp(-params.barrier_energy / params.kbt)
+    ) * np.exp(-params.barrier_energy / (params.temperature * params.kbt))
 
 
 def get_kramers_parameters_cosine(system: PeriodicSystem1D) -> KramersParameters:
@@ -137,8 +156,9 @@ def get_kramers_parameters_cosine(system: PeriodicSystem1D) -> KramersParameters
         omega_barrier=omega,
         omega_well=omega,
         barrier_energy=barrier_energy,
-        kbt=system.kbt,
+        temperature=system.temperature,
         gamma=system.gamma,
+        units=system.units,
     )
 
 

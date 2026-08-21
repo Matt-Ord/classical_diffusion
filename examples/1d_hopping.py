@@ -1,7 +1,6 @@
-import jax.random as jrandom
 import numpy as np
 
-from classical_diffusion.analysis import plot_isf, plot_x_evolution
+from classical_diffusion.analysis import plot_isf, plot_x_evolution_1d
 from classical_diffusion.hopping import (
     Lattice1D,
     get_ensemble_probabilities,
@@ -20,12 +19,11 @@ def _plot_1d_hopping_isf() -> None:
         system=Lattice1D(lattice_spacing=5, hop_time=15),
         time_span=TimeSpan(t_end=400, n_steps=4000),
         initial_condition=np.full((1, 1), 0.0),
-        key=jrandom.PRNGKey(seed=100),
     )
 
     fig, ax = get_fancy_figure()
 
-    fig, ax, _ = plot_x_evolution(result=results, ax=ax)
+    fig, ax, _ = plot_x_evolution_1d(result=results, ax=ax)
     ax.set_xlim(0, results.times[-1])
     fig.savefig("./examples/1d_hopping.trajectory.pdf")
 
@@ -33,7 +31,6 @@ def _plot_1d_hopping_isf() -> None:
         system=Lattice1D(lattice_spacing=5, hop_time=15),
         time_span=TimeSpan(t_end=4000, n_steps=8000),
         initial_condition=np.full((4000, 1), 0.0),
-        key=jrandom.PRNGKey(seed=100),
     )
 
     fig, ax = get_fancy_figure()

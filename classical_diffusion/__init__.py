@@ -1,1 +1,1 @@
-"""Software for simulating classical diffusion."""
+"""Simulations of classical diffusion."""

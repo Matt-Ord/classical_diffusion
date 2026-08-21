@@ -1,5 +1,5 @@
-import jax.random as jrandom
 import numpy as np
+from scipy.constants import Boltzmann
 
 from classical_diffusion.analysis import plot_isf
 from classical_diffusion.langevin import (
@@ -13,11 +13,10 @@ from classical_diffusion.simulation import TimeSpan
 
 
 def _plot_harmonic_isf() -> None:
-    key = jrandom.PRNGKey(100)
 
     system = HarmonicSystem(
         gamma=0.1,
-        temperature=0.5,
+        temperature=0.5 / Boltzmann,
         m=1.0,
         omega=3,
     )
@@ -29,7 +28,6 @@ def _plot_harmonic_isf() -> None:
             n_steps=5000,
         ),
         (np.full((200, 1), 0.0), np.full((200, 1), 0.0)),
-        _key=key,
     )
 
     fig, ax = get_fancy_figure()
@@ -63,28 +61,19 @@ def _plot_harmonic_isf() -> None:
 
 
 def _plot_flat_isf() -> None:
-    key = jrandom.PRNGKey(100)
 
-    system = HarmonicSystem(gamma=0.1, temperature=0.5, m=1.0, omega=0)
+    system = HarmonicSystem(gamma=0.1, temperature=0.5 / Boltzmann, m=1.0, omega=0)
 
     result = solve_ensemble(
         system,
-        TimeSpan(
-            t_end=50 / system.gamma,
-            n_steps=5000,
-        ),
+        TimeSpan(t_end=50 / system.gamma, n_steps=5000),
         (np.full((200, 1), 0.0), np.full((200, 1), 0.0)),
-        _key=key,
     )
 
     fig, ax = get_fancy_figure()
 
     delta_k = (2 * np.pi / 40,)
-    _, ax, line_simulated, _ = plot_isf(
-        result=result,
-        ax=ax,
-        delta_k=delta_k,
-    )
+    _, ax, line_simulated, _ = plot_isf(result=result, ax=ax, delta_k=delta_k)
     line_simulated.set_label("simulation")
 
     _, ax, line_exact = plot_exact_flat_isf(system, delta_k, result.times, ax=ax)
@@ -100,9 +89,10 @@ def _plot_flat_isf() -> None:
 
 
 def _plot_flat_isf_2d() -> None:
-    key = jrandom.PRNGKey(100)
 
-    system = HarmonicSystem(gamma=0.1, temperature=0.5, m=1.0, omega=0, n_dim=2)
+    system = HarmonicSystem(
+        gamma=0.1, temperature=0.5 / Boltzmann, m=1.0, omega=0, n_dim=2
+    )
 
     result = solve_ensemble(
         system,
@@ -111,17 +101,12 @@ def _plot_flat_isf_2d() -> None:
             n_steps=5000,
         ),
         (np.full((200, 2), 0.0), np.full((200, 2), 0.0)),
-        _key=key,
     )
 
     fig, ax = get_fancy_figure()
 
     delta_k = (2 * np.pi / 40, 0)
-    _, ax, line_simulated, _ = plot_isf(
-        result=result,
-        ax=ax,
-        delta_k=delta_k,
-    )
+    _, ax, line_simulated, _ = plot_isf(result=result, ax=ax, delta_k=delta_k)
     line_simulated.set_label("simulation")
 
     _, ax, line_exact = plot_exact_flat_isf(system, delta_k, result.times, ax=ax)
