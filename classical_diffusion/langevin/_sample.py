@@ -74,7 +74,12 @@ def get_random_initial_conditions(
     _key = _get_key(_key)
     normalized_system = system.with_normalized_units().as_canonical()
     x_points, p_points = _sample_initial_conditions(
-        normalized_system, n_samples, minimum_energy=minimum_energy, _key=_key
+        normalized_system,
+        n_samples,
+        minimum_energy=system.units.energy_into(
+            minimum_energy, normalized_system.units
+        ),
+        _key=_key,
     )
     x_points = np.array(x_points.reshape(-1, system.n_dim))
     p_points = np.array(p_points.reshape(-1, system.n_dim))
