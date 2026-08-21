@@ -10,7 +10,7 @@ from classical_diffusion.langevin import (
     breakdown_ballistic_trajectory,
     get_diffusion_time,
     get_effective_mass,
-    get_under_barrier_probability_ballistic,
+    get_under_barrier_occupation,
     plot_exact_flat_ballistic_isf,
     solve_ballistic_ensemble,
 )
@@ -44,7 +44,7 @@ def _plot_effective_mass_offset_isf() -> None:
         n_samples=2000,
     )
 
-    under_barrier_prob = get_under_barrier_probability_ballistic(
+    under_barrier_prob = get_under_barrier_occupation(
         system,
         result_full.x_points,
         result_full.p_points,
@@ -55,7 +55,7 @@ def _plot_effective_mass_offset_isf() -> None:
 
     elastic_result, _ = breakdown_ballistic_trajectory(
         result_full,
-        minimum_timescale=get_diffusion_time(
+        filter_timescale=get_diffusion_time(
             system, characteristic_length=system.delta_x / 0.5
         ),
     )
@@ -83,15 +83,13 @@ def _plot_effective_mass_offset_isf() -> None:
         n_samples=1000,
     )
 
-    elastic_result_free, _ = breakdown_ballistic_trajectory(
-        result_free,
-        minimum_timescale=get_diffusion_time(
-            system, characteristic_length=system.delta_x / 0.5
-        ),
-    )
-
     effective_mass = UnitSystem().mass_into(
-        get_effective_mass(elastic_result_free),
+        get_effective_mass(
+            result_free,
+            filter_timescale=get_diffusion_time(
+                system, characteristic_length=system.delta_x / 0.5
+            ),
+        ),
         units=system.units,
     )
 

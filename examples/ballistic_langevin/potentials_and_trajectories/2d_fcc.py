@@ -42,7 +42,7 @@ def _plot_ballistic_trajectory() -> None:
 
     elastic, inelastic = breakdown_ballistic_trajectory(
         result,
-        minimum_timescale=get_diffusion_time(system, 1 / system.gamma),
+        filter_timescale=get_diffusion_time(system, 1 / system.gamma),
     )
 
     fig, ax = get_two_panel_figure()
