@@ -45,14 +45,16 @@ def _run_hopping_simulation_jit(
     key: jax.Array,
 ) -> jnp.ndarray:
     """Run a hopping simulation and return positions directly at sample times."""
+    # Array slicing of initial_position and get_rates([current_site]) is a bit hacky but works for now. Change when generalised to higher dimensions.
+    # And x_indices=np.array(results)[:, None, :]
     max_sample_time = sample_times[-1]
 
     # Carry state: (t_prev, site_prev, t_curr, site_curr, rng_key)
     init_state = (
         jnp.array(0.0, dtype=sample_times.dtype),
-        initial_position,
+        initial_position[0],
         jnp.array(0.0, dtype=sample_times.dtype),
-        initial_position,
+        initial_position[0],
         key,
     )
 
@@ -75,14 +77,14 @@ def _run_hopping_simulation_jit(
             _, _, current_t, current_site, rng_key = state
             destination_key, dt_key, next_key = jax.random.split(rng_key, 3)
 
-            hop_sites, hop_rates = system.get_rates(current_site)
+            hop_sites, hop_rates = system.get_rates(jnp.array([current_site]))
             total_rate = jnp.sum(hop_rates)
             dt = (
                 -jnp.log(jax.random.uniform(dt_key, dtype=sample_times.dtype))
                 / total_rate
             )
             next_site = jax.random.choice(
-                destination_key, hop_sites, p=hop_rates / total_rate
+                destination_key, hop_sites[0], p=hop_rates[0] / total_rate
             )
 
             return (current_t, current_site, current_t + dt, next_site, next_key)
@@ -123,7 +125,7 @@ def solve_ensemble[L: Lattice = Lattice](
     return HoppingSimulationResult[L](
         system=system,
         times=np.array(times),
-        x_indices=np.array(jnp.transpose(results, (0, 2, 1))),
+        x_indices=np.array(results)[:, None, :],
     )
 
 

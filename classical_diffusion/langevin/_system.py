@@ -6,6 +6,7 @@ from typing import final, override
 import jax
 import numpy as np
 import sympy as sp
+from scipy.constants import Boltzmann
 
 from classical_diffusion.hopping import KramersParameters
 from classical_diffusion.system import CanonicalUnitSystem, UnitSystem
@@ -422,7 +423,7 @@ class KramersSystem1D(System):
         super().__init__(
             gamma=params.gamma,
             # Note: this currently assumes Boltzmann = 1
-            temperature=params.kbt,
+            temperature=params.kbt / Boltzmann,
             m=params.m,
             potential=(n_dim, potential),
             params=(

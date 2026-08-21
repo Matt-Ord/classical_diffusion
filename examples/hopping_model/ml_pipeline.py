@@ -545,4 +545,6 @@ def many_equiv_test(folderpath: str, n_isfs: int = 10) -> None:  # ruff: ignore[
 
 if __name__ == "__main__":
     path = "./examples/data"
-    generate_single_clean_isf(path)
+    single_clean_test(path)
+    untrained_test(path)
+    many_equiv_test(path)
