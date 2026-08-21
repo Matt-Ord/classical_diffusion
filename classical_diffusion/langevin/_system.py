@@ -374,7 +374,6 @@ class KramersSystem1D(System):
         m: float,
         params: KramersParameters,
         n_dim: int = 1,
-        units: UnitSystem | None = None,
     ) -> None:
         x0 = sp.symbols("x0")
         s0 = sp.symbols("s0")
@@ -406,8 +405,7 @@ class KramersSystem1D(System):
 
         super().__init__(
             gamma=params.gamma,
-            # Note: this currently assumes Boltzmann = 1
-            temperature=params.kbt,
+            temperature=params.temperature,
             m=m,
             potential=(n_dim, potential),
             params=(
@@ -415,7 +413,7 @@ class KramersSystem1D(System):
                 params.omega_barrier,
                 params.barrier_energy,
             ),
-            units=units or UnitSystem(),
+            units=params.units,
         )
 
     @property
@@ -429,8 +427,9 @@ class KramersSystem1D(System):
             omega_well=self.params[0],
             omega_barrier=self.params[1],
             barrier_energy=self.params[2],
-            kbt=self.temperature,
+            temperature=self.temperature,
             gamma=self.gamma,
+            units=self.units,
         )
 
     @property
@@ -453,15 +452,8 @@ class KramersSystem1D(System):
         """Return the parameters of the system in the specified units."""
         return KramersSystem1D(
             m=self.units.mass_into(self.m, units),
-            params=KramersParameters(
-                omega_well=self.units.frequency_into(self.omega_well, units),
-                omega_barrier=self.units.frequency_into(self.omega_barrier, units),
-                barrier_energy=self.units.energy_into(self.barrier_energy, units),
-                kbt=self.units.energy_into(self.kbt, units),
-                gamma=self.units.frequency_into(self.gamma, units),
-            ),
+            params=self.kramers_params.with_units(units),
             n_dim=self.n_dim,
-            units=units,
         )
 
 
