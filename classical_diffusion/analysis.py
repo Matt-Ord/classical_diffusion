@@ -101,6 +101,7 @@ def plot_isf(
 
     ax.set_xlabel("Time / s")
     ax.set_ylabel("ISF")
+    ax.set_xlim(times[0], times[-1])
 
     return fig, ax, line, fill
 
