@@ -1,5 +1,5 @@
 import operator
-import pickle
+import pickle  # ruff: ignore[suspicious-pickle-import]
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -109,7 +109,7 @@ class ResNet(eqx.Module):
 def get_deterministic_isf_directly(
     hop_time: float, time_span: TimeSpan, delta_k: float
 ) -> jnp.ndarray:
-
+    """Get the isf from hop time directly, without vmapping over get probabilities and get isf."""
     lattice = CanonicalLattice1D(1.0, hop_time)
 
     probabilities = jx.get_deterministic_probabilities(lattice, time_span)
@@ -126,7 +126,7 @@ def loss_fn(
     test_isfs: jnp.ndarray,
 ) -> jax.Array:
     """Loss function for an ISF hopping rate prediction model."""
-    print("\nCompile Loss Function")
+    print("\nCompile Loss Function\n")
     # Pass batched isfs through the model to predict hopping rates and isf offsets
     predictions = jax.vmap(model)(test_isfs)  # ty: ignore[invalid-argument-type]
 
@@ -158,7 +158,7 @@ def training_step(  # ruff: ignore[too-many-arguments]
     test_isfs: jnp.ndarray,
 ) -> tuple[Any, Any, Any]:
     """Progress the training of the model by one epoch by computing loss, gradients and updates."""
-    print("\nCompile Training Step\n")
+    print("\nCompile Training Step")
 
     # Compute loss and gradients for trainable parameters only
     loss, gradients = eqx.filter_value_and_grad(loss_fn)(
@@ -197,22 +197,38 @@ def train_model(
 
     # Define number of epochs to train for
     num_epochs = 100
+    batch_size = 5
+
+    num_isfs = len(training_isfs)
+    num_batches = ((num_isfs - 1) // batch_size) + 1
 
     # Training loop
     for epoch in range(num_epochs):
         if epoch > 0:
-            print(f"starting epoch {epoch + 1}")
-        model, optimizer_state, loss = training_step(
-            model,
-            optimizer_state,
-            optimizer,
-            time_span=time_span,
-            delta_k=delta_k,
-            test_isfs=training_isfs,
-        )
+            print(f"Epoch {epoch + 1}")
+        key, subkey = jax.random.split(key)
+        permutation = jax.random.permutation(subkey, num_isfs)
+        shuffled_isfs = training_isfs[permutation]
+
+        # Iterate over batches
+        epoch_loss = 0
+        for batch_index in range(num_batches):
+            start_index = batch_index * batch_size
+            end_index = start_index + batch_size
+            batch_isfs = shuffled_isfs[start_index:end_index]
+
+            model, optimizer_state, loss = training_step(
+                model,
+                optimizer_state,
+                optimizer,
+                time_span=time_span,
+                delta_k=delta_k,
+                test_isfs=batch_isfs,
+            )
+            epoch_loss += loss
 
         if (epoch + 1) % 20 == 0:
-            print(f"Epoch {epoch + 1:3d} | Loss = {loss:.5f}")
+            print(f"Epoch {epoch + 1:3d} | Loss = {epoch_loss:.5f}")
 
     # Return trained model
     return model
@@ -344,7 +360,7 @@ def generate_single_clean_isf(
 
 
 @timed
-def generate_many_equiv_isf(
+def generate_many_equiv_trajectories(
     traj_filepath: str, n_isfs: int, *, time_span: TimeSpan
 ) -> None:
     """Run the langevin simulations and save to file."""
@@ -489,7 +505,7 @@ def single_clean_test(folderpath: str) -> None:
     fig.savefig("./examples/hopping_model/model_test_single_clean.isf.pdf")
 
 
-def many_equiv_test(folderpath: str, n_isfs: int = 10) -> None:  # ruff: ignore[too-many-locals]
+def many_equiv_test(folderpath: str, n_isfs: int) -> None:  # ruff: ignore[too-many-locals]
     """Train and test a model on num equivalent but noisy ISFs."""
     print(f"\n\nRunning test with {n_isfs} equivalent isfs\n")
 
@@ -504,21 +520,19 @@ def many_equiv_test(folderpath: str, n_isfs: int = 10) -> None:  # ruff: ignore[
     # Ensure isfs exist
     if not Path(isfs_filepath).exists():
         print("No data, generating new equivalent isfs")
-        generate_many_equiv_isf(traj_filepath, n_isfs, time_span=time_span)
+        generate_many_equiv_trajectories(traj_filepath, n_isfs, time_span=time_span)
         generate_isfs(traj_filepath, isfs_filepath, delta_k=delta_k)
 
     # Load isfs
-    equivalent_isf_data = []
+    training_isf_data = []
     with Path(isfs_filepath).open("rb") as file:
         while True:
             try:
-                equivalent_isf_data.append(pickle.load(file))
+                training_isf_data.append(pickle.load(file))  # ruff: ignore[suspicious-pickle-usage]
             except EOFError:
                 break
 
     # Train model: select training data
-    training_isf_data = equivalent_isf_data[:-1]
-
     training_isfs = jnp.array(
         [data.get("isf").get("isf") for data in training_isf_data]
     )
@@ -531,8 +545,17 @@ def many_equiv_test(folderpath: str, n_isfs: int = 10) -> None:  # ruff: ignore[
 
     print("\nModel trained! Getting model's isf")
 
-    # Test model: select test data
-    test_isf = equivalent_isf_data[-1].get("isf")
+    # Test model: get test data
+    clean_isf_path = folderpath + "/langevin_clean_isf.pkl"
+
+    # Ensure isf exists
+    if not Path(clean_isf_path).exists():
+        print("No data, generating a new clean isf")
+        generate_single_clean_isf(folderpath, time_span=time_span, delta_k=delta_k)
+
+    # Load isf
+    with Path(clean_isf_path).open("rb") as file:
+        test_isf = pickle.load(file)
 
     # Test model: get model output
     hopping_time, offset = get_hopping_time_and_offset(
@@ -565,14 +588,12 @@ def many_equiv_test(folderpath: str, n_isfs: int = 10) -> None:  # ruff: ignore[
     ax.set_xlim(0, right=20)
     ax.set_ylim(0, 1)
     ax.legend()
-    ax.set_title(
-        "Model trained on many equivalent isfs, tested with this new one as input"
-    )
+    ax.set_title("Model trained on many, tested on clean")
 
     fig.savefig("./examples/hopping_model/model_test_many_equiv.isf.pdf")
 
 
 if __name__ == "__main__":
     path = "./examples/data"
-    single_clean_test(path)
-    untrained_test(path)
+    # single_clean_test(path)
+    many_equiv_test(path, 10)
