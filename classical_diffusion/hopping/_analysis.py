@@ -1,10 +1,10 @@
 from typing import TYPE_CHECKING
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
-from classical_diffusion.hopping._system import CanonicalLattice, Lattice
+import classical_diffusion.jax as jx
+from classical_diffusion.hopping._system import Lattice
 from classical_diffusion.plot import get_figure
 from classical_diffusion.util import timed
 
@@ -22,20 +22,9 @@ def get_deterministic_isf[L: Lattice](
     probabilities: np.ndarray[tuple[int, int], np.dtype[np.float32]],
     delta_k: float,
 ) -> np.ndarray:
-    distances = system.x_points_from_indices(np.arange(probabilities.shape[1]))
-    phase_factors = np.exp(1j * delta_k * distances)
-    return np.abs(np.dot(probabilities, phase_factors))
-
-
-@jax.jit
-def get_deterministic_isf_jax[L: CanonicalLattice](
-    system: L,
-    probabilities: jnp.ndarray,
-    delta_k: float,
-) -> jnp.ndarray:
-    distances = system.x_points_from_indices(jnp.arange(probabilities.shape[1]))
-    phase_factors = jnp.exp(1j * delta_k * distances)
-    return jnp.abs(jnp.dot(probabilities, phase_factors))
+    return jx.get_deterministic_isf(
+        system.as_canonical(), jnp.array(probabilities), delta_k
+    )
 
 
 @timed

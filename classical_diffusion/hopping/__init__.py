@@ -2,7 +2,6 @@
 
 from classical_diffusion.hopping._analysis import (
     get_deterministic_isf,
-    get_deterministic_isf_jax,
     plot_deterministic_isf,
 )
 from classical_diffusion.hopping._hopping import (
@@ -33,7 +32,6 @@ __all__ = [
     "Lattice1D",
     "deterministic_probabilities_jax",
     "get_deterministic_isf",
-    "get_deterministic_isf_jax",
     "get_deterministic_probabilities",
     "get_kramers_parameters_cosine",
     "get_kramers_rate",

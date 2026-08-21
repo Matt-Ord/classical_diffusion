@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
+import classical_diffusion.jax as jx
 from classical_diffusion.analysis import get_isf
 from classical_diffusion.hopping import (
     CanonicalLattice1D,
@@ -16,7 +17,6 @@ from classical_diffusion.hopping import (
     Lattice1D,
     deterministic_probabilities_jax,
     get_deterministic_isf,
-    get_deterministic_isf_jax,
     get_deterministic_probabilities,
 )
 from classical_diffusion.langevin import (
@@ -109,20 +109,22 @@ class ResNet(eqx.Module):
 
 @jax.jit
 def get_deterministic_isf_directly(
-    hop_time: float, times: jnp.ndarray, delta_k: float
+    hop_time: float, time_span: TimeSpan, delta_k: float
 ) -> jnp.ndarray:
 
     lattice = CanonicalLattice1D(1.0, hop_time)
+    times = jnp.linspace(time_span.t_start, time_span.t_end, time_span.n_steps + 1)
 
     probabilities = deterministic_probabilities_jax(hop_time, times)
 
-    return get_deterministic_isf_jax(lattice, probabilities, delta_k)
+    return jx.get_deterministic_isf(lattice, probabilities, delta_k)
 
 
 @jax.jit
 def loss_fn(
     model: eqx.Module,
-    times: jnp.ndarray,
+    *,
+    time_span: TimeSpan,
     delta_k: float,
     test_isfs: jnp.ndarray,
 ) -> jax.Array:
@@ -136,7 +138,7 @@ def loss_fn(
     offsets = predictions[:, 1]
 
     isfs = jax.vmap(get_deterministic_isf_directly, (0, None, None))(
-        hopping_times, times, delta_k
+        hopping_times, time_span, delta_k
     )  # These are already real
 
     corrected_isfs = offsets[:, None] * isfs
@@ -154,7 +156,7 @@ def training_step(  # ruff: ignore[too-many-arguments]
     optimizer_state: optax.OptState,
     optimizer: optax.GradientTransformationExtraArgs,
     *,
-    times: jnp.ndarray,
+    time_span: TimeSpan,
     delta_k: float,
     test_isfs: jnp.ndarray,
 ) -> tuple[Any, Any, Any]:
@@ -163,7 +165,7 @@ def training_step(  # ruff: ignore[too-many-arguments]
 
     # Compute loss and gradients for trainable parameters only
     loss, gradients = eqx.filter_value_and_grad(loss_fn)(
-        model, times, delta_k, test_isfs
+        model, time_span=time_span, delta_k=delta_k, test_isfs=test_isfs
     )
 
     # Calculate parameter updates using Optax
@@ -188,7 +190,6 @@ def train_model(training_isfs: jnp.ndarray) -> ResNet:
     # Set up constants
     key = jax.random.key(1)
     time_span = TimeSpan(t_start=0, t_end=40, n_steps=200)
-    times = jnp.linspace(time_span.t_start, time_span.t_end, time_span.n_steps + 1)
 
     delta_k = 0.5
 
@@ -209,7 +210,7 @@ def train_model(training_isfs: jnp.ndarray) -> ResNet:
             model,
             optimizer_state,
             optimizer,
-            times=times,
+            time_span=time_span,
             delta_k=delta_k,
             test_isfs=training_isfs,
         )

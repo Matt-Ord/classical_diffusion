@@ -1,6 +1,8 @@
 import dataclasses
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Self
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Self, final
+
+import jax
 
 from classical_diffusion.system import UnitSystem
 
@@ -92,13 +94,15 @@ class SimulationResult[S: Any]:
         )
 
 
+@final
+@jax.tree_util.register_dataclass
 @dataclass(frozen=True, kw_only=True)
 class TimeSpan:
     """Time-stepping parameters, bundled together."""
 
-    t_start: float = 0
-    t_end: float
-    n_steps: int
+    t_start: float = field(default=0, metadata={"static": True})
+    t_end: float = field(metadata={"static": True})
+    n_steps: int = field(metadata={"static": True})
 
     def __post_init__(self) -> None:
         if self.t_end <= self.t_start:
