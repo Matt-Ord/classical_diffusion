@@ -314,7 +314,7 @@ SAMPLE_REGION = 10
 
 @jax.jit(static_argnames=("n_samples"))
 def _get_under_barrier_probability_jax(
-    system: CanonicalSystem,
+    system: "CanonicalSystem",  # ruff: ignore[quoted-annotation]
     barrier_energy: float,
     n_samples: int,
     key: jax.Array,
