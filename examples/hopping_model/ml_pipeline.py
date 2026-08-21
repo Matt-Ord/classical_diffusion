@@ -182,13 +182,12 @@ def get_hopping_time_and_offset(model: ResNet, isf: jnp.ndarray) -> tuple[float,
 # Training functions
 
 
-def train_model(training_isfs: jnp.ndarray) -> ResNet:
+def train_model(
+    training_isfs: jnp.ndarray, *, time_span: TimeSpan, delta_k: float
+) -> ResNet:
     """Train a ResNet model."""
     # Set up constants
     key = jax.random.key(1)
-    time_span = TimeSpan(t_start=0, t_end=40, n_steps=200)
-
-    delta_k = 0.5
 
     # Initialise the model and optimizer
     model = ResNet(hidden_channels=16, key=key)
@@ -260,11 +259,11 @@ def _inits_constant(
 # jax simulation run
 @jax.jit
 def run_langevin_trajectories(
+    *,
+    time_span: TimeSpan,
     keys: jax.Array,
 ) -> JaxEnsembleResults:
     """Run langevin trajectories."""
-    # Times
-    times = TimeSpan(t_start=0, t_end=40, n_steps=200)
 
     def body(time_span: TimeSpan, _key: jax.Array) -> JaxEnsembleResults:
 
@@ -287,17 +286,17 @@ def run_langevin_trajectories(
             "result": result,
         }
 
-    return jax.vmap(body, (None, 0))(times, keys)
+    return jax.vmap(body, (None, 0))(time_span, keys)
 
 
 # Training data generation functions
 
 
 @timed
-def generate_single_clean_isf(folderpath: str) -> None:
+def generate_single_clean_isf(
+    folderpath: str, *, time_span: TimeSpan, delta_k: float
+) -> None:
     """Run a langevin ensemble and save the resulting clean isf to file."""
-    time_span = TimeSpan(t_start=0, t_end=40, n_steps=200)
-
     system = KramersSystem1D(
         params=KramersParameters(
             omega_well=1.0,
@@ -308,8 +307,6 @@ def generate_single_clean_isf(folderpath: str) -> None:
             gamma=0.1,
         )
     )
-
-    delta_k = 0.5
 
     result = solve_overdamped_ensemble(
         system,
@@ -347,11 +344,15 @@ def generate_single_clean_isf(folderpath: str) -> None:
 
 
 @timed
-def generate_many_equiv_isf(traj_filepath: str, n_isfs: int) -> None:
+def generate_many_equiv_isf(
+    traj_filepath: str, n_isfs: int, *, time_span: TimeSpan
+) -> None:
     """Run the langevin simulations and save to file."""
     keys = jnp.full(n_isfs, jax.random.key(100))
 
-    batched_trajectories = jax.tree.map(np.asarray, run_langevin_trajectories(keys))
+    batched_trajectories = jax.tree.map(
+        np.asarray, run_langevin_trajectories(time_span=time_span, keys=keys)
+    )
     trajectories = [
         jax.tree.map(operator.itemgetter(i), batched_trajectories)
         for i in range(n_isfs)
@@ -363,13 +364,14 @@ def generate_many_equiv_isf(traj_filepath: str, n_isfs: int) -> None:
 
 @timed
 def generate_random_langevin_trajectories(
-    traj_filepath: str,
-    n_isfs: int,
+    traj_filepath: str, n_isfs: int, *, time_span: TimeSpan
 ) -> None:
     """Run the langevin simulations and save to file."""
     keys = jax.random.split(jax.random.key(100), n_isfs)
 
-    batched_trajectories = jax.tree.map(np.asarray, run_langevin_trajectories(keys))
+    batched_trajectories = jax.tree.map(
+        np.asarray, run_langevin_trajectories(time_span=time_span, keys=keys)
+    )
     trajectories = [
         jax.tree.map(operator.itemgetter(i), batched_trajectories)
         for i in range(n_isfs)
@@ -380,10 +382,8 @@ def generate_random_langevin_trajectories(
 
 
 @timed
-def generate_isfs(traj_filepath: str, isfs_filepath: str) -> None:
+def generate_isfs(traj_filepath: str, isfs_filepath: str, *, delta_k: float) -> None:
     """Generate isfs from trajectories saved in ML pipeline and save to file."""
-    delta_k = 0.5
-
     # Open the trajectories file and load in the trajectories
     with Path(traj_filepath).open("rb") as file:
         trajectory_records = pickle.load(file)
@@ -425,37 +425,50 @@ def untrained_test(folderpath: str) -> None:
 def single_clean_test(folderpath: str) -> None:
     """Train and test a model on a single, clean ISF."""
     print("\n\nRunning test with a single, clean isf\n")
+
+    # Experimental parameters
+    time_span = TimeSpan(t_start=0, t_end=40, n_steps=200)
+    delta_k = 0.5
+
+    # Define filepath
     clean_isf_path = folderpath + "/langevin_clean_isf.pkl"
 
+    # Ensure isf exists
     if not Path(clean_isf_path).exists():
         print("No data, generating a new clean isf")
-        generate_single_clean_isf(folderpath)
+        generate_single_clean_isf(folderpath, time_span=time_span, delta_k=delta_k)
 
-    print("Loading clean isf")
+    # Load isf
     with Path(clean_isf_path).open("rb") as file:
         clean_isf = pickle.load(file)
 
+    # Train model on clean isf
     training_isf = jnp.array(clean_isf.get("isf"))
 
     print("Training model")
-    trained_model = train_model(training_isf[None, None, :])
+    trained_model = train_model(
+        training_isf[None, None, :], time_span=time_span, delta_k=delta_k
+    )
 
     print("\nModel trained! Getting model's isf")
-    # Check output
+
+    # Test model on clean isf
     hopping_time, offset = get_hopping_time_and_offset(
         trained_model, training_isf[None, :]
     )
 
-    system = Lattice1D(1.0, hopping_time)
-    time_span = TimeSpan(t_start=0, t_end=40, n_steps=200)
+    predicted_lattice = Lattice1D(1.0, hopping_time)
     model_isf = get_deterministic_isf(
-        system,
-        get_deterministic_probabilities(system, (1000,), time_span, 500).probabilities,
-        0.5,
+        predicted_lattice,
+        get_deterministic_probabilities(
+            predicted_lattice, (1000,), time_span, 500
+        ).probabilities,
+        delta_k,
     )
 
     corrected_model_isf = offset * model_isf
 
+    # Plot source and model isfs for comparison
     print("Plotting ISFs")
     fig, ax = get_fancy_figure()
     fig, ax = get_figure(ax)
@@ -471,7 +484,7 @@ def single_clean_test(folderpath: str) -> None:
     ax.set_xlim(0, right=20)
     ax.set_ylim(0, 1)
     ax.legend()
-    ax.set_title("Comparison please work")
+    ax.set_title("Single clean ISF comparison")
 
     fig.savefig("./examples/hopping_model/model_test_single_clean.isf.pdf")
 
@@ -479,15 +492,22 @@ def single_clean_test(folderpath: str) -> None:
 def many_equiv_test(folderpath: str, n_isfs: int = 10) -> None:  # ruff: ignore[too-many-locals]
     """Train and test a model on num equivalent but noisy ISFs."""
     print(f"\n\nRunning test with {n_isfs} equivalent isfs\n")
+
+    # Experimental parameters
+    time_span = TimeSpan(t_start=0, t_end=40, n_steps=200)
+    delta_k = 0.5
+
+    # Define filepaths
     traj_filepath = folderpath + f"/langevin_{n_isfs}_equivalent.pkl"
     isfs_filepath = folderpath + f"/langevin_{n_isfs}_equivalent_isf.pkl"
 
+    # Ensure isfs exist
     if not Path(isfs_filepath).exists():
         print("No data, generating new equivalent isfs")
-        generate_many_equiv_isf(traj_filepath, n_isfs)
-        generate_isfs(traj_filepath, isfs_filepath)
+        generate_many_equiv_isf(traj_filepath, n_isfs, time_span=time_span)
+        generate_isfs(traj_filepath, isfs_filepath, delta_k=delta_k)
 
-    print("Loading equivalent isfs")
+    # Load isfs
     equivalent_isf_data = []
     with Path(isfs_filepath).open("rb") as file:
         while True:
@@ -496,28 +516,36 @@ def many_equiv_test(folderpath: str, n_isfs: int = 10) -> None:  # ruff: ignore[
             except EOFError:
                 break
 
+    # Train model: select training data
     training_isf_data = equivalent_isf_data[:-1]
 
     training_isfs = jnp.array(
         [data.get("isf").get("isf") for data in training_isf_data]
     )
 
+    # Train model: train model
     print("Training model")
-    trained_model = train_model(training_isfs[:, None, :])
+    trained_model = train_model(
+        training_isfs[:, None, :], time_span=time_span, delta_k=delta_k
+    )
 
     print("\nModel trained! Getting model's isf")
+
+    # Test model: select test data
     test_isf = equivalent_isf_data[-1].get("isf")
-    # Check output
+
+    # Test model: get model output
     hopping_time, offset = get_hopping_time_and_offset(
         trained_model, jnp.array([test_isf.get("isf")])
     )
 
-    system = Lattice1D(1.0, hopping_time)
-    time_span = TimeSpan(t_start=0, t_end=40, n_steps=200)
+    predicted_lattice = Lattice1D(1.0, hopping_time)
     model_isf = get_deterministic_isf(
-        system,
-        get_deterministic_probabilities(system, (1000,), time_span, 500).probabilities,
-        0.5,
+        predicted_lattice,
+        get_deterministic_probabilities(
+            predicted_lattice, (1000,), time_span, 500
+        ).probabilities,
+        delta_k,
     )
 
     corrected_model_isf = offset * model_isf
