@@ -112,7 +112,6 @@ def solve_ensemble[L: Lattice = Lattice](
     _key: jax.Array | None = None,
 ) -> HoppingSimulationResult[L]:
     """Solve the hopping ensemble."""
-<<<<<<< HEAD
     keys = jax.random.split(_get_key(_key), initial_condition.shape[0])
     times = jnp.linspace(time_span.t_start, time_span.t_end, time_span.n_steps + 1)
 
