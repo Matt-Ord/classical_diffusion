@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, Unpack
+from typing import TYPE_CHECKING, Any
 
 import matplotlib as mpl
 import numpy as np
@@ -40,17 +40,22 @@ def get_isf(
     positions: np.ndarray[Any, np.dtype[np.floating]],
     delta_k: tuple[float, ...],
     *,
-    pairwise: bool = True,
+    origin_idx: int = 0,
 ) -> np.ndarray[Any, np.dtype[np.complex128]]:
     """Get the restored displacement of a wavepacket."""
-    if not pairwise:
-        phase = np.einsum(
-            "i,...ij->...j",
-            delta_k,
-            positions - positions[..., 0].reshape((*positions.shape[:-1], 1)),
-        )
-        return np.exp(1j * phase)
+    phase = np.einsum(
+        "i,...ij->...j",
+        delta_k,
+        positions - positions[..., origin_idx].reshape((*positions.shape[:-1], 1)),
+    )
+    return np.exp(1j * phase)
 
+
+def get_pairwise_isf(
+    positions: np.ndarray[Any, np.dtype[np.floating]],
+    delta_k: tuple[float, ...],
+) -> np.ndarray[Any, np.dtype[np.complex128]]:
+    """Get the restored displacement of a wavepacket."""
     scatter = np.exp(-1j * np.einsum("i,...ij->...j", delta_k, positions))
 
     # convolution_j = \sum_i^N-j e^(ik.x_i+j) e^(-ik.x_i)
@@ -62,24 +67,24 @@ def get_isf(
     return _time_average(convolution)
 
 
-class ISFKwargs(TypedDict):
-    """Settings controlling how the ISF is computed from trajectory data."""
-
-    delta_k: tuple[float, ...]
-    pairwise: NotRequired[bool]
-
-
 def plot_isf(
     result: SimulationResult,
     *,
     ax: Axes | None = None,
     measure: Measure = "abs",
-    **kwargs: Unpack[ISFKwargs],
+    delta_k: tuple[float, ...],
+    pairwise: bool = True,
 ) -> tuple[Figure, Axes, Line2D, PolyCollection]:
     """Plot the ensemble-averaged ISF over time, with a shaded ±1 SEM band."""
     fig, ax = get_figure(ax)
 
-    isf = get_isf(result.x_points, **kwargs)
+    if pairwise:
+        isf = get_pairwise_isf(result.x_points, delta_k=delta_k)
+        times = result.times - result.times[0]
+    else:
+        origin_idx = np.argmin(np.abs(result[0].times)).item()
+        isf = get_isf(result.x_points, delta_k=delta_k, origin_idx=origin_idx)
+        times = result.times - result.times[origin_idx]
 
     avg_isf = np.mean(isf, axis=0)
     sem_isf = np.std(isf, axis=0) / np.sqrt(isf.shape[0])
@@ -87,10 +92,10 @@ def plot_isf(
     avg_data = get_measured_data(avg_isf, measure)
     sem_data = get_measured_data(sem_isf, measure)
 
-    (line,) = ax.plot(result.times, avg_data)
+    (line,) = ax.plot(times, avg_data)
     line.set_label("ISF")
 
-    fill = ax.fill_between(result.times, avg_data - sem_data, avg_data + sem_data)
+    fill = ax.fill_between(times, avg_data - sem_data, avg_data + sem_data)
     fill.set_alpha(0.3)
     fill.set_color(line.get_color())
 
@@ -117,11 +122,15 @@ def plot_isf_with_delta_k(
     )
 
     for dk in delta_k_values:
-        dk_tuple = (dk,)
-        isf = get_isf(result.x_points, delta_k=dk_tuple, pairwise=pairwise)
-        avg_isf = np.mean(isf, axis=0)
-        avg_data = get_measured_data(avg_isf, measure)
-        ax.plot(result.times, avg_data, color=cmap(norm(dk)))
+        _, _, line, poly = plot_isf(
+            result,
+            ax=ax,
+            measure=measure,
+            delta_k=(dk,),
+            pairwise=pairwise,
+        )
+        poly.set_alpha(0)
+        line.set_color(cmap(norm(dk)))
 
     ax.set_xlabel("Time / s")
     ax.set_ylabel("ISF")
