@@ -13,7 +13,7 @@ from classical_diffusion.langevin import (
     PeriodicSystem1D,
     get_effective_mass,
     get_under_barrier_probability,
-    solve_ballistic_ensemble,
+    solve_ensemble_ballistic,
 )
 from classical_diffusion.plot import get_fancy_figure, get_figure
 from classical_diffusion.simulation import TimeSpan
@@ -172,7 +172,7 @@ def _plot_effective_mass_ratio() -> None:  # ruff:ignore[too-many-statements]
                     barrier_energy=barrier_energy_grid[i, j],
                 )
 
-                result = solve_ballistic_ensemble(
+                result = solve_ensemble_ballistic(
                     system,
                     TimeSpan(
                         t_end=system.units.time_into(end_time),

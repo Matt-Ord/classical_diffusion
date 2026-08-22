@@ -7,7 +7,7 @@ from classical_diffusion.langevin import (
     PeriodicSystemFCC,
     breakdown_ballistic_trajectory,
     get_diffusion_time,
-    solve_ballistic_ensemble,
+    solve_ensemble_ballistic,
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.simulation import TimeSpan
@@ -23,7 +23,7 @@ system = PeriodicSystemFCC(
 
 def _plot_inelastic_trends() -> None:
 
-    ballistic_result = solve_ballistic_ensemble(
+    ballistic_result = solve_ensemble_ballistic(
         system,
         TimeSpan(
             t_end=system.units.time_into(6e-12),

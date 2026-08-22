@@ -12,7 +12,7 @@ from classical_diffusion.langevin import (
     get_effective_mass,
     get_under_barrier_occupation,
     plot_exact_flat_ballistic_isf,
-    solve_ballistic_ensemble,
+    solve_ensemble_ballistic,
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.simulation import TimeSpan
@@ -35,7 +35,7 @@ def _plot_effective_mass_offset_isf() -> None:
         2 * np.pi / system.delta_x * 0.2 * direction / np.linalg.norm(direction)
     )
 
-    result_full = solve_ballistic_ensemble(
+    result_full = solve_ensemble_ballistic(
         system,
         TimeSpan(
             t_end=system.units.time_into(5e-12),
@@ -74,7 +74,7 @@ def _plot_effective_mass_offset_isf() -> None:
     line_1.set_label("actual mass")
     line_1.set_linestyle(":")
 
-    result_free = solve_ballistic_ensemble(
+    result_free = solve_ensemble_ballistic(
         system,
         TimeSpan(
             t_end=system.units.time_into(50e-12),

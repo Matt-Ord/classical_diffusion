@@ -21,14 +21,7 @@ def _plot_harmonic_isf() -> None:
         omega=3,
     )
 
-    result = solve_ensemble(
-        system,
-        TimeSpan(
-            t_end=100,
-            n_steps=5000,
-        ),
-        (np.full((200, 1), 0.0), np.full((200, 1), 0.0)),
-    )
+    result = solve_ensemble(system, TimeSpan(t_end=100, n_steps=5000), n_samples=200)
 
     fig, ax = get_fancy_figure()
 
@@ -65,9 +58,7 @@ def _plot_flat_isf() -> None:
     system = HarmonicSystem(gamma=0.1, temperature=0.5 / Boltzmann, m=1.0, omega=0)
 
     result = solve_ensemble(
-        system,
-        TimeSpan(t_end=50 / system.gamma, n_steps=5000),
-        (np.full((200, 1), 0.0), np.full((200, 1), 0.0)),
+        system, TimeSpan(t_end=50 / system.gamma, n_steps=5000), n_samples=200
     )
 
     fig, ax = get_fancy_figure()
@@ -95,12 +86,7 @@ def _plot_flat_isf_2d() -> None:
     )
 
     result = solve_ensemble(
-        system,
-        TimeSpan(
-            t_end=50 / system.gamma,
-            n_steps=5000,
-        ),
-        (np.full((200, 2), 0.0), np.full((200, 2), 0.0)),
+        system, TimeSpan(t_end=50 / system.gamma, n_steps=5000), n_samples=200
     )
 
     fig, ax = get_fancy_figure()
