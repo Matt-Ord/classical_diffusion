@@ -5,8 +5,8 @@ from classical_diffusion.analysis import plot_isf, plot_x_evolution_2d
 from classical_diffusion.langevin import (
     PeriodicSystemFCC,
     plot_periodic_potential_fcc,
-    solve_ballistic_ensemble,
     solve_ensemble,
+    solve_ensemble_ballistic,
     solve_single,
 )
 from classical_diffusion.plot import get_fancy_figure
@@ -31,7 +31,7 @@ def _plot_2d_periodic_isf() -> None:
     result = solve_ensemble(
         system,
         TimeSpan(t_end=50 / system.gamma, n_steps=5000),
-        (np.full((2000, 2), 0.0), np.full((2000, 2), 0.0)),
+        n_samples=2000,
     )
 
     fig, ax = get_fancy_figure()
@@ -44,7 +44,7 @@ def _plot_2d_periodic_isf() -> None:
     )
     line_0.set_label("simulation")
 
-    result = solve_ballistic_ensemble(
+    result = solve_ensemble_ballistic(
         system,
         TimeSpan(t_end=4 / system.gamma, n_steps=400),
         n_samples=2000,

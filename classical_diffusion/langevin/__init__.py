@@ -15,9 +15,11 @@ from classical_diffusion.langevin._analysis import (
 from classical_diffusion.langevin._langevin import (
     LangevinSimulationResult,
     SingleLangevinSimulationResult,
-    solve_ballistic_ensemble,
     solve_ensemble,
-    solve_overdamped_ensemble,
+    solve_ensemble_ballistic,
+    solve_many,
+    solve_many_ballistic,
+    solve_many_overdamped,
     solve_single,
     solve_single_ballistic,
 )
@@ -81,9 +83,11 @@ __all__ = [
     "plot_potential_2d",
     "plot_x_distribution_histogram",
     "plot_x_distribution_kde",
-    "solve_ballistic_ensemble",
     "solve_ensemble",
-    "solve_overdamped_ensemble",
+    "solve_ensemble_ballistic",
+    "solve_many",
+    "solve_many_ballistic",
+    "solve_many_overdamped",
     "solve_single",
     "solve_single_ballistic",
 ]

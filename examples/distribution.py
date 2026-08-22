@@ -47,11 +47,8 @@ def _plot_xp_distributions_periodic() -> None:
 
     result = solve_ensemble(
         system,
-        TimeSpan(
-            t_end=system.units.time_into(1000 / system.gamma),
-            n_steps=1000,
-        ),
-        (np.full((10, 1), 0), np.full((10, 1), 0.0)),
+        TimeSpan(t_end=system.units.time_into(1000 / system.gamma), n_steps=1000),
+        n_samples=10,
     )
 
     fig, ax = get_fancy_figure()
@@ -98,9 +95,7 @@ def _plot_x_distribution_spread() -> None:
     )
 
     result = solve_ensemble(
-        system,
-        TimeSpan(t_end=100 / system.gamma, n_steps=100),
-        (np.full((4000, 1), 0.0), np.full((4000, 1), 0.0)),
+        system, TimeSpan(t_end=100 / system.gamma, n_steps=100), n_samples=4000
     )
 
     fig, ax = get_fancy_figure()
@@ -132,11 +127,8 @@ def _plot_xp_distributions_harmonic() -> None:
 
     result = solve_ensemble(
         system,
-        TimeSpan(
-            t_end=system.units.time_into(2000 / system.gamma),
-            n_steps=2000,
-        ),
-        (np.full((10, 1), 0), np.full((10, 1), 0.0)),
+        TimeSpan(t_end=system.units.time_into(2000 / system.gamma), n_steps=2000),
+        n_samples=10,
     )
 
     fig, ax = get_fancy_figure()

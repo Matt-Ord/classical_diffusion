@@ -1,5 +1,3 @@
-import numpy as np
-
 from classical_diffusion.analysis import (
     plot_isf,
 )
@@ -7,8 +5,8 @@ from classical_diffusion.langevin import (
     PeriodicSystem1D,
     breakdown_ballistic_trajectory,
     get_diffusion_time,
-    solve_ballistic_ensemble,
     solve_ensemble,
+    solve_ensemble_ballistic,
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.simulation import TimeSpan
@@ -25,11 +23,8 @@ def _plot_periodic_isf() -> None:
 
     full_result = solve_ensemble(
         system,
-        TimeSpan(
-            t_end=system.units.time_into(10e-12),
-            n_steps=1000,
-        ),
-        (np.full((500, 1), 0.0), np.full((500, 1), 0.0)),
+        TimeSpan(t_end=system.units.time_into(10e-12), n_steps=1000),
+        n_samples=500,
     )
 
     fig, ax = get_fancy_figure()
@@ -42,7 +37,7 @@ def _plot_periodic_isf() -> None:
     )
     line_0.set_label("full simulation")
 
-    ballistic_result = solve_ballistic_ensemble(
+    ballistic_result = solve_ensemble_ballistic(
         system,
         TimeSpan(
             t_end=system.units.time_into(3e-12),

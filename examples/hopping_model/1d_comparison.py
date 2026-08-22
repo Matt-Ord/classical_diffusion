@@ -20,7 +20,7 @@ from classical_diffusion.langevin import (
     get_exact_harmonic_isf,
     plot_force_1d,
     plot_potential_1d,
-    solve_overdamped_ensemble,
+    solve_many_overdamped,
 )
 from classical_diffusion.plot import (
     Measure,
@@ -112,7 +112,7 @@ def _kramers_harmonic_comparison() -> None:
     initial_position = np.full((100, 1), 0.0)
     time_span = TimeSpan(t_end=200, n_steps=2000)
 
-    langevin_result = solve_overdamped_ensemble(
+    langevin_result = solve_many_overdamped(
         system,
         time_span,
         (initial_position, np.full(initial_position.shape, 0.0)),
@@ -178,7 +178,7 @@ def _kramers_sinusoid_comparison() -> None:
     initial_position = np.full((100, 1), 0.0)
     time_span = TimeSpan(t_end=200, n_steps=2000)
 
-    langevin_result = solve_overdamped_ensemble(
+    langevin_result = solve_many_overdamped(
         system,
         time_span,
         (initial_position, np.full(initial_position.shape, 0.0)),
