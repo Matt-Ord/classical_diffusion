@@ -72,7 +72,7 @@ def _plot_effective_mass_isf() -> None:
             n_steps=1000,
         ),
         n_samples=500,
-        minimum_energy=system.barrier_energy,
+        energy_range=(system.barrier_energy, np.inf),
     )
 
     effective_mass = UnitSystem().mass_into(

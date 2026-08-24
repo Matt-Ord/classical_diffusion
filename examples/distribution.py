@@ -161,9 +161,7 @@ def _plot_x_distribution_spread_ballistic_sample() -> None:
     system = PeriodicSystem1D(
         gamma=0.5, temperature=0.5 / Boltzmann, m=1.0, delta_x=5, barrier_energy=2
     )
-    x_points, p_points = get_random_initial_conditions(
-        system, n_samples=4000, minimum_energy=0.0
-    )
+    x_points, p_points = get_random_initial_conditions(system, n_samples=4000)
     result = LangevinSimulationResult(
         system=system,
         times=np.array([0.0]),

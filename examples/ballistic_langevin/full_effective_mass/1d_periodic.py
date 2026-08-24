@@ -94,7 +94,7 @@ def _plot_effective_mass_isf() -> None:
             t_end=system.units.time_into(10e-12),
             n_steps=1000,
         ),
-        minimum_energy=system.barrier_energy,
+        energy_range=(system.barrier_energy, np.inf),
         n_samples=2000,
     )
 

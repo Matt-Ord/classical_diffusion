@@ -7,7 +7,6 @@ from classical_diffusion.langevin import (
     plot_periodic_potential_fcc,
     solve_ensemble,
     solve_ensemble_ballistic,
-    solve_single,
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.simulation import TimeSpan
@@ -63,11 +62,9 @@ def _plot_2d_trajectory() -> None:
         gamma=0.1, temperature=0.5 / Boltzmann, m=1.0, delta_x=5, barrier_energy=1.5
     )
 
-    result = solve_single(
-        system,
-        TimeSpan(t_end=100 / system.gamma, n_steps=10000),
-        (np.full((2,), 0.0), np.full((2,), 0.0)),
-    )
+    result = solve_ensemble(
+        system, TimeSpan(t_end=100 / system.gamma, n_steps=10000), n_samples=1
+    )[0]
 
     fig, ax = get_fancy_figure()
     _, ax, _line = plot_x_evolution_2d(result=result, ax=ax)

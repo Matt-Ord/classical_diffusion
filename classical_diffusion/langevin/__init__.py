@@ -1,5 +1,6 @@
 """Langevin Simulations of a Physical System."""
 
+import classical_diffusion.langevin._physical_system as physical_system
 from classical_diffusion.langevin._analysis import (
     breakdown_ballistic_trajectory,
     get_effective_mass,
@@ -68,6 +69,7 @@ __all__ = [
     "get_random_initial_conditions",
     "get_under_barrier_occupation",
     "get_under_barrier_probability",
+    "physical_system",
     "plot_elastic_p",
     "plot_energy",
     "plot_exact_flat_ballistic_isf",

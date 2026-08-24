@@ -179,7 +179,7 @@ def _plot_effective_mass_ratio() -> None:  # ruff:ignore[too-many-statements]
                         n_steps=1000,
                     ),
                     n_samples=n_samples,
-                    minimum_energy=system.barrier_energy,
+                    energy_range=(system.barrier_energy, np.inf),
                     _key=keys[idx],
                 )
 

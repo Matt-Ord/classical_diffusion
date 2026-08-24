@@ -360,7 +360,7 @@ def solve_ensemble[S: System](
     time_span: TimeSpan,
     n_samples: int,
     *,
-    minimum_energy: float = 0.0,
+    energy_range: tuple[float, float] = (-np.inf, np.inf),
     _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of trajectories."""
@@ -373,8 +373,9 @@ def solve_ensemble[S: System](
         get_random_initial_conditions(
             simulated_system,
             n_samples,
-            minimum_energy=system.units.energy_into(
-                minimum_energy, simulated_system.units
+            energy_range=(
+                system.units.energy_into(energy_range[0], simulated_system.units),
+                system.units.energy_into(energy_range[1], simulated_system.units),
             ),
             _key=_key,
         ),
@@ -390,10 +391,10 @@ def _solve_ensemble_ballistic_path[S: System](
     time_span: TimeSpan,
     n_samples: int,
     *,
-    minimum_energy: float = 0.0,
+    energy_range: tuple[float, float] = (0.0, np.inf),
     _key: jax.Array | None = None,
 ) -> Path:
-    filename = f"{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}_{minimum_energy}.npz"
+    filename = f"{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}_{hash(energy_range)}.npz"
     return Path("examples/data") / filename
 
 
@@ -458,7 +459,7 @@ def solve_ensemble_ballistic[S: System](
     time_span: TimeSpan,
     n_samples: int,
     *,
-    minimum_energy: float = 0.0,
+    energy_range: tuple[float, float] = (0.0, np.inf),
     _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of ballistic trajectories in parallel via jax.vmap."""
@@ -469,7 +470,10 @@ def solve_ensemble_ballistic[S: System](
         dataclasses.replace(simulated_system, gamma=0.0),
         _convert_time_span(time_span, system.units, simulated_system.units),
         n_samples=n_samples,
-        minimum_energy=system.units.energy_into(minimum_energy, simulated_system.units),
+        energy_range=(
+            system.units.energy_into(energy_range[0], simulated_system.units),
+            system.units.energy_into(energy_range[1], simulated_system.units),
+        ),
         _key=_key,
     ).with_units(system.units)
 

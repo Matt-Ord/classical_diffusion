@@ -19,7 +19,7 @@ def _sample_initial_conditions(
     system: "CanonicalSystem",  # ruff: ignore[quoted-annotation]
     n_samples: int = 1,
     *,
-    minimum_energy: float = 0.0,
+    energy_range: tuple[float, float] = (-np.inf, np.inf),
     _key: jax.Array,
 ) -> tuple[jax.Array, jax.Array]:
 
@@ -48,7 +48,7 @@ def _sample_initial_conditions(
             energy = jnp.sum(p_candidate**2) / (2 * system.m) + v
 
             x_ok = jax.random.uniform(ku) < jnp.exp(-(v - v_min) / system.kbt)
-            accept = x_ok & (energy > minimum_energy)
+            accept = x_ok & (energy > energy_range[0]) & (energy < energy_range[1])
 
             return key, x_candidate, p_candidate, accept
 
@@ -65,7 +65,7 @@ def get_random_initial_conditions(
     system: System,
     n_samples: int,
     *,
-    minimum_energy: float = 0.0,
+    energy_range: tuple[float, float] = (-np.inf, np.inf),
     _key: jax.Array | None = None,
 ) -> tuple[
     np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
@@ -76,8 +76,13 @@ def get_random_initial_conditions(
     x_points, p_points = _sample_initial_conditions(
         normalized_system,
         n_samples,
-        minimum_energy=system.units.energy_into(
-            minimum_energy, normalized_system.units
+        energy_range=(
+            normalized_system.units.energy_into(
+                energy_range[0], normalized_system.units
+            ),
+            normalized_system.units.energy_into(
+                energy_range[1], normalized_system.units
+            ),
         ),
         _key=_key,
     )

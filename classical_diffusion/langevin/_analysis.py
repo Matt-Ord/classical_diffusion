@@ -13,7 +13,6 @@ from classical_diffusion.langevin._langevin import (
 )
 from classical_diffusion.langevin._system import System
 from classical_diffusion.plot import get_figure
-from classical_diffusion.util import timed
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -426,7 +425,6 @@ def breakdown_ballistic_trajectory[S: System](
 ) -> tuple[LangevinSimulationResult[S], LangevinSimulationResult[S]]: ...
 
 
-@timed
 def breakdown_ballistic_trajectory[S: System](
     result: SingleLangevinSimulationResult[S] | LangevinSimulationResult[S],
     *,

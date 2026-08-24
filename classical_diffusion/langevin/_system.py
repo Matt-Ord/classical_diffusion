@@ -24,17 +24,25 @@ def max_force(system: System) -> float:
 
     param_map = dict(zip(system.parameter_symbols, system.params, strict=False))
     force = sp.Matrix(system.force_expr).subs(param_map)
+    potential = system.potential_expr.subs(param_map)  # ty: ignore[no-matching-overload]
 
     # Convert the symbolic force vector into a fast numerical function
     force_fn = sp.lambdify(system.coordinate_symbols, force, modules="numpy")
+    potential_fn = sp.lambdify(system.coordinate_symbols, potential, modules="numpy")
 
     def objective(coords: np.ndarray) -> float:
         # Evaluate force vector and return negative magnitude for minimization
         f_vec = np.array(force_fn(*coords), dtype=float)
         return -float(np.linalg.norm(f_vec))
 
+    max_energy = 4.0 * system.kbt
+    constraints = {
+        "type": "ineq",
+        "fun": lambda coords: max_energy - float(potential_fn(*coords)),
+    }
+
     x0 = np.zeros(len(system.coordinate_symbols))
-    res = scipy.optimize.minimize(objective, x0)
+    res = scipy.optimize.minimize(objective, x0, constraints=constraints)
 
     return float(-res.fun) if res.success else 0.0
 
