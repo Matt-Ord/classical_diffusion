@@ -44,7 +44,7 @@ def _run_hopping_simulation_jit(
     key: jax.Array,
 ) -> jnp.ndarray:
     """Run a hopping simulation and return positions directly at sample times."""
-    # Array slicing of initial_position and get_rates([current_site]) is a bit hacky but works for now. Change when generalised to higher dimensions.
+    # Array slicing of initial_position and get_rates([current_site]) is a bit hacky but works for now. Change when generalized to higher dimensions.
     # And x_indices=np.array(results)[:, None, :]
     max_sample_time = sample_times[-1]
 

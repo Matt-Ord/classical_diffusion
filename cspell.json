@@ -18,6 +18,7 @@
         "lambdify",
         "Langevin",
         "ndindex",
+        "optax",
         "pcolormesh",
         "pickler",
         "PRNG",

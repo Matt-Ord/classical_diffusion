@@ -484,7 +484,7 @@ class KramersSystemMeta(type):
         )
 
 
-class KramersSystem1Djax(metaclass=KramersSystemMeta):
+class KramersSystem1DJax(metaclass=KramersSystemMeta):
     @classmethod
     def get_potential(
         cls,
