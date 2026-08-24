@@ -373,7 +373,6 @@ class KramersSystem1D(System):
         *,
         params: KramersParameters,
         n_dim: int = 1,
-        units: UnitSystem | None = None,
     ) -> None:
         x0 = sp.symbols("x0")
         s0 = sp.symbols("s0")
@@ -460,13 +459,10 @@ class KramersSystem1D(System):
 class KramersSystemMeta(type):
     def get_potential(
         cls,
-        omega_well: float,
-        omega_barrier: float,
-        barrier_energy: float,
     ) -> sp.Expr:
         raise NotImplementedError
 
-    def __call__(
+    def __call__(  # ruff: ignore[too-many-arguments, too-many-positional-arguments]
         cls,
         gamma: float,
         temperature: float,
@@ -477,7 +473,7 @@ class KramersSystemMeta(type):
         n_dim: int = 1,
     ) -> CanonicalSystem:
 
-        potential = cls.get_potential(omega_well, omega_barrier, barrier_energy)
+        potential = cls.get_potential()
 
         return CanonicalSystem(
             gamma=gamma,
@@ -492,9 +488,6 @@ class KramersSystem1Djax(metaclass=KramersSystemMeta):
     @classmethod
     def get_potential(
         cls,
-        omega_well: float,
-        omega_barrier: float,
-        barrier_energy: float,
     ) -> sp.Expr:
         x0 = sp.symbols("x0")
         s0 = sp.symbols("s0")

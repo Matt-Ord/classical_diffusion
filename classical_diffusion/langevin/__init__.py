@@ -62,7 +62,6 @@ __all__ = [
     "SingleLangevinSimulationResult",
     "System",
     "breakdown_ballistic_trajectory",
-    "calculate_probability_under_barrier_1d",
     "get_characteristic_friction_time",
     "get_diffusion_time",
     "get_effective_mass",

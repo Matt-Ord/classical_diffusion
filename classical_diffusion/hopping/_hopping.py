@@ -132,7 +132,7 @@ def get_deterministic_probabilities[L: Lattice](
     system: L,
     max_lattice_shape: tuple[int, ...],
     time_span: TimeSpan,
-    initial_position: int,
+    initial_position: int,  # ruff: ignore[unused-function-argument]
 ) -> DeterministicSolverResult:
     """Use a deterministic PDE to find the ensemble probabilities at all times."""
     times = np.linspace(time_span.t_start, time_span.t_end, time_span.n_steps + 1)

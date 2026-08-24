@@ -5,3 +5,4 @@ __pycache__/
 *.png
 *.pdf
 *.gif
+classical_diffusion/examples/hopping_model/ml_pipeline.py

@@ -29,7 +29,6 @@ __all__ = [
     "KramersParameters",
     "Lattice",
     "Lattice1D",
-    "deterministic_probabilities_jax",
     "get_deterministic_isf",
     "get_deterministic_probabilities",
     "get_kramers_parameters_cosine",
