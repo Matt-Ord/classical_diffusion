@@ -5,6 +5,7 @@ from typing import final, override
 
 import jax
 import numpy as np
+import scipy.optimize
 import sympy as sp
 
 from classical_diffusion.hopping import KramersParameters
@@ -16,27 +17,26 @@ def _hash_sympy_expr(expr: sp.Expr) -> int:
     return zlib.crc32(stable_string.encode("utf-8"))
 
 
-def max_force(system: System) -> sp.Expr:
-    """Find max ||F|| analytically."""
+def max_force(system: System) -> float:
+    """Find max ||F|| numerically using SciPy minimization starting at the origin."""
     if not system.force_expr or system.potential_expr == 0:
-        return sp.Integer(0)
+        return 0.0
 
     param_map = dict(zip(system.parameter_symbols, system.params, strict=False))
     force = sp.Matrix(system.force_expr).subs(param_map)
-    max_square = sp.simplify(force.dot(force))
 
-    try:
-        for sym in system.coordinate_symbols:
-            max_square = sp.calculus.util.maximum(max_square, sym)
-        return sp.sqrt(max_square)
-    except NotImplementedError:
-        gradient = sp.Matrix([max_square]).jacobian(system.coordinate_symbols)
-        critical_points = sp.solve(gradient, system.coordinate_symbols, dict=True)
+    # Convert the symbolic force vector into a fast numerical function
+    force_fn = sp.lambdify(system.coordinate_symbols, force, modules="numpy")
 
-        critical_values = [max_square.subs(pt) for pt in critical_points]
-        critical_values = [v for v in critical_values if v.is_real]
+    def objective(coords: np.ndarray) -> float:
+        # Evaluate force vector and return negative magnitude for minimization
+        f_vec = np.array(force_fn(*coords), dtype=float)
+        return -float(np.linalg.norm(f_vec))
 
-        return sp.sqrt(sp.Max(*critical_values)) if critical_values else sp.Integer(0)
+    x0 = np.zeros(len(system.coordinate_symbols))
+    res = scipy.optimize.minimize(objective, x0)
+
+    return float(-res.fun) if res.success else 0.0
 
 
 @dataclass(frozen=True, kw_only=True)

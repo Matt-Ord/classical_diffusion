@@ -7,7 +7,7 @@ from classical_diffusion.langevin import (
     System,
     breakdown_ballistic_trajectory,
     plot_periodic_potential_1d,
-    solve_ballistic_ensemble,
+    solve_ensemble_ballistic,
 )
 from classical_diffusion.plot import get_fancy_figure, get_two_panel_figure
 from classical_diffusion.simulation import TimeSpan
@@ -45,7 +45,7 @@ def _filter_results[S: System](
 
 def _plot_ballistic_trajectory() -> None:
 
-    result = solve_ballistic_ensemble.call_uncached(
+    result = solve_ensemble_ballistic.call_uncached(
         system,
         TimeSpan(t_start=-10e-12, t_end=10e-12, n_steps=5000),
         n_samples=1,

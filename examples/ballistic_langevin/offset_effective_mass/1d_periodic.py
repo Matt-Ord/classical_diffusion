@@ -14,7 +14,7 @@ from classical_diffusion.langevin import (
     get_effective_mass,
     get_under_barrier_probability,
     plot_exact_flat_ballistic_isf,
-    solve_ballistic_ensemble,
+    solve_ensemble_ballistic,
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.simulation import TimeSpan
@@ -54,7 +54,7 @@ system = PeriodicSystem1D(
 def _plot_effective_mass_offset_isf() -> None:
     fig, ax = get_fancy_figure()
 
-    result = solve_ballistic_ensemble(
+    result = solve_ensemble_ballistic(
         system,
         TimeSpan(
             t_end=system.units.time_into(5e-12),
@@ -77,7 +77,7 @@ def _plot_effective_mass_offset_isf() -> None:
     )
     line_0.set_label("elastic")
 
-    result_free = solve_ballistic_ensemble(
+    result_free = solve_ensemble_ballistic(
         system,
         TimeSpan(
             t_end=system.units.time_into(50e-12),
