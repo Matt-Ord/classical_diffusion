@@ -15,9 +15,8 @@ from classical_diffusion.langevin._analysis import (
 from classical_diffusion.langevin._langevin import (
     LangevinSimulationResult,
     SingleLangevinSimulationResult,
-    get_force_fn,
-    solve_ballistic_ensemble,
     solve_ensemble,
+    solve_ensemble_ballistic,
     solve_many,
     solve_many_ballistic,
     solve_many_overdamped,
@@ -68,7 +67,6 @@ __all__ = [
     "get_exact_flat_ballistic_isf",
     "get_exact_flat_isf",
     "get_exact_harmonic_isf",
-    "get_force_fn",
     "get_random_initial_conditions",
     "get_under_barrier_occupation",
     "get_under_barrier_probability",
