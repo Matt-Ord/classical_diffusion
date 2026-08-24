@@ -4,12 +4,12 @@ from typing import TYPE_CHECKING, Any, Self, final
 
 import jax
 
-from classical_diffusion.system import UnitSystem
-
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     import numpy as np
+
+    from classical_diffusion.system import UnitSystem
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -91,14 +91,6 @@ class SimulationResult[S: Any]:
             system=self.system.with_units(units),
         )
 
-    def with_si_units(self) -> Self:
-        """Return the rescaled simulation of the system."""
-        return type(self)(
-            times=self.system.units.time_into(self.times, UnitSystem()),
-            x_points=self.system.units.length_into(self.x_points, UnitSystem()),
-            system=self.system.with_si_units(),
-        )
-
 
 @final
 @jax.tree_util.register_dataclass
@@ -106,8 +98,8 @@ class SimulationResult[S: Any]:
 class TimeSpan:
     """Time-stepping parameters, bundled together."""
 
-    t_start: float = field(default=0, metadata={"static": True})
-    t_end: float = field(metadata={"static": True})
+    t_start: float = 0
+    t_end: float
     n_steps: int = field(metadata={"static": True})
 
     def __post_init__(self) -> None:

@@ -32,8 +32,8 @@ class HoppingSimulationResult[L: Lattice](SimulationResult[L]):
 @dataclass(frozen=True, kw_only=True)
 class DeterministicSolverResult[L: Lattice]:
     system: L
-    times: np.ndarray[tuple[int], np.dtype[np.float32]]
-    probabilities: np.ndarray[tuple[int, int], np.dtype[np.float32]]
+    times: np.ndarray[tuple[int], np.dtype[np.floating]]
+    probabilities: np.ndarray[tuple[int, int], np.dtype[np.floating]]
 
 
 @jax.jit

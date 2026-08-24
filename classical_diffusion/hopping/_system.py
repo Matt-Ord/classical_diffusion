@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, final
 
 import jax
 import jax.numpy as jnp
@@ -10,14 +10,6 @@ from classical_diffusion.system import UnitSystem
 
 if TYPE_CHECKING:
     from classical_diffusion.langevin import PeriodicSystem1D
-
-
-class CanonicalLattice(Protocol):
-    """Protocol for JAX-compatible canonical PyTree lattices."""
-
-    def get_rates(self, positions: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]: ...
-
-    def x_points_from_indices(self, indices: jnp.ndarray) -> jnp.ndarray: ...
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -46,20 +38,18 @@ class Lattice(ABC):
 
 
 @jax.tree_util.register_dataclass
+@final
 @dataclass(frozen=True)
-class CanonicalLattice1D:
+class CanonicalLattice:
+    """A canonical representation of a lattice, with units of time and length."""
+
     lattice_spacing: float
     hop_time: float
 
     def get_rates(self, positions: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
         delta_site = jnp.array([-1, 1])
         hop_sites = positions[:, jnp.newaxis] + delta_site[jnp.newaxis, :]
-        single_hop_rates = jnp.array(
-            [
-                1 / self.hop_time,
-                1 / self.hop_time,
-            ]
-        )
+        single_hop_rates = jnp.array([1 / self.hop_time, 1 / self.hop_time])
         hop_rates = jnp.tile(single_hop_rates, (len(positions), 1))
         return (hop_sites, hop_rates)
 
@@ -104,8 +94,8 @@ class Lattice1D(Lattice):
         hop_rates = np.tile(single_hop_rates, (len(positions), 1))
         return (hop_sites, hop_rates)
 
-    def as_canonical(self) -> CanonicalLattice1D:
-        return CanonicalLattice1D(
+    def as_canonical(self) -> CanonicalLattice:
+        return CanonicalLattice(
             hop_time=(self.hop_time),
             lattice_spacing=(self.lattice_spacing),
         )

@@ -16,13 +16,13 @@ from classical_diffusion.simulation import (
     SingleSimulationResult,
     TimeSpan,
 )
-from classical_diffusion.system import UnitSystem
 from classical_diffusion.util import _get_key, cached, hash_array, timed
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
     from classical_diffusion.langevin import CanonicalSystem, System
+    from classical_diffusion.system import UnitSystem
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -86,18 +86,6 @@ class LangevinSimulationResult[S: System](SimulationResult[S]):
             x_points=np.stack([r.x_points for r in results_list]),
             p_points=np.stack([r.p_points for r in results_list]),
             system=results_list[0].system,
-        )
-
-    @override
-    def with_si_units(self) -> Self:
-        """Return the rescaled simulation of the system."""
-        si_units = UnitSystem()
-
-        return type(self)(
-            times=self.system.units.time_into(self.times, si_units),
-            x_points=self.system.units.length_into(self.x_points, si_units),
-            p_points=self.system.units.momentum_into(self.p_points, si_units),
-            system=self.system.with_si_units(),
         )
 
 
@@ -487,8 +475,8 @@ def _run_many_overdamped_jit(
     times: jnp.ndarray,
 ) -> jnp.ndarray:
     gamma = jnp.broadcast_to(system.gamma, (system.n_dim,))
-    force_fn = _get_force_fn(system)
-    diffusion_matrix = jnp.diag(jnp.sqrt(2.0 * system.kbt / gamma))
+    _get_force_fn(system)
+    jnp.diag(jnp.sqrt(2.0 * system.kbt / gamma))
 
 
 @cached(_solve_over_barrier_ballistic_ensemble_path)
