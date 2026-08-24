@@ -2,7 +2,10 @@ from typing import TYPE_CHECKING, Any, cast
 
 import matplotlib as mpl
 import numpy as np
+import scipy.stats
 import sympy as sp
+from matplotlib.cm import ScalarMappable
+from matplotlib.colors import Normalize
 
 from classical_diffusion.langevin import (
     LangevinSimulationResult,
@@ -327,6 +330,46 @@ def x_exact_pdf(result: LangevinSimulationResult, *, n_grid: int = 10_000) -> tu
     return x_grid, unnormalised / z
 
 
+def plot_x_distribution(
+    result: LangevinSimulationResult,
+    *,
+    ax: Axes | None = None,
+    x_points: np.ndarray[Any, np.dtype[np.floating]] | None = None,
+) -> tuple[Figure, Axes, list[Line2D]]:
+    fig, ax = get_figure(ax)
+
+    # Determine evaluation grid for x if not provided
+    if x_points is None:
+        x_points = np.linspace(np.min(result.x_points), np.max(result.x_points), 200)
+
+    norm = Normalize(vmin=float(result.times[0]), vmax=float(result.times[-1]))
+    sm = ScalarMappable(cmap="viridis", norm=norm)
+    colors = sm.to_rgba(result.times)
+    lines: list[Line2D] = []
+
+    for i in range(len(result.times)):
+        sample_points = result.x_points[:, 0, i]
+        # Add additional jitter to avoid singularities
+        if np.std(sample_points) < 1e-8:  # ruff: ignore[magic-value-comparison]
+            rng = np.random.default_rng()
+            sample_points += rng.normal(
+                0, 1e-3 * np.max(x_points), size=sample_points.shape
+            )
+        kde = scipy.stats.gaussian_kde(sample_points)
+        density = kde(x_points)
+
+        (line,) = ax.plot(x_points, density, color=colors[i])
+        lines.append(line)
+
+    fig.colorbar(sm, ax=ax, label="Time / $s$")
+
+    ax.set_xlabel("$x$ / $m$")
+    ax.set_ylabel("$P(x)$")
+    ax.set_xlim(x_points[0], x_points[-1])
+
+    return fig, ax, lines
+
+
 def plot_x_histogram(
     result: LangevinSimulationResult,
     *,
@@ -352,7 +395,6 @@ def plot_x_histogram(
 
     ax.set_xlabel("x")
     ax.set_ylabel("Probability Density")
-    ax.legend()
 
     return fig, ax, cast("BarContainer", bars)
 
@@ -396,7 +438,6 @@ def plot_p_histogram(
 
     ax.set_xlabel("p")
     ax.set_ylabel("Probability Density")
-    ax.legend()
 
     return fig, ax, cast("BarContainer", bars)
 

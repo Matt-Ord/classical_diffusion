@@ -24,7 +24,7 @@ rng = np.random.default_rng()
 
 
 @dataclass(frozen=True, kw_only=True)
-class SingleLangevinSimulationResult(SingleSimulationResult["System[Any]"]):
+class SingleLangevinSimulationResult[S: System](SingleSimulationResult[S]):
     """Results of a single simulation of the periodic Langevin equation."""
 
     p_points: np.ndarray[Any, np.dtype[np.floating]]
@@ -220,10 +220,7 @@ def solve_ensemble[S: System](
     n_run = xs0_jax.shape[0]
 
     times = jnp.linspace(
-        time_span.t_start,
-        time_span.t_end,
-        time_span.n_steps,
-        endpoint=True,
+        time_span.t_start, time_span.t_end, time_span.n_steps + 1, endpoint=True
     )
 
     if np.isclose(system.gamma, 0.0):
@@ -354,23 +351,105 @@ def solve_ballistic_ensemble[S: System](
         ),
         _key,
     )
+    return LangevinSimulationResult(
+        times=out.times,
+        x_points=out.x_points,
+        p_points=out.p_points,
+        system=system,
+    )
 
 
-def get_over_barrier_initial_conditions(
-    system: System, barrier_energy: float, n_samples: int
-) -> tuple:
-    sampler = make_free_point_sampler(system, barrier_energy)
-    keys = jax.random.split(jax.random.PRNGKey(0), n_samples)
-    free_x_initial, free_p_initial = sampler(keys)
-    free_x_initial = free_x_initial.reshape(-1, system.n_dim)
-    free_p_initial = free_p_initial.reshape(-1, system.n_dim)
-    return free_x_initial, free_p_initial
+@jax.jit
+def _run_overdamped_ensemble_jit(
+    system: "CanonicalSystem",  # ruff:ignore[quoted-annotation]
+    xs0: jnp.ndarray,
+    keys: jax.Array,
+    times: jnp.ndarray,
+) -> jnp.ndarray:
+    gamma = jnp.broadcast_to(system.gamma, (system.n_dim,))
+    force_fn = _get_force_fn(system)
+    diffusion_matrix = jnp.diag(jnp.sqrt(2.0 * system.kbt / gamma))
+
+    def solve_one(x0: jnp.ndarray, key: jax.Array) -> jnp.ndarray:
+        bm = dfx.VirtualBrownianTree(
+            t0=0,
+            t1=times[-1],
+            tol=1e-4,
+            shape=(system.n_dim,),
+            key=key,
+            levy_area=dfx.SpaceTimeTimeLevyArea,
+        )
+
+        # dx = (F(x) / gamma) dt + sqrt(2 kB T / gamma) dW
+        drift_term = dfx.ODETerm(
+            lambda _t, x, _args: force_fn(x, system.params) / gamma
+        )
+        diffusion_term = dfx.ControlTerm(lambda _t, _x, _args: diffusion_matrix, bm)
+        terms = dfx.MultiTerm(drift_term, diffusion_term)
+
+        sol = dfx.diffeqsolve(
+            terms,
+            solver=dfx.ShARK(),
+            t0=0,
+            t1=times[-1],
+            dt0=times[1] - times[0],
+            y0=x0,
+            args=None,
+            stepsize_controller=dfx.ClipStepSizeController(
+                dfx.PIDController(
+                    rtol=1e-2,  # cspell: disable-line
+                    atol=1e-3,
+                ),
+                step_ts=times,
+            ),
+            saveat=dfx.SaveAt(ts=times),
+            max_steps=100_000_000,
+        )
+        return sol.ys
+
+    return jax.vmap(solve_one, in_axes=(0, 0))(xs0, keys)
 
 
-def get_initial_conditions(system: System, n_samples: int) -> tuple:
-    sampler = make_initial_conditions_sampler(system)
-    keys = jax.random.split(jax.random.PRNGKey(0), n_samples)
-    x_initial, p_initial = sampler(keys)
-    x_initial = x_initial.reshape(-1, system.n_dim)
-    p_initial = p_initial.reshape(-1, system.n_dim)
-    return x_initial, p_initial
+def _solve_overdamped_ensemble_path[S: System](
+    system: S,
+    time_span: TimeSpan,
+    initial_conditions: tuple[
+        np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
+    ],
+    _key: jax.Array,
+) -> Path:
+    filename = f"overdamped_{hash(system)}_{hash(time_span)}_{_hash_initial_conditions(initial_conditions)}.npz"
+    return Path("examples/data") / filename
+
+
+@cached(_solve_overdamped_ensemble_path)
+@timed
+def solve_overdamped_ensemble[S: System](
+    system: S,
+    time_span: TimeSpan,
+    initial_conditions: tuple[
+        np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
+    ],
+    _key: jax.Array,
+) -> LangevinSimulationResult[S]:
+    """Solve an ensemble of overdamped Langevin trajectories in parallel via jax.vmap."""
+    n_run = initial_conditions[0].shape[0]
+
+    times = jnp.linspace(
+        time_span.t_start, time_span.t_end, time_span.n_steps + 1, endpoint=True
+    )
+
+    keys = jax.random.split(_key, n_run)
+
+    xs_batch = _run_overdamped_ensemble_jit(
+        system.as_canonical(), initial_conditions[0], keys, times
+    )
+
+    xs_batch = jnp.transpose(xs_batch, (0, 2, 1))
+
+    return LangevinSimulationResult(
+        times=np.array(times),
+        x_points=np.array(xs_batch),
+        p_points=np.zeros_like(xs_batch),
+        system=system,
+    )
