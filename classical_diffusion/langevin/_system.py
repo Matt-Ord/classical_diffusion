@@ -26,7 +26,11 @@ def max_force(system: System) -> float:
     force = sp.Matrix(system.force_expr).subs(param_map)
 
     # Convert the symbolic force vector into a fast numerical function
-    force_fn = sp.lambdify(system.coordinate_symbols, force, modules="numpy")
+    force_fn = sp.lambdify(
+        system.coordinate_symbols,
+        force,
+        modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
+    )
 
     def objective(coords: np.ndarray) -> float:
         # Evaluate force vector and return negative magnitude for minimization

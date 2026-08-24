@@ -117,7 +117,7 @@ class KramersParameters:
         omegas_ss = self.omega_well**2 + self.omega_barrier**2
         return 2 * np.sqrt(
             (2 * omegas_ss * self.barrier_energy)
-            / (self.omega_barrier**2 * self.omega_well**2)
+            / (self.m * self.omega_barrier**2 * self.omega_well**2)
         )
 
     @property
@@ -140,16 +140,15 @@ class KramersParameters:
 def get_kramers_rate(params: KramersParameters) -> float:
     return (
         (params.omega_well * params.omega_barrier) / (2 * np.pi * params.gamma)
-    ) * np.exp(-params.barrier_energy / (params.temperature * params.kbt))
+    ) * np.exp(-params.barrier_energy / (params.kbt))
 
 
 def get_kramers_parameters_cosine(system: PeriodicSystem1D) -> KramersParameters:
     """Potential must be cosine."""
-    mass = system.m
     barrier_energy = system.barrier_energy
     delta_x = system.delta_x
     # Effective omega, approximating as a harmonic potential
-    omega = np.sqrt(2 * (np.pi**2) * (barrier_energy / delta_x**2) / mass)
+    omega = np.sqrt(2 * (np.pi**2) * (barrier_energy / delta_x**2))
 
     return KramersParameters(
         omega_barrier=omega,

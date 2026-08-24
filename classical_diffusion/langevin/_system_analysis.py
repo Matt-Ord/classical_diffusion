@@ -335,7 +335,11 @@ def _get_under_barrier_probability_jax(
         jax.random.normal(key_p, shape=(n_samples, system.n_dim)) * p_standard_deviation
     )
 
-    potential_fn = sp.lambdify(system.lambda_symbols, system.potential_expr, "jax")
+    potential_fn = sp.lambdify(
+        system.lambda_symbols,
+        system.potential_expr,
+        modules=[{"DerivativeSafeMod": jnp.mod}, "jax"],
+    )
     v_energies = jax.vmap(lambda x: potential_fn(*x, *system.params))(x_samples)
     kinetic_energies = jnp.sum(p_samples**2, axis=-1) / (2.0 * system.m)
     total_energies = v_energies + kinetic_energies

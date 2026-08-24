@@ -54,12 +54,11 @@ def _plot_1d_deterministic_isf() -> None:
         system,
         (501,),
         TimeSpan(t_end=25, n_steps=200),
-        250,
     )
 
     fig, ax = get_fancy_figure()
-    delta_k = 0.5 * 2 * np.pi / system.lattice_spacing
-    _, ax, line_0 = plot_deterministic_isf(system, result, delta_k, ax=ax)
+    delta_k = (0.5 * 2 * np.pi / system.lattice_spacing,)
+    _, ax, line_0 = plot_deterministic_isf(result, delta_k, ax=ax)
 
     line_0.set_label("Deterministic Hopping")
     ax.set_xlim(0, right=25)

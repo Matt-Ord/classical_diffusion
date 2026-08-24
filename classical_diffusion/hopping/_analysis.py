@@ -29,17 +29,17 @@ def get_deterministic_isf[L: Lattice](
 
 @timed
 def plot_deterministic_isf[L: Lattice](
-    system: L,
-    result: DeterministicSolverResult,
-    delta_k: float,
+    result: DeterministicSolverResult[L],
+    delta_k: tuple[float, ...],
     *,
     ax: Axes | None = None,
+    amplitude: float = 1.0,
 ) -> tuple[Figure, Axes, Line2D]:
     """Plot the ensemble-averaged ISF over time, with a shaded ±1 SEM band."""
     fig, ax = get_figure(ax)
 
-    isf = get_deterministic_isf(system, result.probabilities, delta_k)
-    (line,) = ax.plot(np.array(result.times), np.array(isf))
+    isf = get_deterministic_isf(result.system, result.probabilities, delta_k[0])
+    (line,) = ax.plot(np.array(result.times), amplitude * np.array(isf))
     line.set_label("ISF")
 
     ax.set_xlabel("Time / s")
