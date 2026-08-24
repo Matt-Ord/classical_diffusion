@@ -140,6 +140,7 @@ class KramersParameters:
             omega_well=self.units.frequency_into(self.omega_well, units),
             omega_barrier=self.units.frequency_into(self.omega_barrier, units),
             barrier_energy=self.units.energy_into(self.barrier_energy, units),
+            m=self.units.mass_into(self.m, units),
             temperature=self.temperature,
             gamma=self.units.frequency_into(self.gamma, units),
             units=units,

@@ -371,26 +371,10 @@ class KramersSystem1D(System):
     def __init__(
         self,
         *,
-        params: KramersParameters | None = None,
-        gamma: float | jax.Array | None = None,
-        kbt: float | jax.Array | None = None,
-        m: float | jax.Array | None = None,
-        omega_well: float | jax.Array | None = None,
-        omega_barrier: float | jax.Array | None = None,
-        barrier_energy: float | jax.Array | None = None,
+        params: KramersParameters,
         n_dim: int = 1,
         units: UnitSystem | None = None,
     ) -> None:
-        # Fallback to creating a local KramersParameters if individual arguments are passed
-        if params is None:
-            params = KramersParameters(
-                gamma=gamma,  # ty: ignore[invalid-argument-type]
-                kbt=kbt,  # ty: ignore[invalid-argument-type]
-                m=m,  # ty: ignore[invalid-argument-type]
-                omega_well=omega_well,  # ty: ignore[invalid-argument-type]
-                omega_barrier=omega_barrier,  # ty: ignore[invalid-argument-type]
-                barrier_energy=barrier_energy,  # ty: ignore[invalid-argument-type]
-            )
         x0 = sp.symbols("x0")
         s0 = sp.symbols("s0")
         s1 = sp.symbols("s1")
@@ -468,9 +452,68 @@ class KramersSystem1D(System):
     def with_units(self, units: UnitSystem) -> KramersSystem1D:
         """Return the parameters of the system in the specified units."""
         return KramersSystem1D(
-            m=self.units.mass_into(self.m, units),
             params=self.kramers_params.with_units(units),
             n_dim=self.n_dim,
+        )
+
+
+class KramersSystemMeta(type):
+    def get_potential(
+        cls,
+        omega_well: float,
+        omega_barrier: float,
+        barrier_energy: float,
+    ) -> sp.Expr:
+        raise NotImplementedError
+
+    def __call__(
+        cls,
+        gamma: float,
+        temperature: float,
+        m: float,
+        omega_well: float,
+        omega_barrier: float,
+        barrier_energy: float,
+        n_dim: int = 1,
+    ) -> CanonicalSystem:
+
+        potential = cls.get_potential(omega_well, omega_barrier, barrier_energy)
+
+        return CanonicalSystem(
+            gamma=gamma,
+            temperature=temperature,
+            m=m,
+            potential=(n_dim, potential),
+            params=(omega_well, omega_barrier, barrier_energy),
+        )
+
+
+class KramersSystem1Djax(metaclass=KramersSystemMeta):
+    @classmethod
+    def get_potential(
+        cls,
+        omega_well: float,
+        omega_barrier: float,
+        barrier_energy: float,
+    ) -> sp.Expr:
+        x0 = sp.symbols("x0")
+        s0 = sp.symbols("s0")
+        s1 = sp.symbols("s1")
+        s2 = sp.symbols("s2")
+
+        omegas_ss = s0**2 + s1**2  # Omegas squared sum
+        x_0 = sp.sqrt((2 * omegas_ss * s2) / (s0**2 * s1**2))
+        x_meet = (s1**2 / omegas_ss) * x_0
+
+        periodic_x = DerivativeSafeMod(x0 + x_meet, 2 * x_0) - x_meet
+
+        return sp.Piecewise(
+            (0.5 * s0**2 * periodic_x**2, periodic_x <= x_meet),
+            (
+                s2 - 0.5 * s1**2 * (periodic_x - x_0) ** 2,
+                periodic_x >= x_meet,
+            ),
+            (0, True),
         )
 
 

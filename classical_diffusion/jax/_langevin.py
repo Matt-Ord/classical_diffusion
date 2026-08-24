@@ -4,14 +4,28 @@ import diffrax as dfx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import sympy as sp
 
-from classical_diffusion.langevin import get_force_fn
 from classical_diffusion.simulation import (
     TimeSpan,  # ruff: ignore[typing-only-first-party-import]
 )
 
 if TYPE_CHECKING:
-    from classical_diffusion.langevin import CanonicalSystem
+    from collections.abc import Callable
+
+    from classical_diffusion.langevin import CanonicalSystem, System
+
+
+def get_force_fn(
+    system: System,
+) -> Callable[[jnp.ndarray, tuple[float, ...]], jnp.ndarray]:
+    """Compute a callable force function, taking and returning an array."""
+    raw_fn = sp.lambdify(
+        system.lambda_symbols,
+        system.force_expr,
+        modules=[{"DerivativeSafeMod": jnp.mod}, "jax"],
+    )
+    return lambda x_array, params: jnp.array(raw_fn(*x_array, *params))
 
 
 @jax.jit

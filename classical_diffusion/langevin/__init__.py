@@ -15,6 +15,7 @@ from classical_diffusion.langevin._analysis import (
 from classical_diffusion.langevin._langevin import (
     LangevinSimulationResult,
     SingleLangevinSimulationResult,
+    get_force_fn,
     solve_ballistic_ensemble,
     solve_ensemble,
     solve_overdamped_ensemble,
@@ -26,13 +27,13 @@ from classical_diffusion.langevin._system import (
     CanonicalSystem,
     HarmonicSystem,
     KramersSystem1D,
+    KramersSystem1Djax,
     PeriodicSystem1D,
     PeriodicSystemFCC,
     System,
     get_diffusion_time,
 )
 from classical_diffusion.langevin._system_analysis import (
-    calculate_probability_under_barrier_1d,
     get_characteristic_friction_time,
     get_exact_flat_ballistic_isf,
     get_exact_flat_isf,
@@ -52,6 +53,7 @@ __all__ = [
     "CanonicalSystem",
     "HarmonicSystem",
     "KramersSystem1D",
+    "KramersSystem1Djax",
     "LangevinSimulationResult",
     "PeriodicSystem1D",
     "PeriodicSystemFCC",
