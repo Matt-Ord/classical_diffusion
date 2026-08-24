@@ -117,8 +117,9 @@ class KramersParameters:
     omega_barrier: float
     barrier_energy: float
     m: float
-    kbt: float
+    temperature: float
     gamma: float
+    units: UnitSystem = field(default_factory=UnitSystem)
 
     @property
     def delta_x(self) -> float:
@@ -129,11 +130,26 @@ class KramersParameters:
             / (self.omega_barrier**2 * self.omega_well**2)
         )
 
+    @property
+    def kbt(self) -> float:
+        return self.temperature * self.units.boltzmann
+
+    def with_units(self, units: UnitSystem) -> KramersParameters:
+        """Return the parameters of the system in the specified units."""
+        return KramersParameters(
+            omega_well=self.units.frequency_into(self.omega_well, units),
+            omega_barrier=self.units.frequency_into(self.omega_barrier, units),
+            barrier_energy=self.units.energy_into(self.barrier_energy, units),
+            temperature=self.temperature,
+            gamma=self.units.frequency_into(self.gamma, units),
+            units=units,
+        )
+
 
 def get_kramers_rate(params: KramersParameters) -> float:
     return (
         (params.omega_well * params.omega_barrier) / (2 * np.pi * params.gamma)
-    ) * np.exp(-params.barrier_energy / params.kbt)
+    ) * np.exp(-params.barrier_energy / (params.temperature * params.kbt))
 
 
 def get_kramers_parameters_cosine(system: PeriodicSystem1D) -> KramersParameters:
@@ -149,8 +165,9 @@ def get_kramers_parameters_cosine(system: PeriodicSystem1D) -> KramersParameters
         omega_well=omega,
         barrier_energy=barrier_energy,
         m=system.m,
-        kbt=system.kbt,
+        temperature=system.temperature,
         gamma=system.gamma,
+        units=system.units,
     )
 
 

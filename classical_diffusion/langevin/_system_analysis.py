@@ -1,18 +1,14 @@
 from typing import TYPE_CHECKING, Any
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 import sympy as sp
-from scipy import integrate
-from scipy.integrate import quad
-from scipy.optimize import brentq
-from scipy.special import ellipk, ellipkinc
-from scipy.stats.sampling import NumericalInversePolynomial
 
 from classical_diffusion.plot import get_figure
+from classical_diffusion.util import _get_key
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from matplotlib.axes import Axes
     from matplotlib.collections import QuadMesh
     from matplotlib.figure import Figure
@@ -24,6 +20,8 @@ if TYPE_CHECKING:
         PeriodicSystemFCC,
         System,
     )
+
+    from ._system import CanonicalSystem
 
 
 def plot_potential_1d(
@@ -311,187 +309,62 @@ def get_characteristic_friction_time(system: System) -> float:
     return 1 / system.gamma
 
 
-def _set_up_integral_1d(
-    system: System,
-) -> Callable[[np.ndarray, np.ndarray], np.ndarray]:
-    potential_func = sp.lambdify(system.lambda_symbols, system.potential_expr, "numpy")
-    params = system.params
+SAMPLE_REGION = 10
 
-    def integrand(x: np.ndarray, p: np.ndarray) -> np.ndarray:
-        return np.exp(
-            -1 / system.kbt * (p**2 / (2 * system.m) + potential_func(x, *params))
+
+@jax.jit(static_argnames=("n_samples"))
+def _get_under_barrier_probability_jax(
+    system: "CanonicalSystem",  # ruff: ignore[quoted-annotation]
+    barrier_energy: float,
+    n_samples: int,
+    key: jax.Array,
+) -> jax.Array:
+    # To find the under barrier probability, the V(x) is sampled at x
+    # points centered around the origin, and the momentum is sampled from the Maxwell-Boltzmann distribution.
+    # The fraction of phase space under the barrier is then computed using importance sampling:
+    # P(under barrier) = sum(w(x) * I(V(x) + K(p) < barrier)) / sum(w(x))
+    # where w(x) = exp(-V(x)/kBT) / q(x) is the importance weight, and q(x) is the sampling distribution.
+    key_x, key_p = jax.random.split(key)
+
+    # Sample positions according to q(x)
+    x_samples = (
+        jax.random.normal(key_x, shape=(n_samples, system.n_dim)) * SAMPLE_REGION
+    )
+    p_standard_deviation = jnp.sqrt(system.m * system.kbt)
+    p_samples = (
+        jax.random.normal(key_p, shape=(n_samples, system.n_dim)) * p_standard_deviation
+    )
+
+    potential_fn = sp.lambdify(system.lambda_symbols, system.potential_expr, "jax")
+    v_energies = jax.vmap(lambda x: potential_fn(*x, *system.params))(x_samples)
+    kinetic_energies = jnp.sum(p_samples**2, axis=-1) / (2.0 * system.m)
+    total_energies = v_energies + kinetic_energies
+
+    # Importance weights for x: w(x) = exp(-V(x)/kBT) / q(x)
+    log_weights = -v_energies / system.kbt + jnp.sum(x_samples**2, axis=-1) / (
+        2.0 * SAMPLE_REGION**2
+    )
+    weights = jnp.exp(log_weights - jnp.max(log_weights))
+    return jnp.average(total_energies < barrier_energy, weights=weights)
+
+
+N_SAMPLES = 100000
+
+
+def get_under_barrier_probability(
+    system: System, barrier_energy: float, *, _key: jax.Array | None = None
+) -> float:
+    _key = _get_key(_key)
+
+    canonical_system = system.with_normalized_units().as_canonical()
+    barrier_energy = canonical_system.units.energy_into(
+        barrier_energy, canonical_system.units
+    )
+    return float(
+        _get_under_barrier_probability_jax(
+            key=_key,
+            system=canonical_system,
+            barrier_energy=barrier_energy,
+            n_samples=N_SAMPLES,
         )
-
-    return integrand
-
-
-def _calculate_partition_function_1d(system: PeriodicSystem1D) -> float:
-    integrand = _set_up_integral_1d(system)
-    z, _ = integrate.dblquad(
-        integrand,
-        -np.inf,
-        np.inf,  # p limits (outer)
-        lambda _p: 0.0,  # x lower (inner) — fixed, one period
-        lambda _p: system.delta_x,  # x upper (inner)
     )
-    return z
-
-
-def _get_x_domian_given_p_1d(
-    system: PeriodicSystem1D, barrier_energy: float
-) -> Callable[[float], float]:
-    potential_func = sp.lambdify(system.lambda_symbols, system.potential_expr, "numpy")
-    params = system.params
-
-    def x_t(p: float) -> float:
-        ke = p**2 / (2 * system.m)
-        if ke >= barrier_energy:
-            return 0.0
-        target = barrier_energy - ke  # V(x_t) = this
-        return brentq(
-            lambda x: potential_func(x, *params) - target,
-            0.0,
-            system.delta_x,
-        )
-
-    return x_t
-
-
-def calculate_probability_under_barrier_1d(
-    system: PeriodicSystem1D, barrier_energy: float
-) -> float:
-
-    x_t = _get_x_domian_given_p_1d(system, barrier_energy)
-    integrand = _set_up_integral_1d(system)
-
-    integral_below, _ = integrate.dblquad(
-        integrand,
-        -np.inf,
-        np.inf,
-        lambda p: -x_t(p),
-        x_t,
-    )
-
-    z = _calculate_partition_function_1d(system)
-
-    return integral_below / z
-
-
-def _period(energy: float, system: PeriodicSystem1D) -> float:
-    omega = (2 * np.pi / system.delta_x) * np.sqrt(energy / (2 * system.m))
-    q2 = system.barrier_energy / energy
-    return 2 * ellipkinc(np.pi, q2) / omega
-
-
-def _sample_energy_1d_periodic(
-    system: PeriodicSystem1D, n_samples: int, domain: tuple
-) -> np.ndarray[Any, np.dtype[np.floating]]:
-    kbt = system.kbt
-
-    class EnergyDensity:
-        @staticmethod
-        def pdf(energy: float) -> float:
-            return np.exp(-energy / kbt) * _period(energy, system)
-
-        @staticmethod
-        def cdf(energy: float) -> float:
-            msg = "CDF is not implemented for EnergyDensity."
-            raise NotImplementedError(msg)
-
-        @staticmethod
-        def logpdf(energy: float) -> float:
-            return -energy / kbt + np.log(_period(energy, system))
-
-    energy_sampler = NumericalInversePolynomial(
-        EnergyDensity(),
-        domain=domain,
-        center=domain[0],
-    )
-    return energy_sampler.rvs(size=n_samples)
-
-
-def _get_elastic_p_exact_1d_periodic(
-    system: PeriodicSystem1D, n_samples: int
-) -> np.ndarray:
-    energy = _sample_energy_1d_periodic(
-        system=system, n_samples=n_samples, domain=(system.barrier_energy, np.inf)
-    )
-    epsilon = energy / system.barrier_energy
-
-    return (
-        np.pi
-        * np.sqrt(2 * system.barrier_energy * epsilon * system.m)
-        / ellipkinc(np.pi, 1 / epsilon)
-    )
-
-
-def get_full_effective_mass_exact_1d_periodic(
-    system: PeriodicSystem1D, n_samples: int
-) -> float:
-
-    elastic_ps = _get_elastic_p_exact_1d_periodic(
-        system=system,
-        n_samples=n_samples,
-    )
-    avg_p2_given_escaped = np.average(elastic_ps**2, axis=0)
-
-    prob_escape = 1 - calculate_probability_under_barrier_1d(
-        system=system, barrier_energy=system.barrier_energy
-    )
-
-    return (system.kbt * system.m**2) / (prob_escape * avg_p2_given_escaped)
-
-
-def get_free_effective_mass_exact_1d_periodic(
-    system: PeriodicSystem1D, n_samples: int
-) -> float:
-
-    elastic_ps = _get_elastic_p_exact_1d_periodic(system=system, n_samples=n_samples)
-
-    return (system.kbt * system.m**2) / np.average(elastic_ps**2, axis=0)
-
-
-def get_full_effective_mass_exact_1d_periodic_directly(
-    system: PeriodicSystem1D,
-) -> float:
-    u0 = system.barrier_energy / (2 * system.kbt)
-
-    def integrand_denominator(epsilon: float) -> float:
-        return np.sqrt(epsilon) / ellipk(1 / epsilon) * np.exp(-2 * u0 * epsilon)
-
-    def integrand_trapped(epsilon: float) -> float:
-        return ellipk(epsilon) * np.exp(-2 * u0 * epsilon)
-
-    def integrand_running(epsilon: float) -> float:
-        return (
-            2 * (1 / np.sqrt(epsilon)) * ellipk(1 / epsilon) * np.exp(-2 * u0 * epsilon)
-        )
-
-    denominator_integral, _ = quad(integrand_denominator, 1, np.inf)
-    trapped_integral, _ = quad(integrand_trapped, 0, 1)
-    running_integral, _ = quad(integrand_running, 1, np.inf)
-
-    partition = 2 * trapped_integral + running_integral
-
-    return system.m * partition / (denominator_integral * 2 * u0 * np.pi**2)
-
-
-def get_free_effective_mass_exact_1d_periodic_directly(
-    system: PeriodicSystem1D,
-) -> float:
-    u0 = system.barrier_energy / (2 * system.kbt)
-
-    def integrand_denominator(epsilon: float) -> float:
-        return np.sqrt(epsilon) / ellipk(1 / epsilon) * np.exp(-2 * u0 * epsilon)
-
-    def integrand_running(epsilon: float) -> float:
-        return (
-            2 * (1 / np.sqrt(epsilon)) * ellipk(1 / epsilon) * np.exp(-2 * u0 * epsilon)
-        )
-
-    denominator_integral, _ = quad(integrand_denominator, 1, np.inf)
-    running_integral, _ = quad(integrand_running, 1, np.inf)
-
-    partition = running_integral
-
-    return system.m * partition / (denominator_integral * 2 * u0 * np.pi**2)

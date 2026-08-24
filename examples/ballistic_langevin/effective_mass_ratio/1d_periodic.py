@@ -5,15 +5,15 @@ import jax
 import jax.random as jrandom
 import numpy as np
 from scipy.constants import Boltzmann, hbar
+from scipy.integrate import quad
+from scipy.special import ellipk
 from tqdm import tqdm
 
 from classical_diffusion.langevin import (
     PeriodicSystem1D,
-    calculate_probability_under_barrier_1d,
     get_effective_mass,
-    get_free_effective_mass_exact_1d_periodic_directly,
-    get_full_effective_mass_exact_1d_periodic_directly,
-    solve_over_barrier_ballistic_ensemble,
+    get_under_barrier_probability,
+    solve_ballistic_ensemble,
 )
 from classical_diffusion.plot import get_fancy_figure, get_figure
 from classical_diffusion.simulation import TimeSpan
@@ -33,6 +33,52 @@ system = PeriodicSystem1D(
     barrier_energy=4e-21,
 )
 key = jrandom.PRNGKey(100)
+
+
+def _get_free_effective_mass_exact_1d_periodic_directly(
+    system: PeriodicSystem1D,
+) -> float:
+    u0 = system.barrier_energy / (2 * system.kbt)
+
+    def integrand_denominator(epsilon: float) -> float:
+        return np.sqrt(epsilon) / ellipk(1 / epsilon) * np.exp(-2 * u0 * epsilon)
+
+    def integrand_running(epsilon: float) -> float:
+        return (
+            2 * (1 / np.sqrt(epsilon)) * ellipk(1 / epsilon) * np.exp(-2 * u0 * epsilon)
+        )
+
+    denominator_integral, _ = quad(integrand_denominator, 1, np.inf)
+    running_integral, _ = quad(integrand_running, 1, np.inf)
+
+    partition = running_integral
+
+    return system.m * partition / (denominator_integral * 2 * u0 * np.pi**2)
+
+
+def _get_full_effective_mass_exact_1d_periodic_directly(
+    system: PeriodicSystem1D,
+) -> float:
+    u0 = system.barrier_energy / (2 * system.kbt)
+
+    def integrand_denominator(epsilon: float) -> float:
+        return np.sqrt(epsilon) / ellipk(1 / epsilon) * np.exp(-2 * u0 * epsilon)
+
+    def integrand_trapped(epsilon: float) -> float:
+        return ellipk(epsilon) * np.exp(-2 * u0 * epsilon)
+
+    def integrand_running(epsilon: float) -> float:
+        return (
+            2 * (1 / np.sqrt(epsilon)) * ellipk(1 / epsilon) * np.exp(-2 * u0 * epsilon)
+        )
+
+    denominator_integral, _ = quad(integrand_denominator, 1, np.inf)
+    trapped_integral, _ = quad(integrand_trapped, 0, 1)
+    running_integral, _ = quad(integrand_running, 1, np.inf)
+
+    partition = 2 * trapped_integral + running_integral
+
+    return system.m * partition / (denominator_integral * 2 * u0 * np.pi**2)
 
 
 def plot_2d_gradient(
@@ -126,18 +172,18 @@ def _plot_effective_mass_ratio() -> None:  # ruff:ignore[too-many-statements]
                     barrier_energy=barrier_energy_grid[i, j],
                 )
 
-                result = solve_over_barrier_ballistic_ensemble(
+                result = solve_ballistic_ensemble(
                     system,
                     TimeSpan(
                         t_end=system.units.time_into(end_time),
                         n_steps=1000,
                     ),
                     n_samples=n_samples,
-                    barrier_energy=system.barrier_energy,
+                    minimum_energy=system.barrier_energy,
                     _key=keys[idx],
                 )
 
-                prob_under_barrier_val = calculate_probability_under_barrier_1d(
+                prob_under_barrier_val = get_under_barrier_probability(
                     system=system,
                     barrier_energy=system.barrier_energy,
                 )
@@ -151,11 +197,11 @@ def _plot_effective_mass_ratio() -> None:  # ruff:ignore[too-many-statements]
                 free_effective_mass_ratio[i, j] = get_effective_mass(result).item()
 
                 full_effective_mass_exact_ratio[i, j] = (
-                    get_full_effective_mass_exact_1d_periodic_directly(system)
+                    _get_full_effective_mass_exact_1d_periodic_directly(system)
                 )
 
                 free_effective_mass_exact_ratio[i, j] = (
-                    get_free_effective_mass_exact_1d_periodic_directly(system)
+                    _get_free_effective_mass_exact_1d_periodic_directly(system)
                 )
 
             return (

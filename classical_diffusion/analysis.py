@@ -144,10 +144,13 @@ def plot_x_evolution_1d(
     lines = []
     for res in result if isinstance(result, SimulationResult) else [result]:
         (line,) = ax.plot(res.times, res.x_points[idx])
-        line.set_color("C0")
         lines.append(line)
 
-    lines[-1].set_color("C1")
+    if len(lines) > 1:
+        for line in lines[1:]:
+            line.set_color("C0")
+
+        lines[-1].set_color("C1")
 
     ax.set_xlabel("$time$")
     ax.set_ylabel("$x$")

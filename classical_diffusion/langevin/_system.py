@@ -6,7 +6,6 @@ from typing import final, override
 import jax
 import numpy as np
 import sympy as sp
-from scipy.constants import Boltzmann
 
 from classical_diffusion.hopping import KramersParameters
 from classical_diffusion.system import CanonicalUnitSystem, UnitSystem
@@ -422,8 +421,7 @@ class KramersSystem1D(System):
 
         super().__init__(
             gamma=params.gamma,
-            # Note: this currently assumes Boltzmann = 1
-            temperature=params.kbt / Boltzmann,
+            temperature=params.temperature,
             m=params.m,
             potential=(n_dim, potential),
             params=(
@@ -431,7 +429,7 @@ class KramersSystem1D(System):
                 params.omega_barrier,
                 params.barrier_energy,
             ),
-            units=units or UnitSystem(),
+            units=params.units,
         )
 
     @property
@@ -445,9 +443,10 @@ class KramersSystem1D(System):
             omega_well=self.params[0],
             omega_barrier=self.params[1],
             barrier_energy=self.params[2],
+            temperature=self.temperature,
             m=self.m,
-            kbt=self.temperature,
             gamma=self.gamma,
+            units=self.units,
         )
 
     @property
@@ -470,39 +469,9 @@ class KramersSystem1D(System):
         """Return the parameters of the system in the specified units."""
         return KramersSystem1D(
             m=self.units.mass_into(self.m, units),
-            params=KramersParameters(
-                omega_well=self.units.frequency_into(self.omega_well, units),
-                omega_barrier=self.units.frequency_into(self.omega_barrier, units),
-                barrier_energy=self.units.energy_into(self.barrier_energy, units),
-                kbt=self.units.energy_into(self.kbt, units),
-                gamma=self.units.frequency_into(self.gamma, units),
-            ),
+            params=self.kramers_params.with_units(units),
             n_dim=self.n_dim,
-            units=units,
         )
-
-    @classmethod
-    def create_canonical(
-        cls,
-        *,
-        gamma: float | jax.Array,
-        kbt: float | jax.Array,
-        m: float | jax.Array,
-        omega_well: float | jax.Array,
-        omega_barrier: float | jax.Array,
-        barrier_energy: float | jax.Array,
-        n_dim: int = 1,
-    ) -> CanonicalSystem:
-        """Helper to return the CanonicalSystem directly from JAX/float primitives."""
-        return cls(
-            gamma=gamma,
-            kbt=kbt,
-            m=m,
-            omega_well=omega_well,
-            omega_barrier=omega_barrier,
-            barrier_energy=barrier_energy,
-            n_dim=n_dim,
-        ).as_canonical()
 
 
 def get_diffusion_time(system: System, characteristic_length: float) -> float:

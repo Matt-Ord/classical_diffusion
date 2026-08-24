@@ -24,15 +24,13 @@ class SingleSimulationResult[S: Any]:
     stored as a 2D array of shape (n_dimensions, n_time_points).
     """
 
-    def with_si_units(self) -> Self:
+    def with_units(self, units: UnitSystem) -> Self:
         """Return the rescaled simulation of the system."""
-        si_units = UnitSystem()
-
         return dataclasses.replace(
             self,
-            times=self.system.units.time_into(self.times, si_units),
-            x_points=self.system.units.length_into(self.x_points, si_units),
-            system=self.system.with_si_units(),
+            times=self.system.units.time_into(self.times, units),
+            x_points=self.system.units.length_into(self.x_points, units),
+            system=self.system.with_units(units),
         )
 
 
@@ -84,6 +82,14 @@ class SimulationResult[S: Any]:
         """Iterate over the trajectories in the ensemble."""
         for i in range(self.x_points.shape[0]):
             yield self[i]
+
+    def with_units(self, units: UnitSystem) -> Self:
+        """Return the rescaled simulation of the system."""
+        return type(self)(
+            times=self.system.units.time_into(self.times, units),
+            x_points=self.system.units.length_into(self.x_points, units),
+            system=self.system.with_units(units),
+        )
 
     def with_si_units(self) -> Self:
         """Return the rescaled simulation of the system."""

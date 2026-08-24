@@ -7,9 +7,9 @@ import diffrax as dfx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import sympy as sp
 
 import classical_diffusion.jax as jx
+from classical_diffusion.jax._langevin import get_force_fn
 from classical_diffusion.langevin._sample import get_random_initial_conditions
 from classical_diffusion.simulation import (
     SimulationResult,
@@ -20,7 +20,7 @@ from classical_diffusion.system import UnitSystem
 from classical_diffusion.util import _get_key, cached, hash_array, timed
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator
+    from collections.abc import Iterable, Iterator
 
     from classical_diffusion.langevin import CanonicalSystem, System
 
@@ -69,15 +69,13 @@ class LangevinSimulationResult[S: System](SimulationResult[S]):
             yield self[i]
 
     @override
-    def with_si_units(self) -> Self:
+    def with_units(self, units: UnitSystem) -> Self:
         """Return the rescaled simulation of the system."""
-        si_units = UnitSystem()
-
         return type(self)(
-            times=self.system.units.time_into(self.times, si_units),
-            x_points=self.system.units.length_into(self.x_points, si_units),
-            p_points=self.system.units.momentum_into(self.p_points, si_units),
-            system=self.system.with_si_units(),
+            times=self.system.units.time_into(self.times, units),
+            x_points=self.system.units.length_into(self.x_points, units),
+            p_points=self.system.units.momentum_into(self.p_points, units),
+            system=self.system.with_units(units),
         )
 
     @classmethod
@@ -90,17 +88,17 @@ class LangevinSimulationResult[S: System](SimulationResult[S]):
             system=results_list[0].system,
         )
 
+    @override
+    def with_si_units(self) -> Self:
+        """Return the rescaled simulation of the system."""
+        si_units = UnitSystem()
 
-def get_force_fn(
-    system: System,
-) -> Callable[[jnp.ndarray, tuple[float, ...]], jnp.ndarray]:
-    """Compute a callable force function, taking and returning an array."""
-    raw_fn = sp.lambdify(
-        system.lambda_symbols,
-        system.force_expr,
-        modules=[{"DerivativeSafeMod": jnp.mod}, "jax"],
-    )
-    return lambda x_array, params: jnp.array(raw_fn(*x_array, *params))
+        return type(self)(
+            times=self.system.units.time_into(self.times, si_units),
+            x_points=self.system.units.length_into(self.x_points, si_units),
+            p_points=self.system.units.momentum_into(self.p_points, si_units),
+            system=self.system.with_si_units(),
+        )
 
 
 @jax.jit
@@ -113,33 +111,86 @@ def _run_deterministic_ensemble_jit(
     force_fn = get_force_fn(system)
 
     def vector_field(
-        _t: Any,  # ruff:ignore[any-type]
-        y: jnp.ndarray,
-        _args: Any,  # ruff:ignore[any-type]
+        _t: Any,  # ruff: ignore[any-type]
+        y: tuple[jnp.ndarray, jnp.ndarray],
+        _args: Any,  # ruff: ignore[any-type]
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        x, v = y
-        return (v, force_fn(x, system.params) / system.m)
+        x, p = y
+        return (p / system.m, force_fn(x, system.params))
 
     term = dfx.ODETerm(vector_field)
 
-    # Core solver for a single particle pair (x0, p0)
+    forward_times = jnp.maximum(times, 0.0)
+    backward_times = jnp.minimum(times[::-1], 0.0)
+    is_positive = times >= 0.0
+    dt0 = jnp.abs(times[1] - times[0])
+
     def solve_one(x0: jnp.ndarray, p0: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
-        sol = dfx.diffeqsolve(
+        sol_fwd = dfx.diffeqsolve(
             term,
             solver=dfx.Tsit5(),  # cspell: disable-line
-            t0=0,
-            t1=times[-1],
-            dt0=times[1] - times[0],
+            t0=0.0,
+            t1=jnp.maximum(0.0, times[-1]),
+            dt0=dt0,
             y0=(x0, p0),
-            args=None,
-            saveat=dfx.SaveAt(ts=times),
-            stepsize_controller=dfx.PIDController(
-                rtol=1e-6,  # cspell: disable-line
-                atol=1e-8,
-            ),  # cspell: disable-line
-            max_steps=100_000_000,
+            saveat=dfx.SaveAt(ts=forward_times),
+            stepsize_controller=dfx.PIDController(rtol=1e-6, atol=1e-8),
+            max_steps=None,
         )
-        return sol.ys
+
+        sol_bwd = dfx.diffeqsolve(
+            term,
+            solver=dfx.Tsit5(),  # cspell: disable-line
+            t0=0.0,
+            t1=jnp.minimum(0.0, times[0]),
+            dt0=-dt0,
+            y0=(x0, p0),
+            saveat=dfx.SaveAt(ts=backward_times),
+            stepsize_controller=dfx.PIDController(rtol=1e-6, atol=1e-8),
+            max_steps=None,
+        )
+
+        # Broadcast mask across spatial/momentum dimensions
+        mask_x = jnp.reshape(is_positive, (-1,) + (1,) * x0.ndim)
+        x_out = jnp.where(mask_x, sol_fwd.ys[0], sol_bwd.ys[0][::-1])
+        p_out = jnp.where(mask_x, sol_fwd.ys[1], sol_bwd.ys[1][::-1])
+
+        return x_out, p_out
+
+    return jax.vmap(solve_one, in_axes=(0, 0))(xs0, ps0)
+
+
+@jax.jit
+def _run_deterministic_ensemble_jit_forward(
+    system: "CanonicalSystem",  # ruff:ignore[quoted-annotation]
+    xs0: jnp.ndarray,
+    ps0: jnp.ndarray,
+    times: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    force_fn = get_force_fn(system)
+
+    def vector_field(
+        _t: Any,  # ruff: ignore[any-type]
+        y: tuple[jnp.ndarray, jnp.ndarray],
+        _args: Any,  # ruff: ignore[any-type]
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        x, p = y
+        return (p / system.m, force_fn(x, system.params))
+
+    term = dfx.ODETerm(vector_field)
+
+    def solve_one(x0: jnp.ndarray, p0: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        return dfx.diffeqsolve(
+            term,
+            solver=dfx.Tsit5(),  # cspell: disable-line
+            t0=0.0,
+            t1=jnp.maximum(0.0, times[-1]),
+            dt0=jnp.abs(times[1] - times[0]),
+            y0=(x0, p0),
+            saveat=dfx.SaveAt(ts=times),
+            stepsize_controller=dfx.PIDController(rtol=1e-6, atol=1e-8),
+            max_steps=None,
+        ).ys
 
     return jax.vmap(solve_one, in_axes=(0, 0))(xs0, ps0)
 
@@ -232,9 +283,14 @@ def solve_ensemble[S: System](
     n_run = xs0_jax.shape[0]
 
     if np.isclose(system.gamma, 0.0):
-        xs_batch, ps_batch = _run_deterministic_ensemble_jit(
-            normalized_system, xs0_jax, ps0_jax, times_jax
-        )
+        if times_jax[0] < 0.0:
+            xs_batch, ps_batch = _run_deterministic_ensemble_jit(
+                normalized_system, xs0_jax, ps0_jax, times_jax
+            )
+        else:
+            xs_batch, ps_batch = _run_deterministic_ensemble_jit_forward(
+                normalized_system, xs0_jax, ps0_jax, times_jax
+            )
     else:
         keys = jax.random.split(_get_key(_key), n_run)
 
@@ -300,15 +356,12 @@ def solve_single_ballistic[S: System](
     _key: jax.Array | None = None,
 ) -> SingleLangevinSimulationResult[S]:
     """Solve the ULD Langevin equation for a single trajectory via vmap."""
-    out = solve_ensemble.load_or_call_uncached(
+    out = solve_single.load_or_call_uncached(
         dataclasses.replace(system.as_canonical(), gamma=0.0),
         time_span,
-        (
-            np.array([initial_condition[0]]),
-            np.array([initial_condition[1]]),
-        ),
+        initial_condition,
         _key=_key,
-    )[0]
+    )
 
     return SingleLangevinSimulationResult(
         times=out.times,
@@ -323,11 +376,10 @@ def _solve_ballistic_ensemble_path[S: System](
     time_span: TimeSpan,
     n_samples: int,
     *,
+    minimum_energy: float = 0.0,
     _key: jax.Array | None = None,
 ) -> Path:
-    filename = (
-        f"{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}.npz"
-    )
+    filename = f"{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}_{minimum_energy}.npz"
     return Path("examples/data") / filename
 
 
@@ -338,6 +390,7 @@ def solve_ballistic_ensemble[S: System](
     time_span: TimeSpan,
     n_samples: int,
     *,
+    minimum_energy: float = 0.0,
     _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of ballistic trajectories in parallel via jax.vmap."""
@@ -351,7 +404,14 @@ def solve_ballistic_ensemble[S: System](
             t_end=system.units.time_into(time_span.t_end, simulated_system.units),
             n_steps=time_span.n_steps,
         ),
-        get_random_initial_conditions(simulated_system, n_samples, _key=_key),
+        get_random_initial_conditions(
+            simulated_system,
+            n_samples,
+            minimum_energy=system.units.energy_into(
+                minimum_energy, simulated_system.units
+            ),
+            _key=_key,
+        ),
         _key=_key,
     )
     return LangevinSimulationResult[S](
@@ -432,12 +492,13 @@ def solve_overdamped_ensemble[S: System](
     initial_conditions: tuple[
         np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
     ],
-    *,
-    _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of overdamped Langevin trajectories in parallel via jax.vmap."""
     times, xs_batch = jx.solve_overdamped_ensemble(
-        system.as_canonical(), time_span, initial_conditions, _key
+        system.as_canonical(),
+        time_span,
+        initial_conditions,  # ty: ignore[invalid-argument-type]
+        _key=jax.random.key(5),
     )
 
     return LangevinSimulationResult[S](

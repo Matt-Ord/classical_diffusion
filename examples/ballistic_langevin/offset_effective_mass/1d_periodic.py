@@ -1,6 +1,8 @@
 import dataclasses
 
 import numpy as np
+from scipy.integrate import quad
+from scipy.special import ellipk
 
 from classical_diffusion.analysis import (
     plot_isf,
@@ -8,16 +10,37 @@ from classical_diffusion.analysis import (
 from classical_diffusion.langevin import (
     PeriodicSystem1D,
     breakdown_ballistic_trajectory,
-    calculate_probability_under_barrier_1d,
     get_diffusion_time,
     get_effective_mass,
-    get_free_effective_mass_exact_1d_periodic_directly,
+    get_under_barrier_probability,
     plot_exact_flat_ballistic_isf,
     solve_ballistic_ensemble,
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.simulation import TimeSpan
 from classical_diffusion.system import UnitSystem
+
+
+def _get_free_effective_mass_exact_1d_periodic_directly(
+    system: PeriodicSystem1D,
+) -> float:
+    u0 = system.barrier_energy / (2 * system.kbt)
+
+    def integrand_denominator(epsilon: float) -> float:
+        return np.sqrt(epsilon) / ellipk(1 / epsilon) * np.exp(-2 * u0 * epsilon)
+
+    def integrand_running(epsilon: float) -> float:
+        return (
+            2 * (1 / np.sqrt(epsilon)) * ellipk(1 / epsilon) * np.exp(-2 * u0 * epsilon)
+        )
+
+    denominator_integral, _ = quad(integrand_denominator, 1, np.inf)
+    running_integral, _ = quad(integrand_running, 1, np.inf)
+
+    partition = running_integral
+
+    return system.m * partition / (denominator_integral * 2 * u0 * np.pi**2)
+
 
 system = PeriodicSystem1D(
     gamma=4e11,
@@ -63,7 +86,7 @@ def _plot_effective_mass_offset_isf() -> None:
         n_samples=5000,
     )
 
-    prob_under_barrier = calculate_probability_under_barrier_1d(
+    prob_under_barrier = get_under_barrier_probability(
         system, barrier_energy=system.barrier_energy
     )
 
@@ -91,7 +114,7 @@ def _plot_effective_mass_offset_isf() -> None:
     line_2.set_linestyle(":")
 
     effective_mass_exact = UnitSystem().mass_into(
-        get_free_effective_mass_exact_1d_periodic_directly(system),
+        _get_free_effective_mass_exact_1d_periodic_directly(system),
         units=system.units,
     )
 
