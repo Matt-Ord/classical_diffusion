@@ -15,6 +15,7 @@ from classical_diffusion.langevin import (
     PeriodicSystem1D,
     plot_force_1d,
     plot_potential_1d,
+    solve_ensemble_overdamped,
     solve_many_overdamped,
 )
 from classical_diffusion.plot import get_fancy_figure
@@ -47,10 +48,10 @@ def _plot_kramers_periodic_comparison() -> None:
         gamma=0.1, temperature=0.5 / Boltzmann, m=1.0, delta_x=5, barrier_energy=3
     )
 
-    result = solve_many_overdamped(
+    result = solve_ensemble_overdamped(
         system,
         TimeSpan(t_end=40 / system.gamma, n_steps=4000),
-        initial_conditions=(np.zeros(shape=(20, 1)), np.zeros(shape=(20, 1))),
+        n_samples=20,
     )
 
     fig, ax = get_fancy_figure()
@@ -60,10 +61,10 @@ def _plot_kramers_periodic_comparison() -> None:
     line_0.set_label("cosine model")
 
     system = KramersSystem1D(params=get_kramers_parameters_cosine(system))
-    result = solve_many_overdamped(
+    result = solve_ensemble_overdamped(
         system,
         TimeSpan(t_end=40 / system.gamma, n_steps=4000),
-        initial_conditions=(np.zeros(shape=(20, 1)), np.zeros(shape=(20, 1))),
+        n_samples=20,
     )
     delta_k = (0.7 * 2 * np.pi / system.delta_x,)
     _, _, line_1, _ = plot_isf(result=result, ax=ax, delta_k=delta_k)
@@ -82,10 +83,10 @@ def _plot_kramers_hopping_comparison() -> None:
     )
     system = KramersSystem1D(params=get_kramers_parameters_cosine(system))
 
-    result = solve_many_overdamped.call_uncached(
+    result = solve_many_overdamped(
         system,
         TimeSpan(t_end=40 / system.gamma, n_steps=4000),
-        initial_conditions=(np.zeros(shape=(20, 1)), np.zeros(shape=(20, 1))),
+        initial_conditions=(np.zeros((20, system.n_dim)), np.zeros((20, system.n_dim))),
     )
 
     fig, ax = get_fancy_figure()
