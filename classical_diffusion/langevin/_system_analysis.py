@@ -186,7 +186,7 @@ def _plot_unit_cell(
 def plot_periodic_potential_fcc(
     system: PeriodicSystemFCC,
     *,
-    n_points: tuple[int, int] = (100, 100),
+    n_points: tuple[int, int] = (1000, 1000),
     ax: Axes | None = None,
     shape: tuple[int, int] = (3, 3),
 ) -> tuple[Figure, Axes, QuadMesh, Line2D]:

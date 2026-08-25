@@ -38,17 +38,16 @@ def with_barrier_energy(
     )
 
 
-def _add_effective_mass_low_u0_asymptote(
+def _plot_effective_mass_low_barrier_asymptote(
     u0_max: float,
     u0_min: float,
     *,
     ax: Axes | None = None,
-    n_points: int = 200,
 ) -> tuple[Figure, Axes, Line2D]:
     """Overlay the u0 -> 0 asymptote 1 - (4/pi^1.5) sqrt(u0)."""
     fig, ax = get_figure(ax)
 
-    u0 = np.logspace(np.log10(u0_min), np.log10(u0_max), n_points)
+    u0 = np.logspace(np.log10(u0_min), np.log10(u0_max), 200)
     asymptote = 1 - (4 / np.pi**1.5) * np.sqrt(u0)
 
     (line,) = ax.plot(
@@ -60,7 +59,7 @@ def _add_effective_mass_low_u0_asymptote(
     return fig, ax, line
 
 
-def _get_exact_effective_mass_ratio(
+def _get_single_exact_effective_mass_ratio(
     system: PeriodicSystem1D,
 ) -> float:
     u0 = system.barrier_energy / (system.kbt)
@@ -94,86 +93,89 @@ def plot_effective_mass_ratio_against_energy(
     return fig, ax, line
 
 
+def _solve_effective_mass_path(
+    system: PeriodicSystem1D,
+    barrier_energy_ratio: np.ndarray,
+    n_samples: np.ndarray,
+    t_end: float,
+    cutoff: float,
+) -> Path:
+    filename = f"{t_end}_{cutoff}_{t_end}_{hash_array((n_samples,))}_{t_end}_{hash_array((barrier_energy_ratio,))}_{hash(system)}.npz"
+    return Path("examples/data") / filename
+
+
+@cached(_solve_effective_mass_path)
+def _get_simulated_effective_mass(
+    system: PeriodicSystem1D,
+    barrier_energy_ratio: np.ndarray,
+    n_samples: np.ndarray,
+    t_end: float,
+    cutoff: float,
+) -> np.ndarray:
+    keys = jrandom.split(jrandom.PRNGKey(100), barrier_energy_ratio.size)
+    simulated_effective_mass_ratio = np.zeros_like(barrier_energy_ratio)
+
+    barrier_energy = barrier_energy_ratio * system.kbt
+
+    with disabled_timing():
+        for idx, _ in enumerate(
+            tqdm(np.ndindex(barrier_energy.shape), total=barrier_energy.size)
+        ):
+            result = solve_ensemble_ballistic(
+                with_barrier_energy(
+                    system,
+                    barrier_energy=barrier_energy[idx],
+                ).as_canonical(),
+                TimeSpan(
+                    t_end=t_end,
+                    n_steps=1000,
+                ),
+                minimum_energy=barrier_energy[idx],
+                n_samples=n_samples[idx],
+                _key=keys[idx],
+            )
+
+            simulated_effective_mass_ratio[idx] = (
+                get_effective_mass(
+                    result, cutoff=cutoff, filter_timescale=1 / system.gamma
+                ).item()
+                / system.m
+            )
+
+        return simulated_effective_mass_ratio
+
+
+def _get_exact_effective_mass(
+    system: PeriodicSystem1D, barrier_energy_ratio_fine: np.ndarray
+) -> np.ndarray[tuple[int], np.dtype[np.floating[Any]]]:
+    exact_effective_mass_ratio = np.zeros_like(barrier_energy_ratio_fine)
+    for idx, _ in enumerate(
+        tqdm(
+            np.ndindex(barrier_energy_ratio_fine.shape),
+            total=barrier_energy_ratio_fine.size,
+        )
+    ):
+        system = with_barrier_energy(
+            system, barrier_energy_ratio_fine[idx] * system.kbt
+        )
+        exact_effective_mass_ratio[idx] = _get_single_exact_effective_mass_ratio(system)
+    return exact_effective_mass_ratio
+
+
 def _plot_effective_mass_ratio() -> None:
 
-    def _solve_effective_mass_path(
-        system: PeriodicSystem1D,
-        normalized_barrier_energies: np.ndarray,
-        n_samples: np.ndarray,
-        t_end: float,
-        cutoff: float,
-    ) -> Path:
-        filename = f"{t_end}_{cutoff}_{t_end}_{hash_array((n_samples,))}_{t_end}_{hash_array((normalized_barrier_energies,))}_{hash(system)}.npz"
-        return Path("examples/data") / filename
-
-    @cached(_solve_effective_mass_path)
-    def _effective_mass_simulation(
-        system: PeriodicSystem1D,
-        normalized_barrier_energies: np.ndarray,
-        n_samples: np.ndarray,
-        t_end: float,
-        cutoff: float,
-    ) -> np.ndarray:
-        keys = jrandom.split(jrandom.PRNGKey(100), normalized_barrier_energies.size)
-        simulated_effective_mass_ratio = np.zeros_like(normalized_barrier_energies)
-
-        barrier_energy = normalized_barrier_energies * system.kbt
-
-        with disabled_timing():
-            for idx, _ in enumerate(
-                tqdm(np.ndindex(barrier_energy.shape), total=barrier_energy.size)
-            ):
-                result = solve_ensemble_ballistic(
-                    with_barrier_energy(
-                        system,
-                        barrier_energy=barrier_energy[idx],
-                    ).as_canonical(),
-                    TimeSpan(
-                        t_end=t_end,
-                        n_steps=1000,
-                    ),
-                    minimum_energy=barrier_energy[idx],
-                    n_samples=n_samples[idx],
-                    _key=keys[idx],
-                )
-
-                simulated_effective_mass_ratio[idx] = (
-                    get_effective_mass(
-                        result, cutoff=cutoff, filter_timescale=1 / system.gamma
-                    ).item()
-                    / system.m
-                )
-
-            return simulated_effective_mass_ratio
-
-    def _effective_mass_exact(
-        system: PeriodicSystem1D, normalized_barrier_energies_fine: np.ndarray
-    ) -> np.ndarray:
-        exact_effective_mass_ratio = np.zeros_like(normalized_barrier_energies_fine)
-        for idx, _ in enumerate(
-            tqdm(
-                np.ndindex(normalized_barrier_energies_fine.shape),
-                total=normalized_barrier_energies_fine.size,
-            )
-        ):
-            system = with_barrier_energy(
-                system, normalized_barrier_energies_fine[idx] * system.kbt
-            )
-            exact_effective_mass_ratio[idx] = _get_exact_effective_mass_ratio(system)
-        return exact_effective_mass_ratio
-
-    normalized_barrier_energies = np.logspace(-3, 1, 10)
-    simulated_effective_mass_ratio = _effective_mass_simulation(
+    barrier_energy_ratio = np.logspace(-3, 1, 10)
+    simulated_effective_mass_ratio = _get_simulated_effective_mass(
         system=SODIUM_COPPER_SYSTEM_1D,
-        normalized_barrier_energies=normalized_barrier_energies,
+        barrier_energy_ratio=barrier_energy_ratio,
         t_end=40e-12,
         cutoff=10e-12,
-        n_samples=(1000 / np.sqrt(normalized_barrier_energies)).astype(int),
+        n_samples=(1000 / np.sqrt(barrier_energy_ratio)).astype(int),
     )
 
     fig, ax = get_fancy_figure()
     _, ax, simulation_line = plot_effective_mass_ratio_against_energy(
-        barrier_energy=normalized_barrier_energies,
+        barrier_energy=barrier_energy_ratio,
         mass_ratio=simulated_effective_mass_ratio,
         ax=ax,
     )
@@ -182,40 +184,36 @@ def _plot_effective_mass_ratio() -> None:
     simulation_line.set_linestyle("")
     simulation_line.set_color(CAM_CHERRY.dark)
 
-    normalized_barrier_energies_fine = np.logspace(
-        np.log10(normalized_barrier_energies[0]),
-        np.log10(normalized_barrier_energies[-1]),
+    barrier_energy_ratio_fine = np.logspace(
+        np.log10(barrier_energy_ratio[0]),
+        np.log10(barrier_energy_ratio[-1]),
         1000,
-    )
-    exact_effective_mass_ratio = _effective_mass_exact(
-        system=SODIUM_COPPER_SYSTEM_1D,
-        normalized_barrier_energies_fine=normalized_barrier_energies_fine,
     )
 
     _, ax, exact_line = plot_effective_mass_ratio_against_energy(
-        barrier_energy=normalized_barrier_energies_fine,
-        mass_ratio=exact_effective_mass_ratio,
+        barrier_energy=barrier_energy_ratio_fine,
+        mass_ratio=_get_exact_effective_mass(
+            system=SODIUM_COPPER_SYSTEM_1D,
+            barrier_energy_ratio_fine=barrier_energy_ratio_fine,
+        ),
         ax=ax,
     )
     exact_line.set_label("exact")
     exact_line.set_color(CAM_BLUE.dark)
 
-    _, ax, asymptote_line = _add_effective_mass_low_u0_asymptote(
-        u0_min=normalized_barrier_energies_fine[0], u0_max=1, ax=ax
+    _, ax, asymptote_line = _plot_effective_mass_low_barrier_asymptote(
+        u0_min=barrier_energy_ratio_fine[0], u0_max=1, ax=ax
     )
     asymptote_line.set_label("asymptote")
     asymptote_line.set_color(CAM_BLUE.warm)
 
     ax.legend(handles=[simulation_line, exact_line, asymptote_line])
 
-    ax.set_xscale("log")
+    ax.set_xscale("log")  # cspell: disable-line
     ax.set_xlim(1e-3, 1e1)
     fig.savefig(
         "examples/ballistic_langevin/1d_periodic.effective_mass_trend.pdf",
-        dpi=1000,
     )
-
-    fig, ax = get_fancy_figure()
 
 
 if __name__ == "__main__":

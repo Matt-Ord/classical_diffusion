@@ -184,15 +184,14 @@ def _plot_periodic_system_fcc() -> None:
     system = SODIUM_COPPER_SYSTEM_2D
 
     fig, ax = get_fancy_figure()
-    fig, ax, _mesh, _unit_cell = plot_periodic_potential_fcc(
-        system, ax=ax, shape=(5, 4)
-    )
+    fig, ax, mesh, _unit_cell = plot_periodic_potential_fcc(system, ax=ax, shape=(5, 4))
+    mesh.set_rasterized(True)
+
     _annotate_bridge_site_energy(ax, system)
     _annotate_top_site_energy(ax, system)
     _annotate_hollow_site_distance(system, ax=ax)
-    fig.savefig(
-        "examples/ballistic_langevin/2d_fcc.potential.pdf", dpi=300, bbox_inches="tight"
-    )
+
+    fig.savefig("examples/ballistic_langevin/2d_fcc.potential.pdf", dpi=600)
 
 
 def _plot_filtered_ballistic_trajectory_2d() -> None:
@@ -234,7 +233,7 @@ def _plot_filtered_ballistic_trajectory_2d() -> None:
 
 
 if __name__ == "__main__":
-    _plot_periodic_system_1d()
-    _plot_filtered_ballistic_trajectory_1d()
+    # _plot_periodic_system_1d()
+    # _plot_filtered_ballistic_trajectory_1d()
     _plot_periodic_system_fcc()
-    _plot_filtered_ballistic_trajectory_2d()
+    # _plot_filtered_ballistic_trajectory_2d()
