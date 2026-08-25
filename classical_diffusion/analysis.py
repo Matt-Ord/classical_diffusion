@@ -5,7 +5,7 @@ import numpy as np
 import scipy
 
 from classical_diffusion.langevin._langevin import LangevinSimulationResult
-from classical_diffusion.plot import get_figure, get_measured_data
+from classical_diffusion.plot import CAM_BLUE_CMAP, get_figure, get_measured_data
 from classical_diffusion.simulation import SimulationResult
 
 if TYPE_CHECKING:
@@ -117,11 +117,10 @@ def plot_isf_with_delta_k(
     """Plot the ensemble-averaged ISF over time, with a shaded ±1 SEM band."""
     fig, ax = get_figure(ax)
 
-    cmap = mpl.cm.viridis
     norm = mpl.colors.Normalize(
         vmin=np.min(delta_k_values).item(), vmax=np.max(delta_k_values).item()
     )
-
+    cmap = CAM_BLUE_CMAP
     for dk in delta_k_values:
         _, _, line, poly = plot_isf(
             result,

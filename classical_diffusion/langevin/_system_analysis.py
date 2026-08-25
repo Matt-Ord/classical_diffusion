@@ -6,7 +6,7 @@ import numpy as np
 import sympy as sp
 
 from classical_diffusion.langevin._langevin import _get_langevin_units
-from classical_diffusion.plot import get_figure
+from classical_diffusion.plot import CAM_BLUE_CMAP, get_figure
 from classical_diffusion.util import _get_key
 
 if TYPE_CHECKING:
@@ -113,7 +113,7 @@ def plot_periodic_potential_1d(
 
 
 def plot_potential_2d(
-    params: System,
+    system: System,
     start: tuple[float, ...],
     end: tuple[float, ...],
     *,
@@ -124,7 +124,7 @@ def plot_potential_2d(
 
     Parameters
     ----------
-    params : System
+    system : System
         The system for which to plot the potential.
     start : tuple[float, ...]
         The lower-bound coordinates (x_min, y_min).
@@ -147,42 +147,64 @@ def plot_potential_2d(
     x_grid, y_grid = np.meshgrid(x, y)
 
     potential_func = sp.lambdify(
-        params.lambda_symbols,
-        params.potential_expr,
+        system.lambda_symbols,
+        system.potential_expr,
         modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
     )
     potential = np.broadcast_to(
-        potential_func(x_grid, y_grid, *params.params), x_grid.shape
+        potential_func(x_grid, y_grid, *system.params), x_grid.shape
     )
 
-    mesh = ax.pcolormesh(x_grid, y_grid, potential)
+    mesh = ax.pcolormesh(x_grid, y_grid, potential, cmap=CAM_BLUE_CMAP)
+
+    color_bar = fig.colorbar(mesh, ax=ax)
+    color_bar.set_label(r"$V(x, y)$")
 
     ax.set_xlabel(r"x")
     ax.set_ylabel(r"y")
     ax.set_xlim(start[0], end[0])
     ax.set_ylim(start[1], end[1])
+    ax.set_aspect("equal", adjustable="box")
 
     return fig, ax, mesh
 
 
+def _plot_unit_cell(
+    ax: Axes,
+    system: PeriodicSystemFCC,
+) -> Line2D:
+    a1, a2 = system.lattice_vectors
+
+    corner_points = [(0, 0), a1, a1 + a2, a2, (0, 0)]
+
+    (line,) = ax.plot(*np.array(corner_points).T)
+    line.set_marker("o")
+
+    return line
+
+
 def plot_periodic_potential_fcc(
-    params: PeriodicSystemFCC,
+    system: PeriodicSystemFCC,
     *,
-    n_points: tuple[int, int] = (100, 100),
+    n_points: tuple[int, int] = (1000, 1000),
     ax: Axes | None = None,
-) -> tuple[Figure, Axes, QuadMesh]:
+    shape: tuple[int, int] = (3, 3),
+) -> tuple[Figure, Axes, QuadMesh, Line2D]:
     """Plot the periodic potential in 2D."""
-    # TODO: fix up  PeriodicParameters2D to make lattice directions explicit # ruff:ignore[line-contains-todo]
-    return plot_potential_2d(
-        params,
-        (-2 * params.delta_x, -2 * params.delta_x),
+    fig, ax, mesh = plot_potential_2d(
+        system,
+        (-shape[0] / 2 * system.delta_x, -shape[1] / 2 * system.delta_x),
         (
-            2 * params.delta_x,
-            2 * params.delta_x,
+            shape[0] / 2 * system.delta_x,
+            shape[1] / 2 * system.delta_x,
         ),
         n_points=n_points,
         ax=ax,
     )
+
+    unit_cell = _plot_unit_cell(ax=ax, system=system)
+    unit_cell.set_color("C2")
+    return fig, ax, mesh, unit_cell
 
 
 def get_exact_harmonic_isf(
@@ -273,8 +295,11 @@ def get_exact_flat_ballistic_isf(
     times: np.ndarray[Any, np.dtype[np.floating[Any]]],
 ) -> np.ndarray:
     """Return the exact ballistic ISF for a 1D flat (potential-free) surface."""
-    k_squared = sum(k_i**2 for k_i in delta_k)
-    return np.exp(-((k_squared) * system.kbt / (2 * system.m)) * times**2)
+    kbt, m = system.kbt, system.m
+    m = np.atleast_2d(m)
+    inv_m = np.linalg.inv(m)
+    inner_product = np.einsum("i,ij,j->", delta_k, inv_m, delta_k)
+    return np.exp(-(inner_product * kbt / 2) * times**2)
 
 
 def plot_exact_flat_ballistic_isf(
@@ -336,11 +361,7 @@ def _get_under_barrier_probability_jax(
         jax.random.normal(key_p, shape=(n_samples, system.n_dim)) * p_standard_deviation
     )
 
-    potential_fn = sp.lambdify(
-        system.lambda_symbols,
-        system.potential_expr,
-        modules=[{"DerivativeSafeMod": jnp.mod}, "jax"],
-    )
+    potential_fn = sp.lambdify(system.lambda_symbols, system.potential_expr, "jax")
     v_energies = jax.vmap(lambda x: potential_fn(*x, *system.params))(x_samples)
     kinetic_energies = jnp.sum(p_samples**2, axis=-1) / (2.0 * system.m)
     total_energies = v_energies + kinetic_energies
@@ -353,18 +374,16 @@ def _get_under_barrier_probability_jax(
     return jnp.average(total_energies < barrier_energy, weights=weights)
 
 
-N_SAMPLES = 100000
+N_SAMPLES = 1_000_000
 
 
 def get_under_barrier_probability(
     system: System, barrier_energy: float, *, _key: jax.Array | None = None
 ) -> float:
     _key = _get_key(_key)
-    units = _get_langevin_units(system)
-    canonical_system = system.with_units(units).as_canonical()
-    barrier_energy = canonical_system.units.energy_into(
-        barrier_energy, canonical_system.units
-    )
+
+    canonical_system = system.with_units(_get_langevin_units(system)).as_canonical()
+    barrier_energy = system.units.energy_into(barrier_energy, canonical_system.units)
     return float(
         _get_under_barrier_probability_jax(
             key=_key,
