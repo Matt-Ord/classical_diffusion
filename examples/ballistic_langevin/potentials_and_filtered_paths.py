@@ -1,3 +1,8 @@
+from typing import TYPE_CHECKING
+
+import numpy as np
+import sympy as sp
+
 from classical_diffusion.analysis import (
     plot_x_evolution_1d,
     plot_x_evolution_2d,
@@ -6,17 +11,116 @@ from classical_diffusion.langevin import (
     SODIUM_COPPER_SYSTEM_1D,
     SODIUM_COPPER_SYSTEM_2D,
     LangevinSimulationResult,
+    PeriodicSystemFCC,
     System,
-    add_bridge_site_energy,
-    add_hollow_site_distance,
-    add_top_site_energy,
     breakdown_ballistic_trajectory,
     plot_periodic_potential_1d,
     plot_periodic_potential_fcc,
     solve_ensemble_ballistic,
 )
-from classical_diffusion.plot import get_fancy_figure, get_two_panel_figure
+from classical_diffusion.plot import get_fancy_figure, get_figure, get_two_panel_figure
 from classical_diffusion.simulation import TimeSpan
+
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+
+
+def _annotate_bridge_site_energy(
+    ax: Axes,
+    system: PeriodicSystemFCC,
+) -> None:
+    a1, a2 = system.lattice_vectors
+    origin = a1 + a2
+    bridge_point = origin + a2 + a1 / 2  # midpoint of the top edge
+
+    potential_func = sp.lambdify(
+        system.lambda_symbols,
+        system.potential_expr,
+        modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
+    )
+    bridge_energy = float(
+        potential_func(bridge_point[0], bridge_point[1], *system.params)
+    )
+
+    ax.plot(
+        *bridge_point,
+        marker="x",
+        markersize=9,
+        markeredgewidth=2,
+        zorder=10,
+    )
+    ax.annotate(
+        f"{bridge_energy:.3g} J".strip(),
+        xy=bridge_point,
+        xytext=(18.0, 12.0),
+        textcoords="offset points",
+        ha="left",
+        va="bottom",
+        fontsize=9,
+        zorder=10,
+    )
+
+
+def _annotate_top_site_energy(
+    ax: Axes,
+    system: PeriodicSystemFCC,
+    origin_site: tuple[int, int] = (0, 0),
+) -> None:
+    a1, a2 = system.lattice_vectors
+    top_point = origin_site[0] * a1 + origin_site[1] * a2
+
+    potential_func = sp.lambdify(
+        system.lambda_symbols,
+        system.potential_expr,
+        modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
+    )
+    top_energy = float(potential_func(top_point[0], top_point[1], *system.params))
+
+    ax.plot(
+        *top_point,
+        marker="x",
+        markersize=9,
+        markeredgewidth=2,
+        zorder=10,
+    )
+    ax.annotate(
+        f"{top_energy:.3g} J".strip(),
+        xy=top_point,
+        xytext=(12.0, -12.0),
+        textcoords="offset points",
+        ha="left",
+        va="top",
+        fontsize=9,
+        zorder=10,
+    )
+
+
+def _annotate_hollow_site_distance(
+    system: PeriodicSystemFCC,
+    *,
+    label_offset: tuple[float, float] = (12.0, 0.0),
+    ax: Axes | None = None,
+) -> None:
+    _fig, ax = get_figure(ax)
+
+    a1, a2 = system.lattice_vectors
+
+    hollow_a = (a1 + a2) / 3
+    hollow_b = 2 * (a1 + a2) / 3
+
+    (line,) = ax.plot(*np.array([hollow_a, hollow_b]).T)
+    line.set_marker("o")
+
+    ax.annotate(
+        f"{np.linalg.norm(hollow_b - hollow_a):.3g} m".strip(),
+        xy=(hollow_a + hollow_b) / 2,
+        xytext=label_offset,
+        textcoords="offset points",
+        ha="left",
+        va="center",
+        fontsize=9,
+        zorder=10,
+    )
 
 
 def _plot_periodic_system_1d() -> None:
@@ -81,13 +185,11 @@ def _plot_periodic_system_fcc() -> None:
 
     fig, ax = get_fancy_figure()
     fig, ax, _mesh, _unit_cell = plot_periodic_potential_fcc(
-        system, ax=ax, height=5, width=4
+        system, ax=ax, shape=(5, 4)
     )
-    ax, _site, _annotation = add_bridge_site_energy(ax, system)
-    ax, _site, _annotation = add_top_site_energy(ax, system)
-    _distance, (_site_a, _site_b), _line, _annotation = add_hollow_site_distance(
-        ax, system
-    )
+    _annotate_bridge_site_energy(ax, system)
+    _annotate_top_site_energy(ax, system)
+    _annotate_hollow_site_distance(system, ax=ax)
     fig.savefig(
         "examples/ballistic_langevin/2d_fcc.potential.pdf", dpi=300, bbox_inches="tight"
     )

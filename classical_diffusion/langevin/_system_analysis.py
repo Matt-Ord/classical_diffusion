@@ -14,7 +14,6 @@ if TYPE_CHECKING:
     from matplotlib.collections import QuadMesh
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
-    from matplotlib.text import Annotation
 
     from classical_diffusion.langevin._system import (
         HarmonicSystem,
@@ -113,27 +112,6 @@ def plot_periodic_potential_1d(
     )
 
 
-def _add_unit_cell(
-    ax: Axes,
-    system: PeriodicSystemFCC,
-) -> tuple[Line2D, Annotation]:
-    a1, a2 = np.asarray(system.lattice_vectors)
-
-    corner_points = [(0, 0), a1, a1 + a2, a2, (0, 0)]
-
-    (boundary,) = ax.plot(*np.array(corner_points).T)
-    boundary.set_marker("o")
-
-    annotation = ax.annotate(
-        f"{np.linalg.norm(a1):.3g} m".strip(),
-        xy=np.array(a1) / 2,
-        ha="left",
-        va="center",
-    )
-
-    return boundary, annotation
-
-
 def plot_potential_2d(
     system: System,
     start: tuple[float, ...],
@@ -191,148 +169,42 @@ def plot_potential_2d(
     return fig, ax, mesh
 
 
+def _plot_unit_cell(
+    ax: Axes,
+    system: PeriodicSystemFCC,
+) -> Line2D:
+    a1, a2 = system.lattice_vectors
+
+    corner_points = [(0, 0), a1, a1 + a2, a2, (0, 0)]
+
+    (line,) = ax.plot(*np.array(corner_points).T)
+    line.set_marker("o")
+
+    return line
+
+
 def plot_periodic_potential_fcc(
     system: PeriodicSystemFCC,
     *,
     n_points: tuple[int, int] = (100, 100),
     ax: Axes | None = None,
-    width: float = 4,
-    height: float = 4,
-) -> tuple[Figure, Axes, QuadMesh, tuple]:
+    shape: tuple[int, int] = (3, 3),
+) -> tuple[Figure, Axes, QuadMesh, Line2D]:
     """Plot the periodic potential in 2D."""
     fig, ax, mesh = plot_potential_2d(
         system,
-        (-width / 2 * system.delta_x, -height / 2 * system.delta_x),
+        (-shape[0] / 2 * system.delta_x, -shape[1] / 2 * system.delta_x),
         (
-            width / 2 * system.delta_x,
-            height / 2 * system.delta_x,
+            shape[0] / 2 * system.delta_x,
+            shape[1] / 2 * system.delta_x,
         ),
         n_points=n_points,
         ax=ax,
     )
 
-    unit_cell = _add_unit_cell(ax=ax, system=system)
-    unit_cell[0].set_color("C2")
+    unit_cell = _plot_unit_cell(ax=ax, system=system)
+    unit_cell.set_color("C2")
     return fig, ax, mesh, unit_cell
-
-
-def add_bridge_site_energy(
-    ax: Axes,
-    system: PeriodicSystemFCC,
-    origin_site: tuple[int, int] = (0, 0),
-    *,
-    label_offset: tuple[float, float] = (18.0, 12.0),
-) -> tuple:
-    a1, a2 = np.asarray(system.lattice_vectors)
-    origin = origin_site[0] * a1 + origin_site[1] * a2
-    bridge_point = origin + a2 + a1 / 2  # midpoint of the top edge
-
-    potential_func = sp.lambdify(
-        system.lambda_symbols,
-        system.potential_expr,
-        modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
-    )
-    bridge_energy = float(
-        potential_func(bridge_point[0], bridge_point[1], *system.params)
-    )
-
-    site = ax.plot(
-        *bridge_point,
-        marker="x",
-        markersize=9,
-        markeredgewidth=2,
-        zorder=10,
-    )
-    annotation = ax.annotate(
-        f"{bridge_energy:.3g} J".strip(),
-        xy=bridge_point,
-        xytext=label_offset,
-        textcoords="offset points",
-        ha="left",
-        va="bottom",
-        fontsize=9,
-        zorder=10,
-    )
-
-    return ax, site, annotation
-
-
-def add_top_site_energy(
-    ax: Axes,
-    system: PeriodicSystemFCC,
-    origin_site: tuple[int, int] = (0, 0),
-    *,
-    label_offset: tuple[float, float] = (12.0, -12.0),
-) -> tuple:
-    a1, a2 = np.asarray(system.lattice_vectors)
-    top_point = origin_site[0] * a1 + origin_site[1] * a2
-
-    potential_func = sp.lambdify(
-        system.lambda_symbols,
-        system.potential_expr,
-        modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
-    )
-    top_energy = float(potential_func(top_point[0], top_point[1], *system.params))
-
-    site = ax.plot(
-        *top_point,
-        marker="x",
-        markersize=9,
-        markeredgewidth=2,
-        zorder=10,
-    )
-    annotation = ax.annotate(
-        f"{top_energy:.3g} J".strip(),
-        xy=top_point,
-        xytext=label_offset,
-        textcoords="offset points",
-        ha="left",
-        va="top",
-        fontsize=9,
-        zorder=10,
-    )
-
-    return ax, site, annotation
-
-
-def add_hollow_site_distance(
-    ax: Axes,
-    system: PeriodicSystemFCC,
-    origin_site: tuple[int, int] = (0, 0),
-    *,
-    label_offset: tuple[float, float] = (12.0, 0.0),
-) -> tuple:
-
-    a1, a2 = np.asarray(system.lattice_vectors)
-    origin = origin_site[0] * a1 + origin_site[1] * a2
-
-    hollow_a = origin + (a1 + a2) / 3
-    hollow_b = origin + 2 * (a1 + a2) / 3
-    distance = float(np.linalg.norm(hollow_b - hollow_a))
-
-    site_a = ax.plot(*hollow_a, marker="o", markersize=8, zorder=10)
-    site_b = ax.plot(*hollow_b, marker="o", markersize=8, zorder=10)
-    line = ax.plot(
-        [hollow_a[0], hollow_b[0]],
-        [hollow_a[1], hollow_b[1]],
-        linestyle="--",
-        linewidth=1.2,
-        zorder=10,
-    )
-
-    midpoint = (hollow_a + hollow_b) / 2
-    annotation = ax.annotate(
-        f"{distance:.3g} m".strip(),
-        xy=midpoint,
-        xytext=label_offset,
-        textcoords="offset points",
-        ha="left",
-        va="center",
-        fontsize=9,
-        zorder=10,
-    )
-
-    return distance, (site_a, site_b), line, annotation
 
 
 def get_exact_harmonic_isf(

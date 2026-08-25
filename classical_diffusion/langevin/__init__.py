@@ -51,9 +51,6 @@ from classical_diffusion.langevin._system_analysis import (
     plot_periodic_potential_fcc,
     plot_potential_1d,
     plot_potential_2d,
-    add_bridge_site_energy,
-    add_top_site_energy,
-    add_hollow_site_distance,
 )
 from classical_diffusion.langevin._experimental_systems import (
     SODIUM_COPPER_SYSTEM_1D,
