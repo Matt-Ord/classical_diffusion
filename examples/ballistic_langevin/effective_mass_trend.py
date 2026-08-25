@@ -207,7 +207,7 @@ def _plot_effective_mass_ratio() -> None:
     ax.set_xscale("log")  # cspell: disable-line
     ax.set_xlim(1e-3, 1e1)
     fig.savefig(
-        "examples/ballistic_langevin/1d_periodic.effective_mass_trend.pdf",
+        "examples/ballistic_langevin/effective_mass_trend.pdf",
     )
 
 

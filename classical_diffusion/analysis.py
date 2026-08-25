@@ -11,7 +11,6 @@ from classical_diffusion.simulation import SimulationResult
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
     from matplotlib.collections import PolyCollection
-    from matplotlib.colors import LinearSegmentedColormap
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
 
@@ -107,14 +106,13 @@ def plot_isf(
     return fig, ax, line, fill
 
 
-def plot_isf_with_delta_k(  # ruff:ignore[too-many-arguments]
+def plot_isf_with_delta_k(
     result: SimulationResult,
     delta_k_values: np.ndarray[Any, np.dtype[np.floating]],
     *,
     ax: Axes | None = None,
     measure: Measure = "abs",
     pairwise: bool = True,
-    cmap: LinearSegmentedColormap = CAM_BLUE_CMAP,
 ) -> tuple[Figure, Axes]:
     """Plot the ensemble-averaged ISF over time, with a shaded ±1 SEM band."""
     fig, ax = get_figure(ax)
@@ -122,7 +120,7 @@ def plot_isf_with_delta_k(  # ruff:ignore[too-many-arguments]
     norm = mpl.colors.Normalize(
         vmin=np.min(delta_k_values).item(), vmax=np.max(delta_k_values).item()
     )
-
+    cmap = CAM_BLUE_CMAP
     for dk in delta_k_values:
         _, _, line, poly = plot_isf(
             result,

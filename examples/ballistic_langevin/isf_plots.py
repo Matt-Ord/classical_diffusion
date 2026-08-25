@@ -67,11 +67,7 @@ def _plot_periodic_isf_1d() -> None:
     ax.set_ylim(0, 1.0)
 
     ax.legend(handles=[line_0, line_1, line_2, line_3])
-    fig.savefig(
-        "examples/ballistic_langevin/1d_periodic.isf.pdf",
-        dpi=300,
-        bbox_inches="tight",
-    )
+    fig.savefig("examples/ballistic_langevin/isf_plots.1d.pdf")
 
 
 def _plot_periodic_isf_2d() -> None:
@@ -128,7 +124,7 @@ def _plot_periodic_isf_2d() -> None:
 
     ax.legend(handles=[line_0, line_1, line_2, line_3])
     fig.savefig(
-        "examples/ballistic_langevin/2d_fcc.isf.pdf",
+        "examples/ballistic_langevin/isf_plots.2d.pdf",
         dpi=300,
         bbox_inches="tight",
     )

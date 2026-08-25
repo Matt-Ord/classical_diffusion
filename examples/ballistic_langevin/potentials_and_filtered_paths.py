@@ -233,7 +233,7 @@ def _plot_filtered_ballistic_trajectory_2d() -> None:
 
 
 if __name__ == "__main__":
-    # _plot_periodic_system_1d()
-    # _plot_filtered_ballistic_trajectory_1d()
+    _plot_periodic_system_1d()
+    _plot_filtered_ballistic_trajectory_1d()
     _plot_periodic_system_fcc()
-    # _plot_filtered_ballistic_trajectory_2d()
+    _plot_filtered_ballistic_trajectory_2d()
