@@ -27,7 +27,7 @@ def _plot_kramers_potential() -> None:
     )
 
     fig, ax = get_fancy_figure()
-    ax_force = ax.twinx()
+    ax_force = ax.twinx()  # cspell: disable-line
     _, _, line = plot_potential_1d(system, 0, 2 * system.delta_x, ax=ax)
     _, _, line = plot_force_1d(system, 0, 2 * system.delta_x, ax=ax_force)
     line.set_linestyle("--")
