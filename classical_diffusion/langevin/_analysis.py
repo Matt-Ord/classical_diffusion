@@ -349,17 +349,33 @@ def get_under_barrier_occupation(
     return np.sum(is_under_barrier) / is_under_barrier.size
 
 
+def _truncate_results[S: System](
+    result: LangevinSimulationResult[S],
+    times: tuple[float, float],
+) -> LangevinSimulationResult[S]:
+    mask = (result.times >= times[0]) & (result.times <= times[1])
+    return LangevinSimulationResult(
+        system=result.system,
+        times=result.times[mask],
+        x_points=result.x_points[:, :, mask],
+        p_points=result.p_points[:, :, mask],
+    )
+
+
 def get_effective_mass(
     result: LangevinSimulationResult,
     *,
     under_barrier_probability: float = 0,
     filter_timescale: float = 0,
-    cutoff: float = 0,
 ) -> np.ndarray[tuple[int, int], np.dtype[np.floating]]:
     """Return the effective mass, correcting for trapped trajectories analytically."""
     elastic_result = breakdown_ballistic_trajectory(
-        result, filter_timescale=filter_timescale, cutoff=cutoff
+        result, filter_timescale=filter_timescale
     )[0]
+
+    elastic_result = _truncate_results(
+        elastic_result, times=(filter_timescale, result.times[-1] - filter_timescale)
+    )
 
     elastic_p_squared = np.einsum(  # cspell: disable-next-line
         "nit,njt->nijt", elastic_result.p_points, elastic_result.p_points
@@ -415,21 +431,6 @@ def _breakdown_langevin_simulation_result[S: System](
     return elastic, inelastic
 
 
-def _rebase_result[S: System](
-    result: LangevinSimulationResult[S],
-    rebase_times: tuple[float, float],
-) -> LangevinSimulationResult[S]:
-    mask = (result.times >= rebase_times[0]) & (result.times <= rebase_times[1])
-    truncated_times = result.times[mask]
-    rebased_times = truncated_times - truncated_times[0]
-    return LangevinSimulationResult(
-        system=result.system,
-        times=rebased_times,
-        x_points=result.x_points[:, :, mask],
-        p_points=result.p_points[:, :, mask],
-    )
-
-
 @overload
 def breakdown_ballistic_trajectory[S: System](
     result: SingleLangevinSimulationResult[S],
@@ -451,7 +452,6 @@ def breakdown_ballistic_trajectory[S: System](
 @timed
 def breakdown_ballistic_trajectory[S: System](
     result: SingleLangevinSimulationResult[S] | LangevinSimulationResult[S],
-    cutoff: float = 0,
     *,
     filter_timescale: float = 0,
 ) -> (
@@ -466,11 +466,6 @@ def breakdown_ballistic_trajectory[S: System](
         )
         return elastic_batch[0], inelastic_batch[0]
 
-    rebase_times = (cutoff, result.times[-1] - cutoff)
-
-    elastic, inelastic = _breakdown_langevin_simulation_result(
+    return _breakdown_langevin_simulation_result(
         result, filter_timescale=filter_timescale
-    )
-    return _rebase_result(elastic, rebase_times=rebase_times), _rebase_result(
-        inelastic, rebase_times=rebase_times
     )

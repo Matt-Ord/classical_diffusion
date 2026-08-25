@@ -68,9 +68,7 @@ def _plot_effective_mass_fitted_isf_1d() -> None:
     line_1.set_color(CAM_BLUE.dark)
 
     effective_mass = UnitSystem().mass_into(
-        get_effective_mass(
-            result_free, filter_timescale=1 / system.gamma, cutoff=10e-12
-        ),
+        get_effective_mass(result_free, filter_timescale=1 / system.gamma),
         units=system.units,
     )
 
@@ -147,9 +145,7 @@ def _plot_effective_mass_fitted_isf_2d() -> None:
     line_1.set_color(CAM_BLUE.dark)
 
     effective_mass = UnitSystem().mass_into(
-        get_effective_mass(
-            result_free, filter_timescale=1 / system.gamma, cutoff=10e-12
-        ),
+        get_effective_mass(result_free, filter_timescale=1 / system.gamma),
         units=system.units,
     )
 

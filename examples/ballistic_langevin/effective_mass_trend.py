@@ -98,9 +98,8 @@ def _solve_effective_mass_path(
     barrier_energy_ratio: np.ndarray,
     n_samples: np.ndarray,
     t_end: float,
-    cutoff: float,
 ) -> Path:
-    filename = f"{t_end}_{cutoff}_{t_end}_{hash_array((n_samples,))}_{t_end}_{hash_array((barrier_energy_ratio,))}_{hash(system)}.npz"
+    filename = f"{t_end}_{t_end}_{hash_array((n_samples,))}_{t_end}_{hash_array((barrier_energy_ratio,))}_{hash(system)}.npz"
     return Path("examples/data") / filename
 
 
@@ -110,7 +109,6 @@ def _get_simulated_effective_mass(
     barrier_energy_ratio: np.ndarray,
     n_samples: np.ndarray,
     t_end: float,
-    cutoff: float,
 ) -> np.ndarray:
     keys = jrandom.split(jrandom.PRNGKey(100), barrier_energy_ratio.size)
     simulated_effective_mass_ratio = np.zeros_like(barrier_energy_ratio)
@@ -136,9 +134,7 @@ def _get_simulated_effective_mass(
             )
 
             simulated_effective_mass_ratio[idx] = (
-                get_effective_mass(
-                    result, cutoff=cutoff, filter_timescale=1 / system.gamma
-                ).item()
+                get_effective_mass(result, filter_timescale=1 / system.gamma).item()
                 / system.m
             )
 
@@ -169,7 +165,6 @@ def _plot_effective_mass_ratio() -> None:
         system=SODIUM_COPPER_SYSTEM_1D,
         barrier_energy_ratio=barrier_energy_ratio,
         t_end=40e-12,
-        cutoff=10e-12,
         n_samples=(1000 / np.sqrt(barrier_energy_ratio)).astype(int),
     )
 
