@@ -5,13 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 import sympy as sp
 
-from classical_diffusion.plot import (
-    CAM_BLUE_CMAP,
-    CAM_CHERRY,
-    CAM_CREST,
-    CAM_PURPLE,
-    get_figure,
-)
+from classical_diffusion.plot import CAM_BLUE_CMAP, get_figure
 from classical_diffusion.util import _get_key
 
 if TYPE_CHECKING:
@@ -19,6 +13,7 @@ if TYPE_CHECKING:
     from matplotlib.collections import QuadMesh
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
+    from matplotlib.text import Annotation
 
     from classical_diffusion.langevin._system import (
         HarmonicSystem,
@@ -117,8 +112,61 @@ def plot_periodic_potential_1d(
     )
 
 
+def _add_unit_cell(  # ruff:ignore[too-many-locals]
+    ax: Axes,
+    system: System,
+    origin_site: tuple[int, int] = (0, 0),
+    *,
+    a1_label_offset: tuple[float, float] = (-27.0, 0.0),
+    a2_label_offset: tuple[float, float] = (20.0, -13.0),
+) -> tuple[list[Line2D], Line2D, list[Annotation]]:
+    a1, a2 = np.asarray(system.lattice_vectors)
+    origin = origin_site[0] * a1 + origin_site[1] * a2
+
+    corner_points = [
+        origin,
+        origin + a1,
+        origin + a1 + a2,
+        origin + a2,
+    ]
+
+    closed = [*corner_points, corner_points[0]]
+    xs, ys = zip(*closed, strict=False)
+    (edges,) = ax.plot(xs, ys, linestyle="-", linewidth=1.5, zorder=4)
+
+    corner_markers = [
+        ax.plot(*corner, marker="o", markersize=8, zorder=5)[0]
+        for corner in corner_points
+    ]
+
+    labelled_edges = [
+        (corner_points[0], corner_points[1], a1_label_offset),  # a1 edge
+        (corner_points[0], corner_points[3], a2_label_offset),  # a2 edge
+    ]
+
+    annotations = []
+    for start, end, offset in labelled_edges:
+        start_arr = np.asarray(start)
+        end_arr = np.asarray(end)
+        distance = float(np.linalg.norm(end_arr - start_arr))
+        midpoint = (start_arr + end_arr) / 2
+
+        annotation = ax.annotate(
+            f"{distance:.3g} m".strip(),
+            xy=midpoint,
+            xytext=offset,
+            textcoords="offset points",
+            ha="center",
+            va="center",
+            fontsize=9,
+        )
+        annotations.append(annotation)
+
+    return corner_markers, edges, annotations
+
+
 def plot_potential_2d(
-    params: System,
+    system: System,
     start: tuple[float, ...],
     end: tuple[float, ...],
     *,
@@ -129,7 +177,7 @@ def plot_potential_2d(
 
     Parameters
     ----------
-    params : System
+    system : System
         The system for which to plot the potential.
     start : tuple[float, ...]
         The lower-bound coordinates (x_min, y_min).
@@ -152,18 +200,19 @@ def plot_potential_2d(
     x_grid, y_grid = np.meshgrid(x, y)
 
     potential_func = sp.lambdify(
-        params.lambda_symbols,
-        params.potential_expr,
+        system.lambda_symbols,
+        system.potential_expr,
         modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
     )
     potential = np.broadcast_to(
-        potential_func(x_grid, y_grid, *params.params), x_grid.shape
+        potential_func(x_grid, y_grid, *system.params), x_grid.shape
     )
 
     mesh = ax.pcolormesh(x_grid, y_grid, potential, cmap=CAM_BLUE_CMAP)
 
-    cbar = fig.colorbar(mesh, ax=ax)
-    cbar.set_label(r"$V(x, y)$")
+    color_bar = fig.colorbar(mesh, ax=ax)
+    color_bar.set_label(r"$V(x, y)$")
+    unit_cell = _add_unit_cell(ax=ax, system=system)
 
     ax.set_xlabel(r"x")
     ax.set_ylabel(r"y")
@@ -171,7 +220,7 @@ def plot_potential_2d(
     ax.set_ylim(start[1], end[1])
     ax.set_aspect("equal", adjustable="box")
 
-    return fig, ax, mesh
+    return fig, ax, mesh, unit_cell
 
 
 def plot_periodic_potential_fcc(
@@ -181,7 +230,7 @@ def plot_periodic_potential_fcc(
     ax: Axes | None = None,
     width: float = 4,
     height: float = 4,
-) -> tuple[Figure, Axes, QuadMesh]:
+) -> tuple[Figure, Axes, QuadMesh, tuple]:
     """Plot the periodic potential in 2D."""
     return plot_potential_2d(
         params,
@@ -195,64 +244,13 @@ def plot_periodic_potential_fcc(
     )
 
 
-def add_unit_cell(  # ruff:ignore[too-many-arguments]
-    ax: Axes,
-    lattice_vectors: np.ndarray,
-    origin_site: tuple[int, int] = (0, 0),
-    *,
-    marker_color: str = CAM_CHERRY.warm,
-    color: str = CAM_CHERRY.dark,
-    a1_label_offset: tuple[float, float] = (-27.0, 0.0),
-    a2_label_offset: tuple[float, float] = (20.0, -13.0),
-) -> None:
-    a1, a2 = np.asarray(lattice_vectors)
-    origin = origin_site[0] * a1 + origin_site[1] * a2
-
-    corners = [
-        origin,
-        origin + a1,
-        origin + a1 + a2,
-        origin + a2,
-    ]
-
-    closed = [*corners, corners[0]]
-    xs, ys = zip(*closed, strict=False)
-    ax.plot(xs, ys, linestyle="-", color=color, linewidth=1.5, zorder=4)
-
-    for corner in corners:
-        ax.plot(*corner, marker="o", color=marker_color, markersize=8, zorder=5)
-
-    labelled_edges = [
-        (corners[0], corners[1], a1_label_offset),  # a1 edge
-        (corners[0], corners[3], a2_label_offset),  # a2 edge
-    ]
-
-    for start, end, offset in labelled_edges:
-        start = np.asarray(start)  # ruff:ignore[redefined-loop-name]
-        end = np.asarray(end)  # ruff:ignore[redefined-loop-name]
-        distance = float(np.linalg.norm(end - start))
-        midpoint = (start + end) / 2
-
-        ax.annotate(
-            f"{distance:.3g} m".strip(),
-            xy=midpoint,
-            xytext=offset,
-            textcoords="offset points",
-            ha="center",
-            va="center",
-            color=marker_color,
-            fontsize=9,
-        )
-
-
 def add_bridge_site_energy(
     ax: Axes,
     system: System,
     origin_site: tuple[int, int] = (0, 0),
     *,
-    color: str = CAM_PURPLE.dark,
     label_offset: tuple[float, float] = (18.0, 12.0),
-) -> float:
+) -> tuple:
     a1, a2 = np.asarray(system.lattice_vectors)
     origin = origin_site[0] * a1 + origin_site[1] * a2
     bridge_point = origin + a2 + a1 / 2  # midpoint of the top edge
@@ -266,27 +264,25 @@ def add_bridge_site_energy(
         potential_func(bridge_point[0], bridge_point[1], *system.params)
     )
 
-    ax.plot(
+    site = ax.plot(
         *bridge_point,
         marker="x",
-        color=color,
         markersize=9,
         markeredgewidth=2,
         zorder=10,
     )
-    ax.annotate(
+    annotation = ax.annotate(
         f"{bridge_energy:.3g} J".strip(),
         xy=bridge_point,
         xytext=label_offset,
         textcoords="offset points",
         ha="left",
         va="bottom",
-        color=color,
         fontsize=9,
         zorder=10,
     )
 
-    return bridge_energy
+    return ax, site, annotation
 
 
 def add_top_site_energy(
@@ -294,9 +290,8 @@ def add_top_site_energy(
     system: System,
     origin_site: tuple[int, int] = (0, 0),
     *,
-    color: str = CAM_PURPLE.dark,
     label_offset: tuple[float, float] = (12.0, -12.0),
-) -> float:
+) -> tuple:
     a1, a2 = np.asarray(system.lattice_vectors)
     top_point = origin_site[0] * a1 + origin_site[1] * a2
 
@@ -307,38 +302,34 @@ def add_top_site_energy(
     )
     top_energy = float(potential_func(top_point[0], top_point[1], *system.params))
 
-    ax.plot(
+    site = ax.plot(
         *top_point,
         marker="x",
-        color=color,
         markersize=9,
         markeredgewidth=2,
         zorder=10,
     )
-    ax.annotate(
+    annotation = ax.annotate(
         f"{top_energy:.3g} J".strip(),
         xy=top_point,
         xytext=label_offset,
         textcoords="offset points",
         ha="left",
         va="top",
-        color=color,
         fontsize=9,
         zorder=10,
     )
 
-    return top_energy
+    return ax, site, annotation
 
 
-def add_hollow_site_distance(  # ruff:ignore[too-many-arguments]
+def add_hollow_site_distance(
     ax: Axes,
     system: System,
     origin_site: tuple[int, int] = (0, 0),
     *,
-    color: str = CAM_CREST.warm,
-    marker_color: str = CAM_CREST.dark,
     label_offset: tuple[float, float] = (12.0, 0.0),
-) -> float:
+) -> tuple:
 
     a1, a2 = np.asarray(system.lattice_vectors)
     origin = origin_site[0] * a1 + origin_site[1] * a2
@@ -347,31 +338,29 @@ def add_hollow_site_distance(  # ruff:ignore[too-many-arguments]
     hollow_b = origin + 2 * (a1 + a2) / 3
     distance = float(np.linalg.norm(hollow_b - hollow_a))
 
-    ax.plot(*hollow_a, marker="o", color=marker_color, markersize=8, zorder=10)
-    ax.plot(*hollow_b, marker="o", color=marker_color, markersize=8, zorder=10)
-    ax.plot(
+    site_a = ax.plot(*hollow_a, marker="o", markersize=8, zorder=10)
+    site_b = ax.plot(*hollow_b, marker="o", markersize=8, zorder=10)
+    line = ax.plot(
         [hollow_a[0], hollow_b[0]],
         [hollow_a[1], hollow_b[1]],
         linestyle="--",
-        color=color,
         linewidth=1.2,
         zorder=10,
     )
 
     midpoint = (hollow_a + hollow_b) / 2
-    ax.annotate(
+    annotation = ax.annotate(
         f"{distance:.3g} m".strip(),
         xy=midpoint,
         xytext=label_offset,
         textcoords="offset points",
         ha="left",
         va="center",
-        color=color,
         fontsize=9,
         zorder=10,
     )
 
-    return distance
+    return distance, (site_a, site_b), line, annotation
 
 
 def get_exact_harmonic_isf(

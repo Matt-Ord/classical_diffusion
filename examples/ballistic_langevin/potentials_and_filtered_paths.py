@@ -10,7 +10,6 @@ from classical_diffusion.langevin import (
     add_bridge_site_energy,
     add_hollow_site_distance,
     add_top_site_energy,
-    add_unit_cell,
     breakdown_ballistic_trajectory,
     plot_periodic_potential_1d,
     plot_periodic_potential_fcc,
@@ -81,11 +80,14 @@ def _plot_periodic_system_fcc() -> None:
     system = SODIUM_COPPER_SYSTEM_2D
 
     fig, ax = get_fancy_figure()
-    _, _, _ = plot_periodic_potential_fcc(system, ax=ax, height=5, width=4)
-    add_unit_cell(ax, system.lattice_vectors)
-    _ = add_bridge_site_energy(ax, system)
-    _ = add_top_site_energy(ax, system)
-    _ = add_hollow_site_distance(ax, system)
+    fig, ax, _mesh, _unit_cell = plot_periodic_potential_fcc(
+        system, ax=ax, height=5, width=4
+    )
+    ax, _site, _annotation = add_bridge_site_energy(ax, system)
+    ax, _site, _annotation = add_top_site_energy(ax, system)
+    _distance, (_site_a, _site_b), _line, _annotation = add_hollow_site_distance(
+        ax, system
+    )
     fig.savefig(
         "examples/ballistic_langevin/2d_fcc.potential.pdf", dpi=300, bbox_inches="tight"
     )

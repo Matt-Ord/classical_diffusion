@@ -4,23 +4,17 @@ from classical_diffusion.analysis import (
     plot_isf_with_delta_k,
 )
 from classical_diffusion.langevin import (
-    PeriodicSystem1D,
+    SODIUM_COPPER_SYSTEM_1D,
     breakdown_ballistic_trajectory,
     solve_ensemble_ballistic,
 )
 from classical_diffusion.plot import CAM_CHERRY_CMAP, get_two_panel_figure
 from classical_diffusion.simulation import TimeSpan
 
-system = PeriodicSystem1D(
-    gamma=4e11,
-    temperature=100,
-    m=6e-27,
-    delta_x=1.48e-10,
-    barrier_energy=4e-21,
-)
-
 
 def _plot_inelastic_trends() -> None:
+
+    system = SODIUM_COPPER_SYSTEM_1D
 
     ballistic_result = solve_ensemble_ballistic(
         system,

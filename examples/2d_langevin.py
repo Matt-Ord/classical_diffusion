@@ -18,7 +18,7 @@ def _plot_periodic_system() -> None:
         gamma=0.1, temperature=1.0, m=1.0, delta_x=5.0, barrier_energy=1.5
     )
     fig, ax = get_fancy_figure()
-    _, _, _ = plot_periodic_potential_fcc(system, ax=ax)
+    _, _, _, _ = plot_periodic_potential_fcc(system, ax=ax)
     fig.savefig("examples/2d_langevin.potential.pdf")
 
 

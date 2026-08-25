@@ -4,8 +4,8 @@ from classical_diffusion.analysis import (
     plot_isf,
 )
 from classical_diffusion.langevin import (
-    PeriodicSystem1D,
-    PeriodicSystemFCC,
+    SODIUM_COPPER_SYSTEM_1D,
+    SODIUM_COPPER_SYSTEM_2D,
     breakdown_ballistic_trajectory,
     solve_ensemble,
     solve_ensemble_ballistic,
@@ -15,13 +15,7 @@ from classical_diffusion.simulation import TimeSpan
 
 
 def _plot_periodic_isf_1d() -> None:
-    system = PeriodicSystem1D(
-        gamma=5e11,
-        temperature=155,
-        m=8e-27,
-        delta_x=5e-10,
-        barrier_energy=4e-21,
-    )
+    system = SODIUM_COPPER_SYSTEM_1D
 
     full_result = solve_ensemble(
         system,
@@ -82,14 +76,7 @@ def _plot_periodic_isf_1d() -> None:
 
 def _plot_periodic_isf_2d() -> None:
 
-    system = PeriodicSystemFCC(
-        gamma=5e11,
-        temperature=114,
-        m=8e-27,
-        delta_x=3e-10,
-        barrier_energy=4e-21,
-    )
-
+    system = SODIUM_COPPER_SYSTEM_2D
     full_result = solve_ensemble(
         system,
         TimeSpan(t_end=10e-12, n_steps=1000),
