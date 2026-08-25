@@ -119,9 +119,7 @@ def plot_energy(
 
     for res in result if isinstance(result, LangevinSimulationResult) else [result]:
         energy = _get_energy(
-            system=res.system,
-            x_points=res.x_points,
-            p_points=res.p_points,
+            system=res.system, x_points=res.x_points, p_points=res.p_points
         )
         ax.plot(result.times, energy)
 
@@ -149,22 +147,6 @@ def split_result(
         times=times2, x_points=xs2, p_points=ps2, system=result.system
     )
     return first, second
-
-
-def remove_simulation_ends[S: System](
-    result: LangevinSimulationResult[S],
-    times: tuple[float, float],
-) -> LangevinSimulationResult[S]:
-    mask = (result.times >= times[0]) & (result.times <= times[1])
-    truncated_times = result.times[mask]
-    rebased_times = truncated_times - truncated_times[0]
-
-    return LangevinSimulationResult(
-        system=result.system,
-        times=rebased_times,
-        x_points=result.x_points[:, :, mask],
-        p_points=result.p_points[:, :, mask],
-    )
 
 
 def _get_exact_x_distribution_pdf(
