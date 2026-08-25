@@ -119,7 +119,7 @@ def plot_energy(
 
     for res in result if isinstance(result, LangevinSimulationResult) else [result]:
         energy = _get_energy(
-            system=res.system,  # ty:ignore[invalid-argument-type]
+            system=res.system,
             x_points=res.x_points,
             p_points=res.p_points,
         )
