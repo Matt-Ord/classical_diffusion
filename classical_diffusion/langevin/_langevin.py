@@ -7,8 +7,8 @@ import diffrax as dfx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import sympy as sp
 
-import classical_diffusion.jax as jx
 from classical_diffusion.langevin._sample import get_random_initial_conditions
 from classical_diffusion.simulation import (
     SimulationResult,
@@ -18,7 +18,7 @@ from classical_diffusion.simulation import (
 from classical_diffusion.util import _get_key, cached, hash_array, timed
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Callable, Iterable, Iterator
 
     from classical_diffusion.langevin import CanonicalSystem, System
     from classical_diffusion.system import UnitSystem
@@ -88,6 +88,18 @@ class LangevinSimulationResult[S: System](SimulationResult[S]):
         )
 
 
+def _get_force_fn(
+    system: System,
+) -> Callable[[jnp.ndarray, tuple[float, ...]], jnp.ndarray]:
+    """Compute a callable force function, taking and returning an array."""
+    raw_fn = sp.lambdify(
+        system.lambda_symbols,
+        system.force_expr,
+        modules=[{"DerivativeSafeMod": jnp.mod}, "jax"],
+    )
+    return lambda x_array, params: jnp.array(raw_fn(*x_array, *params))
+
+
 @jax.jit
 def _run_deterministic_ensemble_jit(
     system: "CanonicalSystem",  # ruff:ignore[quoted-annotation]
@@ -95,7 +107,7 @@ def _run_deterministic_ensemble_jit(
     ps0: jnp.ndarray,
     times: jnp.ndarray,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
-    force_fn = jx.get_force_fn(system)
+    force_fn = _get_force_fn(system)
 
     def vector_field(
         _t: Any,  # ruff: ignore[any-type]
@@ -154,7 +166,7 @@ def _run_deterministic_ensemble_jit_forward(
     ps0: jnp.ndarray,
     times: jnp.ndarray,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
-    force_fn = jx.get_force_fn(system)
+    force_fn = _get_force_fn(system)
 
     def vector_field(
         _t: Any,  # ruff: ignore[any-type]
@@ -192,7 +204,7 @@ def _run_langevin_ensemble_jit(
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     gamma = jnp.broadcast_to(system.gamma, (system.n_dim,))
     u = jnp.broadcast_to(system.kbt / system.m, (system.n_dim,))
-    force_fn = jx.get_force_fn(system)
+    force_fn = _get_force_fn(system)
 
     def grad_f(x: jnp.ndarray, _args: jnp.ndarray) -> jnp.ndarray:
         return -force_fn(x, system.params) / system.kbt
@@ -474,7 +486,7 @@ def _run_many_overdamped_jit(
     times: jnp.ndarray,
 ) -> jnp.ndarray:
     gamma = jnp.broadcast_to(system.gamma, (system.n_dim,))
-    force_fn = jx.get_force_fn(system)
+    force_fn = _get_force_fn(system)
     diffusion_matrix = jnp.diag(jnp.sqrt(2.0 * system.kbt / gamma))
 
     def solve_one(x0: jnp.ndarray, key: jax.Array) -> jnp.ndarray:
@@ -542,13 +554,18 @@ def solve_many_overdamped[S: System](
     _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of overdamped Langevin trajectories in parallel via jax.vmap."""
-    _key = _get_key(_key)
-    times, xs_batch = jx.solve_overdamped_ensemble(
-        system.as_canonical(),
-        time_span,
-        (jnp.array(initial_conditions[0]), jnp.array(initial_conditions[1])),
-        _key=_key,
+    n_run = initial_conditions[0].shape[0]
+
+    times = jnp.linspace(
+        time_span.t_start, time_span.t_end, time_span.n_steps + 1, endpoint=True
     )
+
+    keys = jax.random.split(_get_key(_key), n_run)
+    xs_batch = _run_many_overdamped_jit(
+        system.as_canonical(), initial_conditions[0], keys, times
+    )
+
+    xs_batch = jnp.transpose(xs_batch, (0, 2, 1))
 
     return LangevinSimulationResult(
         times=np.array(times),
