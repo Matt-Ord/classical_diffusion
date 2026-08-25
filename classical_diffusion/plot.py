@@ -223,7 +223,7 @@ def get_fancy_figure(
 def get_two_panel_figure() -> tuple[Figure, list[Axes]]:
     """Create a two-panel figure with fancy styling."""
     setup_rc_params()
-    fig, ax = plt.subplots(layout="constrained", ncols=2, figsize=(10, 4))
+    fig, ax = plt.subplots(layout="constrained", ncols=2, figsize=(6, 4))
     setup_fancy_figure(fig, ax)
     return fig, ax
 

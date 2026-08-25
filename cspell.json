@@ -3,6 +3,7 @@
     "version": "0.2",
     "language": "en",
     "words": [
+        "atleast",
         "axhline",
         "boltzman",
         "brentq",
@@ -37,10 +38,12 @@
         "xedges",
         "xlim",
         "xticks",
+        "xytext",
         "yedges",
         "ylim",
         "yscale",
-        "yticks"
+        "yticks",
+        "zorder"
     ],
     "ignoreWords": [
         "Phonopy",
