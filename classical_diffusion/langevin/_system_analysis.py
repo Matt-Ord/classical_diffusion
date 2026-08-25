@@ -172,7 +172,7 @@ def plot_potential_2d(
     *,
     n_points: tuple[int, int] = (100, 100),
     ax: Axes | None = None,
-) -> tuple[Figure, Axes, QuadMesh]:
+) -> tuple[Figure, Axes, QuadMesh, tuple]:
     """Plot the potential energy surface for a 2D system as a filled heatmap.
 
     Parameters
@@ -224,7 +224,7 @@ def plot_potential_2d(
 
 
 def plot_periodic_potential_fcc(
-    params: PeriodicSystemFCC,
+    system: PeriodicSystemFCC,
     *,
     n_points: tuple[int, int] = (100, 100),
     ax: Axes | None = None,
@@ -233,11 +233,11 @@ def plot_periodic_potential_fcc(
 ) -> tuple[Figure, Axes, QuadMesh, tuple]:
     """Plot the periodic potential in 2D."""
     return plot_potential_2d(
-        params,
-        (-width / 2 * params.delta_x, -height / 2 * params.delta_x),
+        system,
+        (-width / 2 * system.delta_x, -height / 2 * system.delta_x),
         (
-            width / 2 * params.delta_x,
-            height / 2 * params.delta_x,
+            width / 2 * system.delta_x,
+            height / 2 * system.delta_x,
         ),
         n_points=n_points,
         ax=ax,
@@ -246,7 +246,7 @@ def plot_periodic_potential_fcc(
 
 def add_bridge_site_energy(
     ax: Axes,
-    system: System,
+    system: PeriodicSystemFCC,
     origin_site: tuple[int, int] = (0, 0),
     *,
     label_offset: tuple[float, float] = (18.0, 12.0),
@@ -287,7 +287,7 @@ def add_bridge_site_energy(
 
 def add_top_site_energy(
     ax: Axes,
-    system: System,
+    system: PeriodicSystemFCC,
     origin_site: tuple[int, int] = (0, 0),
     *,
     label_offset: tuple[float, float] = (12.0, -12.0),
@@ -325,7 +325,7 @@ def add_top_site_energy(
 
 def add_hollow_site_distance(
     ax: Axes,
-    system: System,
+    system: PeriodicSystemFCC,
     origin_site: tuple[int, int] = (0, 0),
     *,
     label_offset: tuple[float, float] = (12.0, 0.0),
