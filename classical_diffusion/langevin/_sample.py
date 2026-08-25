@@ -1,14 +1,11 @@
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 import sympy as sp
 
-from classical_diffusion.util import _get_key
-
 if TYPE_CHECKING:
-    from classical_diffusion.langevin import CanonicalSystem, System
+    from classical_diffusion.langevin import CanonicalSystem
 
 
 SAMPLE_REGION = 10
@@ -23,7 +20,11 @@ def _sample_initial_conditions(
     _key: jax.Array,
 ) -> tuple[jax.Array, jax.Array]:
 
-    potential_fn = sp.lambdify(system.lambda_symbols, system.potential_expr, "jax")
+    potential_fn = sp.lambdify(
+        system.lambda_symbols,
+        system.potential_expr,
+        modules=[{"DerivativeSafeMod": jnp.mod}, "jax"],
+    )
 
     # TODO: the assumption here is that the minimum of the potential  # ruff: ignore[line-contains-todo]
     # is at 0, which is not always true. Finding the minimum of the
@@ -59,31 +60,3 @@ def _sample_initial_conditions(
 
     keys = jax.random.split(_key, n_samples)
     return jax.vmap(_sample_one)(keys)
-
-
-def get_random_initial_conditions(
-    system: System,
-    n_samples: int,
-    *,
-    minimum_energy: float = 0.0,
-    _key: jax.Array | None = None,
-) -> tuple[
-    np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
-]:
-    """Get random initial conditions for a given system."""
-    _key = _get_key(_key)
-    normalized_system = system.with_normalized_units().as_canonical()
-    x_points, p_points = _sample_initial_conditions(
-        normalized_system,
-        n_samples,
-        minimum_energy=system.units.energy_into(
-            minimum_energy, normalized_system.units
-        ),
-        _key=_key,
-    )
-    x_points = np.array(x_points.reshape(-1, system.n_dim))
-    p_points = np.array(p_points.reshape(-1, system.n_dim))
-    return (
-        normalized_system.units.length_into(x_points, system.units),
-        normalized_system.units.momentum_into(p_points, system.units),
-    )

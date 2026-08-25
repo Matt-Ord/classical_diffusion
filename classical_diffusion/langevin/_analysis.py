@@ -100,7 +100,7 @@ def _get_energy(
     potential = sp.lambdify(
         (*system.coordinate_symbols, *system.parameter_symbols),
         system.potential_expr,
-        "numpy",
+        modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
     )
 
     x_components = [x_points[:, d] for d in range(system.n_dim)]

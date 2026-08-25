@@ -18,13 +18,16 @@ from classical_diffusion.langevin._langevin import (
     SingleLangevinSimulationResult,
     solve_ensemble,
     solve_ensemble_ballistic,
+    solve_ensemble_overdamped,
     solve_many,
     solve_many_ballistic,
     solve_many_overdamped,
     solve_single,
     solve_single_ballistic,
 )
-from classical_diffusion.langevin._sample import get_random_initial_conditions
+from classical_diffusion.langevin._langevin import (
+    get_random_initial_conditions_ext as get_random_initial_conditions,
+)
 from classical_diffusion.langevin._system import (
     CanonicalSystem,
     HarmonicSystem,
@@ -100,6 +103,7 @@ __all__ = [
     "plot_x_distribution_kde",
     "solve_ensemble",
     "solve_ensemble_ballistic",
+    "solve_ensemble_overdamped",
     "solve_many",
     "solve_many_ballistic",
     "solve_many_overdamped",

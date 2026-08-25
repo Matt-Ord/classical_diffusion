@@ -228,8 +228,8 @@ def add_unit_cell(  # ruff:ignore[too-many-arguments]
     ]
 
     for start, end, offset in labelled_edges:
-        start = np.asarray(start)
-        end = np.asarray(end)
+        start = np.asarray(start)  # ruff:ignore[redefined-loop-name]
+        end = np.asarray(end)  # ruff:ignore[redefined-loop-name]
         distance = float(np.linalg.norm(end - start))
         midpoint = (start + end) / 2
 
@@ -247,7 +247,7 @@ def add_unit_cell(  # ruff:ignore[too-many-arguments]
 
 def add_bridge_site_energy(
     ax: Axes,
-    system: Any,
+    system: System,
     origin_site: tuple[int, int] = (0, 0),
     *,
     color: str = CAM_PURPLE.dark,
@@ -291,7 +291,7 @@ def add_bridge_site_energy(
 
 def add_top_site_energy(
     ax: Axes,
-    system: Any,
+    system: System,
     origin_site: tuple[int, int] = (0, 0),
     *,
     color: str = CAM_PURPLE.dark,
@@ -330,9 +330,9 @@ def add_top_site_energy(
     return top_energy
 
 
-def add_hollow_site_distance(
+def add_hollow_site_distance(  # ruff:ignore[too-many-arguments]
     ax: Axes,
-    system: Any,
+    system: System,
     origin_site: tuple[int, int] = (0, 0),
     *,
     color: str = CAM_CREST.warm,

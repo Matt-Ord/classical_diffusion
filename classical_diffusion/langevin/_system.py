@@ -5,7 +5,6 @@ from typing import final, override
 
 import jax
 import numpy as np
-import scipy.optimize
 import sympy as sp
 
 from classical_diffusion.hopping import KramersParameters
@@ -15,28 +14,6 @@ from classical_diffusion.system import CanonicalUnitSystem, UnitSystem
 def _hash_sympy_expr(expr: sp.Expr) -> int:
     stable_string = sp.srepr(expr)
     return zlib.crc32(stable_string.encode("utf-8"))
-
-
-def max_force(system: System) -> float:
-    """Find max ||F|| numerically using SciPy minimization starting at the origin."""
-    if not system.force_expr or system.potential_expr == 0:
-        return 0.0
-
-    param_map = dict(zip(system.parameter_symbols, system.params, strict=False))
-    force = sp.Matrix(system.force_expr).subs(param_map)
-
-    # Convert the symbolic force vector into a fast numerical function
-    force_fn = sp.lambdify(system.coordinate_symbols, force, modules="numpy")
-
-    def objective(coords: np.ndarray) -> float:
-        # Evaluate force vector and return negative magnitude for minimization
-        f_vec = np.array(force_fn(*coords), dtype=float)
-        return -float(np.linalg.norm(f_vec))
-
-    x0 = np.zeros(len(system.coordinate_symbols))
-    res = scipy.optimize.minimize(objective, x0)
-
-    return float(-res.fun) if res.success else 0.0
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -138,31 +115,6 @@ class System:
             params=self.params,
         )
 
-    @property
-    def normalized_units(self) -> UnitSystem:
-        """Units scaled purely via intrinsic physical scales of V(x), T, m, and gamma."""
-        # Express rates in uniform units (s^-1)
-        rate_force = max_force(self) / np.sqrt(self.m * self.kbt)
-        rate_force = 0.0 if rate_force == sp.oo else float(rate_force)
-        rate_gamma = self.gamma
-
-        # Select dominant physical rate
-        # If gamma and force are both small, then dont scale the units
-        # Length is velocity * time, and time is 1 / nu_0
-        v_th = np.sqrt(self.kbt / self.m)
-        nu_0 = max(rate_force, rate_gamma, v_th / 1.0)
-        characteristic_length = v_th / nu_0
-
-        return UnitSystem(
-            boltzmann=1 / self.temperature,
-            atomic_mass=self.units.atomic_mass / self.m,
-            angstrom=self.units.angstrom / characteristic_length,
-        )
-
-    def with_normalized_units(self) -> System:
-        """Return the parameters of the simulation in normalized units."""
-        return self.with_units(self.normalized_units)
-
     def with_si_units(self) -> System:
         """Return the si parameters of the system."""
         return self.with_units(UnitSystem())
@@ -180,10 +132,6 @@ class CanonicalSystem(System):
     def with_units(self, units: UnitSystem) -> CanonicalSystem:
         """Return the system converted to the given units."""
         return super().with_units(units).as_canonical()
-
-    def with_normalized_units(self) -> CanonicalSystem:
-        """Return the parameters of the simulation in normalized units."""
-        return self.with_units(self.normalized_units).as_canonical()
 
 
 class HarmonicSystem(System):
@@ -372,54 +320,52 @@ class DerivativeSafeMod(sp.Mod):
         return sp.Derivative(self, s)
 
 
+def _build_kramers_potential() -> sp.Expr:
+    x0 = sp.symbols("x0")
+    s0 = sp.symbols("s0")
+    s1 = sp.symbols("s1")
+    s2 = sp.symbols("s2")
+
+    # To express a double harmonic potential as a sympy expression, consider moving two harmonics towards each other
+    # y = 1/2 omega_well^2 x^2                      represents an upright harmonic centred at the origin
+    # y = E_b - 1/2 omega_barrier^2 (x - x_0)^2     represents an inverted harmonic centred at x_0, height E_b
+    # At the point where the double harmonic potential is smooth, the two harmonics just touch. So there will only
+    # be one solution to the above simultaneous system. Solving these equations gives a quadratic for x: then
+    # setting the determinant equal to zero gives an expression for x_0
+    # From this, the overlap point, x_meet, can be found and the expression for the periodic potential is as below.
+
+    omegas_ss = s0**2 + s1**2  # Omegas squared sum
+    x_0 = sp.sqrt((2 * omegas_ss * s2) / (s0**2 * s1**2))
+    x_meet = (s1**2 / omegas_ss) * x_0
+
+    periodic_x = DerivativeSafeMod(x0 + x_meet, 2 * x_0) - x_meet
+
+    return sp.Piecewise(
+        (0.5 * s0**2 * periodic_x**2, periodic_x <= x_meet),
+        (
+            s2 - 0.5 * s1**2 * (periodic_x - x_0) ** 2,
+            periodic_x >= x_meet,
+        ),
+        (0, True),
+    )
+
+
 class KramersSystem1D(System):
     """Parameters representing a periodic double harmonic system."""
 
     def __init__(
         self,
         *,
-        m: float,
         params: KramersParameters,
         n_dim: int = 1,
     ) -> None:
-        x0 = sp.symbols("x0")
-        s0 = sp.symbols("s0")
-        s1 = sp.symbols("s1")
-        s2 = sp.symbols("s2")
-
-        # To express a double harmonic potential as a sympy expression, consider moving two harmonics towards each other
-        # y = 1/2 omega_well^2 x^2                      represents an upright harmonic centred at the origin
-        # y = E_b - 1/2 omega_barrier^2 (x - x_0)^2     represents an inverted harmonic centred at x_0, height E_b
-        # At the point where the double harmonic potential is smooth, the two harmonics just touch. So there will only
-        # be one solution to the above simultaneous system. Solving these equations gives a quadratic for x: then
-        # setting the determinant equal to zero gives an expression for x_0
-        # From this, the overlap point, x_meet, can be found and the expression for the periodic potential is as below.
-
-        omegas_ss = s0**2 + s1**2  # Omegas squared sum
-        x_0 = sp.sqrt((2 * omegas_ss * s2) / (s0**2 * s1**2))
-        x_meet = (s1**2 / omegas_ss) * x_0
-
-        periodic_x = DerivativeSafeMod(x0 + x_meet, 2 * x_0) - x_meet
-
-        potential = sp.Piecewise(
-            (0.5 * s0**2 * periodic_x**2, periodic_x <= x_meet),
-            (
-                s2 - 0.5 * s1**2 * (periodic_x - x_0) ** 2,
-                periodic_x >= x_meet,
-            ),
-            (0, True),
-        )
 
         super().__init__(
             gamma=params.gamma,
             temperature=params.temperature,
-            m=m,
-            potential=(n_dim, potential),
-            params=(
-                params.omega_well,
-                params.omega_barrier,
-                params.barrier_energy,
-            ),
+            m=params.m,
+            potential=(n_dim, _build_kramers_potential()),
+            params=(params.omega_well, params.omega_barrier, params.barrier_energy),
             units=params.units,
         )
 
@@ -435,6 +381,7 @@ class KramersSystem1D(System):
             omega_barrier=self.params[1],
             barrier_energy=self.params[2],
             temperature=self.temperature,
+            m=self.m,
             gamma=self.gamma,
             units=self.units,
         )
@@ -458,7 +405,6 @@ class KramersSystem1D(System):
     def with_units(self, units: UnitSystem) -> KramersSystem1D:
         """Return the parameters of the system in the specified units."""
         return KramersSystem1D(
-            m=self.units.mass_into(self.m, units),
             params=self.kramers_params.with_units(units),
             n_dim=self.n_dim,
         )

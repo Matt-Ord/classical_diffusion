@@ -1,8 +1,12 @@
 from typing import TYPE_CHECKING
 
+import jax.numpy as jnp
 import numpy as np
 
 from classical_diffusion.hopping._system import Lattice
+from classical_diffusion.jax.hopping import (
+    get_deterministic_isf as get_deterministic_isf_jax,
+)
 from classical_diffusion.plot import get_figure
 from classical_diffusion.util import timed
 
@@ -15,29 +19,30 @@ if TYPE_CHECKING:
 
 
 @timed
-def _get_deterministic_isf[L: Lattice](
-    system: L,
-    probabilities: np.ndarray[tuple[int, int], np.dtype[np.float32]],
-    delta_k: float,
-) -> np.ndarray:
-    distances = system.x_points_from_indices(np.arange(probabilities.shape[1]))
-    phase_factors = np.exp(1j * delta_k * distances)
-    return np.abs(np.dot(probabilities, phase_factors))
+def get_deterministic_isf[L: Lattice](
+    result: DeterministicSolverResult[L],
+    delta_k: tuple[float, ...],
+) -> np.ndarray[tuple[int], np.dtype[np.float32]]:
+    return np.array(
+        get_deterministic_isf_jax(
+            result.system.as_canonical(), jnp.array(result.probabilities), delta_k
+        )
+    )
 
 
 @timed
 def plot_deterministic_isf[L: Lattice](
-    system: L,
-    result: DeterministicSolverResult,
-    delta_k: float,
+    result: DeterministicSolverResult[L],
+    delta_k: tuple[float, ...],
     *,
     ax: Axes | None = None,
+    amplitude: float = 1.0,
 ) -> tuple[Figure, Axes, Line2D]:
     """Plot the ensemble-averaged ISF over time, with a shaded ±1 SEM band."""
     fig, ax = get_figure(ax)
 
-    isf = _get_deterministic_isf(system, result.probabilities, delta_k)
-    (line,) = ax.plot(np.array(result.times), np.array(isf))
+    isf = get_deterministic_isf(result, delta_k)
+    (line,) = ax.plot(np.array(result.times), amplitude * np.array(isf))
     line.set_label("ISF")
 
     ax.set_xlabel("Time / s")

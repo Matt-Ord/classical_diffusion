@@ -1,6 +1,8 @@
 import dataclasses
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Self
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Self, final
+
+import jax
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -90,18 +92,12 @@ class SimulationResult[S: Any]:
         )
 
 
+@final
+@jax.tree_util.register_dataclass
 @dataclass(frozen=True, kw_only=True)
 class TimeSpan:
     """Time-stepping parameters, bundled together."""
 
     t_start: float = 0
     t_end: float
-    n_steps: int
-
-    def __post_init__(self) -> None:
-        if self.t_end <= self.t_start:
-            msg = f"t_end must be greater than t_start, got t_start={self.t_start}, t_end={self.t_end}"
-            raise ValueError(msg)
-        if self.n_steps <= 1:
-            msg = f"Time span must have at least 2 steps, got n_steps={self.n_steps}"
-            raise ValueError(msg)
+    n_steps: int = field(metadata={"static": True})
