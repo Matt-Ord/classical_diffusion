@@ -1,6 +1,9 @@
+from typing import TYPE_CHECKING
+
 import jax.numpy as jnp
 
-from classical_diffusion.hopping import CanonicalLattice
+if TYPE_CHECKING:
+    from classical_diffusion.hopping import CanonicalLattice
 
 
 def get_deterministic_isf_jax[L: CanonicalLattice](
