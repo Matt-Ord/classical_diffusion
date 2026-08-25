@@ -33,8 +33,8 @@ class HoppingSimulationResult[L: Lattice](SimulationResult[L]):
 @dataclass(frozen=True, kw_only=True)
 class DeterministicSolverResult[L: Lattice]:
     system: L
-    times: np.ndarray[tuple[int], np.dtype[np.float32]]
-    probabilities: np.ndarray[tuple[int, int], np.dtype[np.float32]]
+    times: np.ndarray[tuple[int], np.dtype[np.floating]]
+    probabilities: np.ndarray[tuple[int, int], np.dtype[np.floating]]
 
 
 @jax.jit
@@ -50,9 +50,9 @@ def _run_hopping_simulation_jit(
     # Carry state: (t_prev, site_prev, t_curr, site_curr, rng_key)
     init_state = (
         jnp.array(0.0, dtype=sample_times.dtype),
-        initial_position,
+        initial_position[0],
         jnp.array(0.0, dtype=sample_times.dtype),
-        initial_position,
+        initial_position[0],
         key,
     )
 
@@ -75,14 +75,14 @@ def _run_hopping_simulation_jit(
             _, _, current_t, current_site, rng_key = state
             destination_key, dt_key, next_key = jax.random.split(rng_key, 3)
 
-            hop_sites, hop_rates = system.get_rates(current_site)
+            hop_sites, hop_rates = system.get_rates(jnp.array([current_site]))
             total_rate = jnp.sum(hop_rates)
             dt = (
                 -jnp.log(jax.random.uniform(dt_key, dtype=sample_times.dtype))
                 / total_rate
             )
             next_site = jax.random.choice(
-                destination_key, hop_sites, p=hop_rates / total_rate
+                destination_key, hop_sites[0], p=hop_rates[0] / total_rate
             )
 
             return (current_t, current_site, current_t + dt, next_site, next_key)
@@ -113,7 +113,7 @@ def solve_ensemble[L: Lattice = Lattice](
 ) -> HoppingSimulationResult[L]:
     """Solve the hopping ensemble."""
     keys = jax.random.split(_get_key(_key), initial_condition.shape[0])
-    times = jnp.linspace(time_span.t_start, time_span.t_end, time_span.n_steps)
+    times = jnp.linspace(time_span.t_start, time_span.t_end, time_span.n_steps + 1)
 
     results = jax.vmap(
         _run_hopping_simulation_jit,
@@ -161,23 +161,37 @@ def _get_deterministic_probabilities_jit[L: Lattice](
     ).ys
 
 
+def get_deterministic_probabilities_jax[L: CanonicalLattice](
+    system: L,
+    time_span: TimeSpan,
+    shape: tuple[int, ...],
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Generate the Lattice then use a deterministic PDE to find the probabilities at all times."""
+    initial_position = jnp.array(shape[0] / 2, int)
+
+    times = jnp.linspace(time_span.t_start, time_span.t_end, time_span.n_steps + 1)
+
+    initial_p = jnp.full(shape[0], 0.0, dtype=jnp.float32)
+    initial_p = initial_p.at[initial_position].set(1)
+
+    hop_sites, hop_rates = system.get_rates(jnp.arange(shape[0]))
+
+    return (
+        _get_deterministic_probabilities_jit(initial_p, times, hop_sites, hop_rates),
+        times,
+    )
+
+
 @timed
-def get_ensemble_probabilities[L: Lattice](
+def get_deterministic_probabilities[L: Lattice](
     system: L,
     shape: tuple[int, ...],
     time_span: TimeSpan,
-    initial_position: int,
 ) -> DeterministicSolverResult:
     """Use a deterministic PDE to find the ensemble probabilities at all times."""
-    times = jnp.linspace(time_span.t_start, time_span.t_end, time_span.n_steps)
-
-    initial_p = jnp.full(np.prod(shape), 0.0, dtype=jnp.float32)
-    initial_p = initial_p.at[initial_position].set(1)
-
-    hop_sites, hop_rates = system.get_rates(np.arange(np.prod(shape)))
-
-    sol = _get_deterministic_probabilities_jit(initial_p, times, hop_sites, hop_rates)
-
+    probabilities, times = get_deterministic_probabilities_jax(
+        system.as_canonical(), time_span, shape=shape
+    )
     return DeterministicSolverResult(
-        system=system, times=np.array(times), probabilities=np.array(sol)
+        system=system, times=np.array(times), probabilities=np.array(probabilities)
     )

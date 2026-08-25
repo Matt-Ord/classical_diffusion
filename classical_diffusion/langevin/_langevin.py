@@ -573,3 +573,41 @@ def solve_many_overdamped[S: System](
         p_points=np.zeros_like(xs_batch),
         system=system,
     )
+
+
+def _solve_ensemble_overdamped_path[S: System](
+    system: S,
+    time_span: TimeSpan,
+    n_samples: int,
+    *,
+    _key: jax.Array | None = None,
+) -> Path:
+    filename = f"overdamped_ensemble_{hash(system)}_{hash(time_span)}_{n_samples}.npz"
+    return Path("examples/data") / filename
+
+
+@cached(_solve_ensemble_overdamped_path)
+@timed
+def solve_ensemble_overdamped[S: System](
+    system: S,
+    time_span: TimeSpan,
+    n_samples: int,
+    *,
+    _key: jax.Array | None = None,
+) -> LangevinSimulationResult[S]:
+    """Solve an ensemble of overdamped Langevin trajectories in parallel via jax.vmap."""
+    _key = _get_key(_key)
+    simulated_system = system.with_normalized_units().as_canonical()
+    result = solve_many_overdamped.call_uncached(
+        simulated_system,
+        _convert_time_span(time_span, system.units, simulated_system.units),
+        get_random_initial_conditions(simulated_system, n_samples, _key=_key),
+        _key=_key,
+    ).with_units(system.units)
+
+    return LangevinSimulationResult(
+        times=result.times,
+        x_points=result.x_points,
+        p_points=result.p_points,
+        system=system,
+    )

@@ -26,7 +26,11 @@ def max_force(system: System) -> float:
     force = sp.Matrix(system.force_expr).subs(param_map)
 
     # Convert the symbolic force vector into a fast numerical function
-    force_fn = sp.lambdify(system.coordinate_symbols, force, modules="numpy")
+    force_fn = sp.lambdify(
+        system.coordinate_symbols,
+        force,
+        modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
+    )
 
     def objective(coords: np.ndarray) -> float:
         # Evaluate force vector and return negative magnitude for minimization
@@ -371,7 +375,6 @@ class KramersSystem1D(System):
     def __init__(
         self,
         *,
-        m: float,
         params: KramersParameters,
         n_dim: int = 1,
     ) -> None:
@@ -406,7 +409,7 @@ class KramersSystem1D(System):
         super().__init__(
             gamma=params.gamma,
             temperature=params.temperature,
-            m=m,
+            m=params.m,
             potential=(n_dim, potential),
             params=(
                 params.omega_well,
@@ -428,6 +431,7 @@ class KramersSystem1D(System):
             omega_barrier=self.params[1],
             barrier_energy=self.params[2],
             temperature=self.temperature,
+            m=self.m,
             gamma=self.gamma,
             units=self.units,
         )
@@ -451,7 +455,6 @@ class KramersSystem1D(System):
     def with_units(self, units: UnitSystem) -> KramersSystem1D:
         """Return the parameters of the system in the specified units."""
         return KramersSystem1D(
-            m=self.units.mass_into(self.m, units),
             params=self.kramers_params.with_units(units),
             n_dim=self.n_dim,
         )

@@ -1,13 +1,17 @@
 """Simulations using a hopping model."""
 
-from classical_diffusion.hopping._analysis import plot_deterministic_isf
+from classical_diffusion.hopping._analysis import (
+    get_deterministic_isf,
+    plot_deterministic_isf,
+)
 from classical_diffusion.hopping._hopping import (
     DeterministicSolverResult,
     HoppingSimulationResult,
-    get_ensemble_probabilities,
+    get_deterministic_probabilities,
     solve_ensemble,
 )
 from classical_diffusion.hopping._system import (
+    CanonicalLattice,
     KramersParameters,
     Lattice,
     Lattice1D,
@@ -17,12 +21,14 @@ from classical_diffusion.hopping._system import (
 )
 
 __all__ = [
+    "CanonicalLattice",
     "DeterministicSolverResult",
     "HoppingSimulationResult",
     "KramersParameters",
     "Lattice",
     "Lattice1D",
-    "get_ensemble_probabilities",
+    "get_deterministic_isf",
+    "get_deterministic_probabilities",
     "get_kramers_parameters_cosine",
     "get_kramers_rate",
     "lattice_1d_from_kramers_parameters",
