@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 import sympy as sp
 
-from classical_diffusion.plot import get_figure
+from classical_diffusion.plot import CAM_BLUE_CMAP, get_figure
 from classical_diffusion.util import _get_key
 
 if TYPE_CHECKING:
@@ -154,7 +154,10 @@ def plot_potential_2d(
         potential_func(x_grid, y_grid, *params.params), x_grid.shape
     )
 
-    mesh = ax.pcolormesh(x_grid, y_grid, potential)
+    mesh = ax.pcolormesh(x_grid, y_grid, potential, cmap=CAM_BLUE_CMAP)
+
+    cbar = fig.colorbar(mesh, ax=ax)
+    cbar.set_label(r"$V(x, y)$")
 
     ax.set_xlabel(r"x")
     ax.set_ylabel(r"y")
@@ -169,15 +172,16 @@ def plot_periodic_potential_fcc(
     *,
     n_points: tuple[int, int] = (100, 100),
     ax: Axes | None = None,
+    width: float = 4,
+    height: float = 4,
 ) -> tuple[Figure, Axes, QuadMesh]:
     """Plot the periodic potential in 2D."""
-    # TODO: fix up  PeriodicParameters2D to make lattice directions explicit # ruff:ignore[line-contains-todo]
     return plot_potential_2d(
         params,
-        (-2 * params.delta_x, -2 * params.delta_x),
+        (-width / 2 * params.delta_x, -height / 2 * params.delta_x),
         (
-            2 * params.delta_x,
-            2 * params.delta_x,
+            width / 2 * params.delta_x,
+            height / 2 * params.delta_x,
         ),
         n_points=n_points,
         ax=ax,
@@ -272,8 +276,11 @@ def get_exact_flat_ballistic_isf(
     times: np.ndarray[Any, np.dtype[np.floating[Any]]],
 ) -> np.ndarray:
     """Return the exact ballistic ISF for a 1D flat (potential-free) surface."""
-    k_squared = sum(k_i**2 for k_i in delta_k)
-    return np.exp(-((k_squared) * system.kbt / (2 * system.m)) * times**2)
+    kbt, m = system.kbt, system.m
+    m = np.atleast_2d(m)
+    inv_m = np.linalg.inv(m)
+    inner_product = np.einsum("i,ij,j->", delta_k, inv_m, delta_k)
+    return np.exp(-(inner_product * kbt / 2) * times**2)
 
 
 def plot_exact_flat_ballistic_isf(
@@ -348,7 +355,7 @@ def _get_under_barrier_probability_jax(
     return jnp.average(total_energies < barrier_energy, weights=weights)
 
 
-N_SAMPLES = 100000
+N_SAMPLES = 1_000_000
 
 
 def get_under_barrier_probability(
@@ -357,9 +364,7 @@ def get_under_barrier_probability(
     _key = _get_key(_key)
 
     canonical_system = system.with_normalized_units().as_canonical()
-    barrier_energy = canonical_system.units.energy_into(
-        barrier_energy, canonical_system.units
-    )
+    barrier_energy = system.units.energy_into(barrier_energy, canonical_system.units)
     return float(
         _get_under_barrier_probability_jax(
             key=_key,

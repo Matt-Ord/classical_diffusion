@@ -62,6 +62,7 @@ __all__ = [
     "get_characteristic_friction_time",
     "get_diffusion_time",
     "get_effective_mass",
+    "get_energy",
     "get_exact_flat_ballistic_isf",
     "get_exact_flat_isf",
     "get_exact_harmonic_isf",

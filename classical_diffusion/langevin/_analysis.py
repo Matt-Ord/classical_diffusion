@@ -344,7 +344,6 @@ def get_under_barrier_occupation(
 ) -> float:
     """Return the probability of a particle being trapped under barrier."""
     energies = _get_energy(system, x_points, p_points)
-    energies = energies[:, 0]
     is_under_barrier = energies < barrier_energy
     return np.sum(is_under_barrier) / is_under_barrier.size
 

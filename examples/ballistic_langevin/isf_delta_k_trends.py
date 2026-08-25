@@ -6,10 +6,9 @@ from classical_diffusion.analysis import (
 from classical_diffusion.langevin import (
     PeriodicSystem1D,
     breakdown_ballistic_trajectory,
-    get_diffusion_time,
     solve_ensemble_ballistic,
 )
-from classical_diffusion.plot import get_fancy_figure
+from classical_diffusion.plot import CAM_CHERRY_CMAP, get_two_panel_figure
 from classical_diffusion.simulation import TimeSpan
 
 system = PeriodicSystem1D(
@@ -26,30 +25,40 @@ def _plot_inelastic_trends() -> None:
     ballistic_result = solve_ensemble_ballistic(
         system,
         TimeSpan(
-            t_end=system.units.time_into(6e-12),
+            t_start=-10e-12,
+            t_end=10e-12,
             n_steps=1000,
         ),
         n_samples=2000,
     )
 
-    _, inelastic_result = breakdown_ballistic_trajectory(
+    elastic_result, inelastic_result = breakdown_ballistic_trajectory(
         ballistic_result,
-        filter_timescale=get_diffusion_time(
-            system, characteristic_length=system.delta_x / 0.5
-        ),
+        filter_timescale=1 / system.gamma,
     )
-    delta_k_values = np.linspace(0.1, 2.0, 9) * (2e10)
+    delta_k_values = np.linspace(0.1, 2.0, 9) * 2 * np.pi / system.delta_x * 0.5
 
-    fig, ax = get_fancy_figure()
-    _, ax = plot_isf_with_delta_k(
-        result=inelastic_result,
-        ax=ax,
+    fig, ax = get_two_panel_figure()
+    _, ax[0] = plot_isf_with_delta_k(
+        result=elastic_result,
+        ax=ax[0],
         delta_k_values=delta_k_values,
         pairwise=False,
     )
-    ax.set_xlim(0, 1e-12)
+
+    _, ax[1] = plot_isf_with_delta_k(
+        result=inelastic_result,
+        ax=ax[1],
+        delta_k_values=delta_k_values,
+        pairwise=False,
+        cmap=CAM_CHERRY_CMAP,
+    )
+
+    ax[0].set_xlim(0, 1e-12)
+    ax[0].set_ylim(0.8, 1.0)
+    ax[1].set_xlim(0, 1e-12)
     fig.savefig(
-        "examples/ballistic_langevin/inelastic_isf_trends/1d_periodic.trend.pdf",
+        "examples/ballistic_langevin/1d_periodic.isf_trend.pdf",
         dpi=300,
         bbox_inches="tight",
     )
