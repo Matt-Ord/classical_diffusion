@@ -98,8 +98,8 @@ class SimulationResult[S: Any]:
 class TimeSpan:
     """Time-stepping parameters, bundled together."""
 
-    t_start: float = field(default=0, metadata={"static": True})
-    t_end: float = field(metadata={"static": True})
+    t_start: float = 0
+    t_end: float
     n_steps: int = field(metadata={"static": True})
 
     def __post_init__(self) -> None:
