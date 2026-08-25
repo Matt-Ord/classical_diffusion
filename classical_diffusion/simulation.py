@@ -101,11 +101,3 @@ class TimeSpan:
     t_start: float = 0
     t_end: float
     n_steps: int = field(metadata={"static": True})
-
-    def __post_init__(self) -> None:
-        if self.t_end <= self.t_start:
-            msg = f"t_end must be greater than t_start, got t_start={self.t_start}, t_end={self.t_end}"
-            raise ValueError(msg)
-        if self.n_steps <= 1:
-            msg = f"Time span must have at least 2 steps, got n_steps={self.n_steps}"
-            raise ValueError(msg)

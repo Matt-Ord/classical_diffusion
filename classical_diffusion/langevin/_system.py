@@ -369,6 +369,36 @@ class DerivativeSafeMod(sp.Mod):
         return sp.Derivative(self, s)
 
 
+def _build_kramers_potential() -> sp.Expr:
+    x0 = sp.symbols("x0")
+    s0 = sp.symbols("s0")
+    s1 = sp.symbols("s1")
+    s2 = sp.symbols("s2")
+
+    # To express a double harmonic potential as a sympy expression, consider moving two harmonics towards each other
+    # y = 1/2 omega_well^2 x^2                      represents an upright harmonic centred at the origin
+    # y = E_b - 1/2 omega_barrier^2 (x - x_0)^2     represents an inverted harmonic centred at x_0, height E_b
+    # At the point where the double harmonic potential is smooth, the two harmonics just touch. So there will only
+    # be one solution to the above simultaneous system. Solving these equations gives a quadratic for x: then
+    # setting the determinant equal to zero gives an expression for x_0
+    # From this, the overlap point, x_meet, can be found and the expression for the periodic potential is as below.
+
+    omegas_ss = s0**2 + s1**2  # Omegas squared sum
+    x_0 = sp.sqrt((2 * omegas_ss * s2) / (s0**2 * s1**2))
+    x_meet = (s1**2 / omegas_ss) * x_0
+
+    periodic_x = DerivativeSafeMod(x0 + x_meet, 2 * x_0) - x_meet
+
+    return sp.Piecewise(
+        (0.5 * s0**2 * periodic_x**2, periodic_x <= x_meet),
+        (
+            s2 - 0.5 * s1**2 * (periodic_x - x_0) ** 2,
+            periodic_x >= x_meet,
+        ),
+        (0, True),
+    )
+
+
 class KramersSystem1D(System):
     """Parameters representing a periodic double harmonic system."""
 
@@ -378,44 +408,13 @@ class KramersSystem1D(System):
         params: KramersParameters,
         n_dim: int = 1,
     ) -> None:
-        x0 = sp.symbols("x0")
-        s0 = sp.symbols("s0")
-        s1 = sp.symbols("s1")
-        s2 = sp.symbols("s2")
-
-        # To express a double harmonic potential as a sympy expression, consider moving two harmonics towards each other
-        # y = 1/2 omega_well^2 x^2                      represents an upright harmonic centred at the origin
-        # y = E_b - 1/2 omega_barrier^2 (x - x_0)^2     represents an inverted harmonic centred at x_0, height E_b
-        # At the point where the double harmonic potential is smooth, the two harmonics just touch. So there will only
-        # be one solution to the above simultaneous system. Solving these equations gives a quadratic for x: then
-        # setting the determinant equal to zero gives an expression for x_0
-        # From this, the overlap point, x_meet, can be found and the expression for the periodic potential is as below.
-
-        omegas_ss = s0**2 + s1**2  # Omegas squared sum
-        x_0 = sp.sqrt((2 * omegas_ss * s2) / (s0**2 * s1**2))
-        x_meet = (s1**2 / omegas_ss) * x_0
-
-        periodic_x = DerivativeSafeMod(x0 + x_meet, 2 * x_0) - x_meet
-
-        potential = sp.Piecewise(
-            (0.5 * s0**2 * periodic_x**2, periodic_x <= x_meet),
-            (
-                s2 - 0.5 * s1**2 * (periodic_x - x_0) ** 2,
-                periodic_x >= x_meet,
-            ),
-            (0, True),
-        )
 
         super().__init__(
             gamma=params.gamma,
             temperature=params.temperature,
             m=params.m,
-            potential=(n_dim, potential),
-            params=(
-                params.omega_well,
-                params.omega_barrier,
-                params.barrier_energy,
-            ),
+            potential=(n_dim, _build_kramers_potential()),
+            params=(params.omega_well, params.omega_barrier, params.barrier_energy),
             units=params.units,
         )
 
