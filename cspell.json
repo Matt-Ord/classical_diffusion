@@ -6,6 +6,7 @@
         "axhline",
         "boltzman",
         "brentq",
+        "cbar",
         "cmap",
         "diffeqsolve",
         "diffrax",

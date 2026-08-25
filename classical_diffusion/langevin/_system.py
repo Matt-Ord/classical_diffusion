@@ -286,7 +286,7 @@ def _get_potential_expr_fcc() -> sp.Expr:
     """Return the potential energy expression for a 2D FCC lattice."""
     x0, x1 = sp.symbols("x0 x1")
     s0, s1 = sp.symbols("s0 s1")
-    c = sp.Integer(2) * sp.pi / (sp.sqrt(3.0) * s0)
+    c = sp.Integer(2) * sp.pi / s0
 
     kx0 = c * (sp.Integer(-1) / sp.sqrt(3.0))
     kx1 = c * sp.Integer(1)
@@ -336,6 +336,13 @@ class PeriodicSystemFCC(System):
     def barrier_energy(self) -> float:
         """The barrier energy of the system."""
         return self.params[1]
+
+    @property
+    def lattice_vectors(self) -> np.ndarray:
+        """Primitive lattice vectors (as rows) for the hexagonal unit cell."""
+        a1 = np.array([0.0, self.delta_x])
+        a2 = np.array([np.sqrt(3.0) / 2.0 * self.delta_x, 0.5 * self.delta_x])
+        return np.stack([a1, a2], axis=0)
 
     @override
     def with_units(self, units: UnitSystem) -> PeriodicSystemFCC:

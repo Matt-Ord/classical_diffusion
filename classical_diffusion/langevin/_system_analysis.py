@@ -5,7 +5,13 @@ import jax.numpy as jnp
 import numpy as np
 import sympy as sp
 
-from classical_diffusion.plot import CAM_BLUE_CMAP, get_figure
+from classical_diffusion.plot import (
+    CAM_BLUE_CMAP,
+    CAM_CHERRY,
+    CAM_CREST,
+    CAM_PURPLE,
+    get_figure,
+)
 from classical_diffusion.util import _get_key
 
 if TYPE_CHECKING:
@@ -163,6 +169,7 @@ def plot_potential_2d(
     ax.set_ylabel(r"y")
     ax.set_xlim(start[0], end[0])
     ax.set_ylim(start[1], end[1])
+    ax.set_aspect("equal", adjustable="box")
 
     return fig, ax, mesh
 
@@ -186,6 +193,185 @@ def plot_periodic_potential_fcc(
         n_points=n_points,
         ax=ax,
     )
+
+
+def add_unit_cell(  # ruff:ignore[too-many-arguments]
+    ax: Axes,
+    lattice_vectors: np.ndarray,
+    origin_site: tuple[int, int] = (0, 0),
+    *,
+    marker_color: str = CAM_CHERRY.warm,
+    color: str = CAM_CHERRY.dark,
+    a1_label_offset: tuple[float, float] = (-27.0, 0.0),
+    a2_label_offset: tuple[float, float] = (20.0, -13.0),
+) -> None:
+    a1, a2 = np.asarray(lattice_vectors)
+    origin = origin_site[0] * a1 + origin_site[1] * a2
+
+    corners = [
+        origin,
+        origin + a1,
+        origin + a1 + a2,
+        origin + a2,
+    ]
+
+    closed = [*corners, corners[0]]
+    xs, ys = zip(*closed, strict=False)
+    ax.plot(xs, ys, linestyle="-", color=color, linewidth=1.5, zorder=4)
+
+    for corner in corners:
+        ax.plot(*corner, marker="o", color=marker_color, markersize=8, zorder=5)
+
+    labelled_edges = [
+        (corners[0], corners[1], a1_label_offset),  # a1 edge
+        (corners[0], corners[3], a2_label_offset),  # a2 edge
+    ]
+
+    for start, end, offset in labelled_edges:
+        start = np.asarray(start)
+        end = np.asarray(end)
+        distance = float(np.linalg.norm(end - start))
+        midpoint = (start + end) / 2
+
+        ax.annotate(
+            f"{distance:.3g} m".strip(),
+            xy=midpoint,
+            xytext=offset,
+            textcoords="offset points",
+            ha="center",
+            va="center",
+            color=marker_color,
+            fontsize=9,
+        )
+
+
+def add_bridge_site_energy(
+    ax: Axes,
+    system: Any,
+    origin_site: tuple[int, int] = (0, 0),
+    *,
+    color: str = CAM_PURPLE.dark,
+    label_offset: tuple[float, float] = (18.0, 12.0),
+) -> float:
+    a1, a2 = np.asarray(system.lattice_vectors)
+    origin = origin_site[0] * a1 + origin_site[1] * a2
+    bridge_point = origin + a2 + a1 / 2  # midpoint of the top edge
+
+    potential_func = sp.lambdify(
+        system.lambda_symbols,
+        system.potential_expr,
+        modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
+    )
+    bridge_energy = float(
+        potential_func(bridge_point[0], bridge_point[1], *system.params)
+    )
+
+    ax.plot(
+        *bridge_point,
+        marker="x",
+        color=color,
+        markersize=9,
+        markeredgewidth=2,
+        zorder=10,
+    )
+    ax.annotate(
+        f"{bridge_energy:.3g} J".strip(),
+        xy=bridge_point,
+        xytext=label_offset,
+        textcoords="offset points",
+        ha="left",
+        va="bottom",
+        color=color,
+        fontsize=9,
+        zorder=10,
+    )
+
+    return bridge_energy
+
+
+def add_top_site_energy(
+    ax: Axes,
+    system: Any,
+    origin_site: tuple[int, int] = (0, 0),
+    *,
+    color: str = CAM_PURPLE.dark,
+    label_offset: tuple[float, float] = (12.0, -12.0),
+) -> float:
+    a1, a2 = np.asarray(system.lattice_vectors)
+    top_point = origin_site[0] * a1 + origin_site[1] * a2
+
+    potential_func = sp.lambdify(
+        system.lambda_symbols,
+        system.potential_expr,
+        modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
+    )
+    top_energy = float(potential_func(top_point[0], top_point[1], *system.params))
+
+    ax.plot(
+        *top_point,
+        marker="x",
+        color=color,
+        markersize=9,
+        markeredgewidth=2,
+        zorder=10,
+    )
+    ax.annotate(
+        f"{top_energy:.3g} J".strip(),
+        xy=top_point,
+        xytext=label_offset,
+        textcoords="offset points",
+        ha="left",
+        va="top",
+        color=color,
+        fontsize=9,
+        zorder=10,
+    )
+
+    return top_energy
+
+
+def add_hollow_site_distance(
+    ax: Axes,
+    system: Any,
+    origin_site: tuple[int, int] = (0, 0),
+    *,
+    color: str = CAM_CREST.warm,
+    marker_color: str = CAM_CREST.dark,
+    label_offset: tuple[float, float] = (12.0, 0.0),
+) -> float:
+
+    a1, a2 = np.asarray(system.lattice_vectors)
+    origin = origin_site[0] * a1 + origin_site[1] * a2
+
+    hollow_a = origin + (a1 + a2) / 3
+    hollow_b = origin + 2 * (a1 + a2) / 3
+    distance = float(np.linalg.norm(hollow_b - hollow_a))
+
+    ax.plot(*hollow_a, marker="o", color=marker_color, markersize=8, zorder=10)
+    ax.plot(*hollow_b, marker="o", color=marker_color, markersize=8, zorder=10)
+    ax.plot(
+        [hollow_a[0], hollow_b[0]],
+        [hollow_a[1], hollow_b[1]],
+        linestyle="--",
+        color=color,
+        linewidth=1.2,
+        zorder=10,
+    )
+
+    midpoint = (hollow_a + hollow_b) / 2
+    ax.annotate(
+        f"{distance:.3g} m".strip(),
+        xy=midpoint,
+        xytext=label_offset,
+        textcoords="offset points",
+        ha="left",
+        va="center",
+        color=color,
+        fontsize=9,
+        zorder=10,
+    )
+
+    return distance
 
 
 def get_exact_harmonic_isf(

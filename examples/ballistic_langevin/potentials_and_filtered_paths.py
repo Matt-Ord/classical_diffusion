@@ -3,10 +3,14 @@ from classical_diffusion.analysis import (
     plot_x_evolution_2d,
 )
 from classical_diffusion.langevin import (
+    SODIUM_COPPER_SYSTEM_1D,
+    SODIUM_COPPER_SYSTEM_2D,
     LangevinSimulationResult,
-    PeriodicSystem1D,
-    PeriodicSystemFCC,
     System,
+    add_bridge_site_energy,
+    add_hollow_site_distance,
+    add_top_site_energy,
+    add_unit_cell,
     breakdown_ballistic_trajectory,
     plot_periodic_potential_1d,
     plot_periodic_potential_fcc,
@@ -18,13 +22,7 @@ from classical_diffusion.simulation import TimeSpan
 
 def _plot_periodic_system_1d() -> None:
 
-    system = PeriodicSystem1D(
-        gamma=4e11,
-        temperature=150,
-        m=6e-27,
-        delta_x=1.48e-10,
-        barrier_energy=10e-21,
-    )
+    system = SODIUM_COPPER_SYSTEM_1D
 
     fig, ax = get_fancy_figure()
     _, _, _ = plot_periodic_potential_1d(system, ax=ax)
@@ -46,13 +44,7 @@ def _truncate_results[S: System](
 
 def _plot_filtered_ballistic_trajectory_1d() -> None:
 
-    system = PeriodicSystem1D(
-        gamma=4e11,
-        temperature=150,
-        m=6e-27,
-        delta_x=1.48e-10,
-        barrier_energy=10e-22,
-    )
+    system = SODIUM_COPPER_SYSTEM_1D
 
     result = solve_ensemble_ballistic.call_uncached(
         system,
@@ -86,28 +78,22 @@ def _plot_filtered_ballistic_trajectory_1d() -> None:
 
 def _plot_periodic_system_fcc() -> None:
 
-    system = PeriodicSystemFCC(
-        gamma=4e11,
-        temperature=102,
-        m=6e-26,
-        delta_x=20e-10,
-        barrier_energy=1.6e-21,
-    )
+    system = SODIUM_COPPER_SYSTEM_2D
 
     fig, ax = get_fancy_figure()
-    _, _, _ = plot_periodic_potential_fcc(system, ax=ax, height=10, width=8)
-    fig.savefig("examples/ballistic_langevin/2d_fcc.potential.pdf")
+    _, _, _ = plot_periodic_potential_fcc(system, ax=ax, height=5, width=4)
+    add_unit_cell(ax, system.lattice_vectors)
+    _ = add_bridge_site_energy(ax, system)
+    _ = add_top_site_energy(ax, system)
+    _ = add_hollow_site_distance(ax, system)
+    fig.savefig(
+        "examples/ballistic_langevin/2d_fcc.potential.pdf", dpi=300, bbox_inches="tight"
+    )
 
 
 def _plot_filtered_ballistic_trajectory_2d() -> None:
 
-    system = PeriodicSystemFCC(
-        gamma=4e11,
-        temperature=105,
-        m=6e-27,
-        delta_x=1.48e-10,
-        barrier_energy=1.6e-21,
-    )
+    system = SODIUM_COPPER_SYSTEM_2D
 
     result = solve_ensemble_ballistic.call_uncached(
         system,
