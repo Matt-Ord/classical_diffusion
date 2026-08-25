@@ -117,7 +117,7 @@ class KramersParameters:
         omegas_ss = self.omega_well**2 + self.omega_barrier**2
         return 2 * np.sqrt(
             (2 * omegas_ss * self.barrier_energy)
-            / (self.m * self.omega_barrier**2 * self.omega_well**2)
+            / (self.omega_barrier**2 * self.omega_well**2)
         )
 
     @property

@@ -460,60 +460,6 @@ class KramersSystem1D(System):
         )
 
 
-class KramersSystemMeta(type):
-    def get_potential(
-        cls,
-    ) -> sp.Expr:
-        raise NotImplementedError
-
-    def __call__(  # ruff: ignore[too-many-arguments, too-many-positional-arguments]
-        cls,
-        gamma: float,
-        temperature: float,
-        m: float,
-        omega_well: float,
-        omega_barrier: float,
-        barrier_energy: float,
-        n_dim: int = 1,
-    ) -> CanonicalSystem:
-
-        potential = cls.get_potential()
-
-        return CanonicalSystem(
-            gamma=gamma,
-            temperature=temperature,
-            m=m,
-            potential=(n_dim, potential),
-            params=(omega_well, omega_barrier, barrier_energy),
-        )
-
-
-class KramersSystem1DJax(metaclass=KramersSystemMeta):
-    @classmethod
-    def get_potential(
-        cls,
-    ) -> sp.Expr:
-        x0 = sp.symbols("x0")
-        s0 = sp.symbols("s0")
-        s1 = sp.symbols("s1")
-        s2 = sp.symbols("s2")
-
-        omegas_ss = s0**2 + s1**2  # Omegas squared sum
-        x_0 = sp.sqrt((2 * omegas_ss * s2) / (s0**2 * s1**2))
-        x_meet = (s1**2 / omegas_ss) * x_0
-
-        periodic_x = DerivativeSafeMod(x0 + x_meet, 2 * x_0) - x_meet
-
-        return sp.Piecewise(
-            (0.5 * s0**2 * periodic_x**2, periodic_x <= x_meet),
-            (
-                s2 - 0.5 * s1**2 * (periodic_x - x_0) ** 2,
-                periodic_x >= x_meet,
-            ),
-            (0, True),
-        )
-
-
 def get_diffusion_time(system: System, characteristic_length: float) -> float:
     """Return the average time for a particle to traverse a characteristic length."""
     return np.sqrt(system.m * characteristic_length**2 / system.kbt)
