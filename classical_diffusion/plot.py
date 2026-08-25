@@ -5,6 +5,7 @@ import matplotlib.font_manager as fm
 import matplotlib.pyplot as plt
 import numpy as np
 from cycler import cycler
+from matplotlib.colors import LinearSegmentedColormap
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -119,6 +120,25 @@ CAM_SLATE_3 = "#546072"
 CAM_SLATE_4 = "#232830"
 
 
+CAM_BLUE_CMAP = LinearSegmentedColormap.from_list(
+    "cambridge_potential",
+    [
+        CAM_BLUE.light,
+        CAM_BLUE.warm,
+        CAM_BLUE.dark,
+    ],
+)
+
+CAM_CHERRY_CMAP = LinearSegmentedColormap.from_list(
+    "cambridge_potential",
+    [
+        CAM_CHERRY.light,
+        CAM_CHERRY.warm,
+        CAM_CHERRY.dark,
+    ],
+)
+
+
 def get_fig_size() -> tuple[float, float]:
     """Get default figure size in inches based on document text width."""
     total_textwidth_pt = 437.5
@@ -133,12 +153,12 @@ def get_fig_size() -> tuple[float, float]:
 
 
 CAM_COLOR_CYCLE = [
-    CAM_BLUE.warm,
     CAM_BLUE.dark,
-    CAM_CHERRY.warm,
+    CAM_BLUE.warm,
     CAM_CHERRY.dark,
-    CAM_CREST.warm,
+    CAM_CHERRY.warm,
     CAM_CREST.dark,
+    CAM_CREST.warm,
 ]
 
 
@@ -203,7 +223,7 @@ def get_fancy_figure(
 def get_two_panel_figure() -> tuple[Figure, list[Axes]]:
     """Create a two-panel figure with fancy styling."""
     setup_rc_params()
-    fig, ax = plt.subplots(layout="constrained", ncols=2, figsize=(6, 2.5))
+    fig, ax = plt.subplots(layout="constrained", ncols=2, figsize=(6, 4))
     setup_fancy_figure(fig, ax)
     return fig, ax
 

@@ -3,9 +3,11 @@
     "version": "0.2",
     "language": "en",
     "words": [
+        "atleast",
         "axhline",
         "boltzman",
         "brentq",
+        "cbar",
         "cmap",
         "diffeqsolve",
         "diffrax",
@@ -35,11 +37,14 @@
         "vmin",
         "xedges",
         "xlim",
+        "xscale",
         "xticks",
+        "xytext",
         "yedges",
         "ylim",
         "yscale",
-        "yticks"
+        "yticks",
+        "zorder"
     ],
     "ignoreWords": [
         "Phonopy",

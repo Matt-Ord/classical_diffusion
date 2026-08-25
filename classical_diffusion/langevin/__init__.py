@@ -1,6 +1,6 @@
 """Langevin Simulations of a Physical System."""
 
-from classical_diffusion.langevin._analysis import (
+from classical_diffusion.langevin._analysis import (  # ruff:ignore[unsorted-imports]
     breakdown_ballistic_trajectory,
     get_effective_mass,
     get_under_barrier_occupation,
@@ -12,6 +12,7 @@ from classical_diffusion.langevin._analysis import (
     plot_x_distribution_histogram,
     plot_x_distribution_kde,
 )
+
 from classical_diffusion.langevin._langevin import (
     LangevinSimulationResult,
     SingleLangevinSimulationResult,
@@ -50,9 +51,18 @@ from classical_diffusion.langevin._system_analysis import (
     plot_periodic_potential_fcc,
     plot_potential_1d,
     plot_potential_2d,
+    add_bridge_site_energy,
+    add_top_site_energy,
+    add_hollow_site_distance,
+)
+from classical_diffusion.langevin._experimental_systems import (
+    SODIUM_COPPER_SYSTEM_1D,
+    SODIUM_COPPER_SYSTEM_2D,
 )
 
 __all__ = [
+    "SODIUM_COPPER_SYSTEM_1D",
+    "SODIUM_COPPER_SYSTEM_2D",
     "CanonicalSystem",
     "HarmonicSystem",
     "KramersSystem1D",
@@ -61,6 +71,9 @@ __all__ = [
     "PeriodicSystemFCC",
     "SingleLangevinSimulationResult",
     "System",
+    "add_bridge_site_energy",
+    "add_hollow_site_distance",
+    "add_top_site_energy",
     "breakdown_ballistic_trajectory",
     "get_characteristic_friction_time",
     "get_diffusion_time",

@@ -5,8 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 import sympy as sp
 
-from classical_diffusion.langevin._langevin import _get_langevin_units
-from classical_diffusion.plot import get_figure
+from classical_diffusion.plot import CAM_BLUE_CMAP, get_figure
 from classical_diffusion.util import _get_key
 
 if TYPE_CHECKING:
@@ -14,6 +13,7 @@ if TYPE_CHECKING:
     from matplotlib.collections import QuadMesh
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
+    from matplotlib.text import Annotation
 
     from classical_diffusion.langevin._system import (
         HarmonicSystem,
@@ -112,19 +112,72 @@ def plot_periodic_potential_1d(
     )
 
 
+def _add_unit_cell(  # ruff:ignore[too-many-locals]
+    ax: Axes,
+    system: System,
+    origin_site: tuple[int, int] = (0, 0),
+    *,
+    a1_label_offset: tuple[float, float] = (-27.0, 0.0),
+    a2_label_offset: tuple[float, float] = (20.0, -13.0),
+) -> tuple[list[Line2D], Line2D, list[Annotation]]:
+    a1, a2 = np.asarray(system.lattice_vectors)
+    origin = origin_site[0] * a1 + origin_site[1] * a2
+
+    corner_points = [
+        origin,
+        origin + a1,
+        origin + a1 + a2,
+        origin + a2,
+    ]
+
+    closed = [*corner_points, corner_points[0]]
+    xs, ys = zip(*closed, strict=False)
+    (edges,) = ax.plot(xs, ys, linestyle="-", linewidth=1.5, zorder=4)
+
+    corner_markers = [
+        ax.plot(*corner, marker="o", markersize=8, zorder=5)[0]
+        for corner in corner_points
+    ]
+
+    labelled_edges = [
+        (corner_points[0], corner_points[1], a1_label_offset),  # a1 edge
+        (corner_points[0], corner_points[3], a2_label_offset),  # a2 edge
+    ]
+
+    annotations = []
+    for start, end, offset in labelled_edges:
+        start_arr = np.asarray(start)
+        end_arr = np.asarray(end)
+        distance = float(np.linalg.norm(end_arr - start_arr))
+        midpoint = (start_arr + end_arr) / 2
+
+        annotation = ax.annotate(
+            f"{distance:.3g} m".strip(),
+            xy=midpoint,
+            xytext=offset,
+            textcoords="offset points",
+            ha="center",
+            va="center",
+            fontsize=9,
+        )
+        annotations.append(annotation)
+
+    return corner_markers, edges, annotations
+
+
 def plot_potential_2d(
-    params: System,
+    system: System,
     start: tuple[float, ...],
     end: tuple[float, ...],
     *,
     n_points: tuple[int, int] = (100, 100),
     ax: Axes | None = None,
-) -> tuple[Figure, Axes, QuadMesh]:
+) -> tuple[Figure, Axes, QuadMesh, tuple]:
     """Plot the potential energy surface for a 2D system as a filled heatmap.
 
     Parameters
     ----------
-    params : System
+    system : System
         The system for which to plot the potential.
     start : tuple[float, ...]
         The lower-bound coordinates (x_min, y_min).
@@ -147,42 +200,167 @@ def plot_potential_2d(
     x_grid, y_grid = np.meshgrid(x, y)
 
     potential_func = sp.lambdify(
-        params.lambda_symbols,
-        params.potential_expr,
+        system.lambda_symbols,
+        system.potential_expr,
         modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
     )
     potential = np.broadcast_to(
-        potential_func(x_grid, y_grid, *params.params), x_grid.shape
+        potential_func(x_grid, y_grid, *system.params), x_grid.shape
     )
 
-    mesh = ax.pcolormesh(x_grid, y_grid, potential)
+    mesh = ax.pcolormesh(x_grid, y_grid, potential, cmap=CAM_BLUE_CMAP)
+
+    color_bar = fig.colorbar(mesh, ax=ax)
+    color_bar.set_label(r"$V(x, y)$")
+    unit_cell = _add_unit_cell(ax=ax, system=system)
 
     ax.set_xlabel(r"x")
     ax.set_ylabel(r"y")
     ax.set_xlim(start[0], end[0])
     ax.set_ylim(start[1], end[1])
+    ax.set_aspect("equal", adjustable="box")
 
-    return fig, ax, mesh
+    return fig, ax, mesh, unit_cell
 
 
 def plot_periodic_potential_fcc(
-    params: PeriodicSystemFCC,
+    system: PeriodicSystemFCC,
     *,
     n_points: tuple[int, int] = (100, 100),
     ax: Axes | None = None,
-) -> tuple[Figure, Axes, QuadMesh]:
+    width: float = 4,
+    height: float = 4,
+) -> tuple[Figure, Axes, QuadMesh, tuple]:
     """Plot the periodic potential in 2D."""
-    # TODO: fix up  PeriodicParameters2D to make lattice directions explicit # ruff:ignore[line-contains-todo]
     return plot_potential_2d(
-        params,
-        (-2 * params.delta_x, -2 * params.delta_x),
+        system,
+        (-width / 2 * system.delta_x, -height / 2 * system.delta_x),
         (
-            2 * params.delta_x,
-            2 * params.delta_x,
+            width / 2 * system.delta_x,
+            height / 2 * system.delta_x,
         ),
         n_points=n_points,
         ax=ax,
     )
+
+
+def add_bridge_site_energy(
+    ax: Axes,
+    system: PeriodicSystemFCC,
+    origin_site: tuple[int, int] = (0, 0),
+    *,
+    label_offset: tuple[float, float] = (18.0, 12.0),
+) -> tuple:
+    a1, a2 = np.asarray(system.lattice_vectors)
+    origin = origin_site[0] * a1 + origin_site[1] * a2
+    bridge_point = origin + a2 + a1 / 2  # midpoint of the top edge
+
+    potential_func = sp.lambdify(
+        system.lambda_symbols,
+        system.potential_expr,
+        modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
+    )
+    bridge_energy = float(
+        potential_func(bridge_point[0], bridge_point[1], *system.params)
+    )
+
+    site = ax.plot(
+        *bridge_point,
+        marker="x",
+        markersize=9,
+        markeredgewidth=2,
+        zorder=10,
+    )
+    annotation = ax.annotate(
+        f"{bridge_energy:.3g} J".strip(),
+        xy=bridge_point,
+        xytext=label_offset,
+        textcoords="offset points",
+        ha="left",
+        va="bottom",
+        fontsize=9,
+        zorder=10,
+    )
+
+    return ax, site, annotation
+
+
+def add_top_site_energy(
+    ax: Axes,
+    system: PeriodicSystemFCC,
+    origin_site: tuple[int, int] = (0, 0),
+    *,
+    label_offset: tuple[float, float] = (12.0, -12.0),
+) -> tuple:
+    a1, a2 = np.asarray(system.lattice_vectors)
+    top_point = origin_site[0] * a1 + origin_site[1] * a2
+
+    potential_func = sp.lambdify(
+        system.lambda_symbols,
+        system.potential_expr,
+        modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
+    )
+    top_energy = float(potential_func(top_point[0], top_point[1], *system.params))
+
+    site = ax.plot(
+        *top_point,
+        marker="x",
+        markersize=9,
+        markeredgewidth=2,
+        zorder=10,
+    )
+    annotation = ax.annotate(
+        f"{top_energy:.3g} J".strip(),
+        xy=top_point,
+        xytext=label_offset,
+        textcoords="offset points",
+        ha="left",
+        va="top",
+        fontsize=9,
+        zorder=10,
+    )
+
+    return ax, site, annotation
+
+
+def add_hollow_site_distance(
+    ax: Axes,
+    system: PeriodicSystemFCC,
+    origin_site: tuple[int, int] = (0, 0),
+    *,
+    label_offset: tuple[float, float] = (12.0, 0.0),
+) -> tuple:
+
+    a1, a2 = np.asarray(system.lattice_vectors)
+    origin = origin_site[0] * a1 + origin_site[1] * a2
+
+    hollow_a = origin + (a1 + a2) / 3
+    hollow_b = origin + 2 * (a1 + a2) / 3
+    distance = float(np.linalg.norm(hollow_b - hollow_a))
+
+    site_a = ax.plot(*hollow_a, marker="o", markersize=8, zorder=10)
+    site_b = ax.plot(*hollow_b, marker="o", markersize=8, zorder=10)
+    line = ax.plot(
+        [hollow_a[0], hollow_b[0]],
+        [hollow_a[1], hollow_b[1]],
+        linestyle="--",
+        linewidth=1.2,
+        zorder=10,
+    )
+
+    midpoint = (hollow_a + hollow_b) / 2
+    annotation = ax.annotate(
+        f"{distance:.3g} m".strip(),
+        xy=midpoint,
+        xytext=label_offset,
+        textcoords="offset points",
+        ha="left",
+        va="center",
+        fontsize=9,
+        zorder=10,
+    )
+
+    return distance, (site_a, site_b), line, annotation
 
 
 def get_exact_harmonic_isf(
@@ -273,8 +451,11 @@ def get_exact_flat_ballistic_isf(
     times: np.ndarray[Any, np.dtype[np.floating[Any]]],
 ) -> np.ndarray:
     """Return the exact ballistic ISF for a 1D flat (potential-free) surface."""
-    k_squared = sum(k_i**2 for k_i in delta_k)
-    return np.exp(-((k_squared) * system.kbt / (2 * system.m)) * times**2)
+    kbt, m = system.kbt, system.m
+    m = np.atleast_2d(m)
+    inv_m = np.linalg.inv(m)
+    inner_product = np.einsum("i,ij,j->", delta_k, inv_m, delta_k)
+    return np.exp(-(inner_product * kbt / 2) * times**2)
 
 
 def plot_exact_flat_ballistic_isf(
@@ -336,11 +517,7 @@ def _get_under_barrier_probability_jax(
         jax.random.normal(key_p, shape=(n_samples, system.n_dim)) * p_standard_deviation
     )
 
-    potential_fn = sp.lambdify(
-        system.lambda_symbols,
-        system.potential_expr,
-        modules=[{"DerivativeSafeMod": jnp.mod}, "jax"],
-    )
+    potential_fn = sp.lambdify(system.lambda_symbols, system.potential_expr, "jax")
     v_energies = jax.vmap(lambda x: potential_fn(*x, *system.params))(x_samples)
     kinetic_energies = jnp.sum(p_samples**2, axis=-1) / (2.0 * system.m)
     total_energies = v_energies + kinetic_energies
@@ -353,18 +530,16 @@ def _get_under_barrier_probability_jax(
     return jnp.average(total_energies < barrier_energy, weights=weights)
 
 
-N_SAMPLES = 100000
+N_SAMPLES = 1_000_000
 
 
 def get_under_barrier_probability(
     system: System, barrier_energy: float, *, _key: jax.Array | None = None
 ) -> float:
     _key = _get_key(_key)
-    units = _get_langevin_units(system)
-    canonical_system = system.with_units(units).as_canonical()
-    barrier_energy = canonical_system.units.energy_into(
-        barrier_energy, canonical_system.units
-    )
+
+    canonical_system = system.with_normalized_units().as_canonical()
+    barrier_energy = system.units.energy_into(barrier_energy, canonical_system.units)
     return float(
         _get_under_barrier_probability_jax(
             key=_key,
