@@ -227,7 +227,7 @@ def _run_many_overdamped_jit(
             tol=1e-4,
             shape=(system.n_dim,),
             key=key,
-            levy_area=dfx.SpaceTimeTimeLevyArea,
+            levy_area=dfx.SpaceTimeLevyArea,
         )
 
         # dx = (F(x) / gamma) dt + sqrt(2 kB T / gamma) dW
@@ -253,7 +253,7 @@ def _run_many_overdamped_jit(
                 step_ts=times,
             ),
             saveat=dfx.SaveAt(ts=times),
-            max_steps=100_000_000,
+            max_steps=None,
         )
         return sol.ys
 

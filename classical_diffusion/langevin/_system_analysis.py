@@ -5,6 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 import sympy as sp
 
+from classical_diffusion.langevin._langevin import _get_langevin_units
 from classical_diffusion.plot import get_figure
 from classical_diffusion.util import _get_key
 
@@ -359,8 +360,8 @@ def get_under_barrier_probability(
     system: System, barrier_energy: float, *, _key: jax.Array | None = None
 ) -> float:
     _key = _get_key(_key)
-
-    canonical_system = system.with_normalized_units().as_canonical()
+    units = _get_langevin_units(system)
+    canonical_system = system.with_units(units).as_canonical()
     barrier_energy = canonical_system.units.energy_into(
         barrier_energy, canonical_system.units
     )

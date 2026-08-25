@@ -5,7 +5,6 @@ from typing import final, override
 
 import jax
 import numpy as np
-import scipy.optimize
 import sympy as sp
 
 from classical_diffusion.hopping import KramersParameters
@@ -15,32 +14,6 @@ from classical_diffusion.system import CanonicalUnitSystem, UnitSystem
 def _hash_sympy_expr(expr: sp.Expr) -> int:
     stable_string = sp.srepr(expr)
     return zlib.crc32(stable_string.encode("utf-8"))
-
-
-def max_force(system: System) -> float:
-    """Find max ||F|| numerically using SciPy minimization starting at the origin."""
-    if not system.force_expr or system.potential_expr == 0:
-        return 0.0
-
-    param_map = dict(zip(system.parameter_symbols, system.params, strict=False))
-    force = sp.Matrix(system.force_expr).subs(param_map)
-
-    # Convert the symbolic force vector into a fast numerical function
-    force_fn = sp.lambdify(
-        system.coordinate_symbols,
-        force,
-        modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
-    )
-
-    def objective(coords: np.ndarray) -> float:
-        # Evaluate force vector and return negative magnitude for minimization
-        f_vec = np.array(force_fn(*coords), dtype=float)
-        return -float(np.linalg.norm(f_vec))
-
-    x0 = np.zeros(len(system.coordinate_symbols))
-    res = scipy.optimize.minimize(objective, x0)
-
-    return float(-res.fun) if res.success else 0.0
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -142,31 +115,6 @@ class System:
             params=self.params,
         )
 
-    @property
-    def normalized_units(self) -> UnitSystem:
-        """Units scaled purely via intrinsic physical scales of V(x), T, m, and gamma."""
-        # Express rates in uniform units (s^-1)
-        rate_force = max_force(self) / np.sqrt(self.m * self.kbt)
-        rate_force = 0.0 if rate_force == sp.oo else float(rate_force)
-        rate_gamma = self.gamma
-
-        # Select dominant physical rate
-        # If gamma and force are both small, then dont scale the units
-        # Length is velocity * time, and time is 1 / nu_0
-        v_th = np.sqrt(self.kbt / self.m)
-        nu_0 = max(rate_force, rate_gamma, v_th / 1.0)
-        characteristic_length = v_th / nu_0
-
-        return UnitSystem(
-            boltzmann=1 / self.temperature,
-            atomic_mass=self.units.atomic_mass / self.m,
-            angstrom=self.units.angstrom / characteristic_length,
-        )
-
-    def with_normalized_units(self) -> System:
-        """Return the parameters of the simulation in normalized units."""
-        return self.with_units(self.normalized_units)
-
     def with_si_units(self) -> System:
         """Return the si parameters of the system."""
         return self.with_units(UnitSystem())
@@ -184,10 +132,6 @@ class CanonicalSystem(System):
     def with_units(self, units: UnitSystem) -> CanonicalSystem:
         """Return the system converted to the given units."""
         return super().with_units(units).as_canonical()
-
-    def with_normalized_units(self) -> CanonicalSystem:
-        """Return the parameters of the simulation in normalized units."""
-        return self.with_units(self.normalized_units).as_canonical()
 
 
 class HarmonicSystem(System):

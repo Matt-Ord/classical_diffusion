@@ -24,7 +24,9 @@ from classical_diffusion.langevin._langevin import (
     solve_single,
     solve_single_ballistic,
 )
-from classical_diffusion.langevin._sample import get_random_initial_conditions
+from classical_diffusion.langevin._langevin import (
+    get_random_initial_conditions_ext as get_random_initial_conditions,
+)
 from classical_diffusion.langevin._system import (
     CanonicalSystem,
     HarmonicSystem,

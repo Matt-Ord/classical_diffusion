@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Any, Self, override
 import jax
 import jax.numpy as jnp
 import numpy as np
+import scipy
+import sympy as sp
 
 from classical_diffusion.jax.langevin import (
     solve_many as solve_many_jax,
@@ -13,19 +15,21 @@ from classical_diffusion.jax.langevin import (
 from classical_diffusion.jax.langevin import (
     solve_many_overdamped as solve_many_overdamped_jax,
 )
-from classical_diffusion.langevin._sample import get_random_initial_conditions
+from classical_diffusion.langevin._sample import (
+    _sample_initial_conditions,
+)
 from classical_diffusion.simulation import (
     SimulationResult,
     SingleSimulationResult,
     TimeSpan,
 )
+from classical_diffusion.system import UnitSystem
 from classical_diffusion.util import _get_key, cached, hash_array, timed
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
     from classical_diffusion.langevin import System
-    from classical_diffusion.system import UnitSystem
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -102,6 +106,102 @@ def _convert_time_span(
     )
 
 
+def _get_max_force(system: System) -> float:
+    """Find max ||F|| numerically using SciPy minimization starting at the origin."""
+    if not system.force_expr or system.potential_expr == 0:
+        return 0.0
+
+    param_map = dict(zip(system.parameter_symbols, system.params, strict=False))
+    force = sp.Matrix(system.force_expr).subs(param_map)
+
+    # Convert the symbolic force vector into a fast numerical function
+    force_fn = sp.lambdify(
+        system.coordinate_symbols,
+        force,
+        modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
+    )
+
+    def objective(coords: np.ndarray) -> float:
+        # Evaluate force vector and return negative magnitude for minimization
+        f_vec = np.array(force_fn(*coords), dtype=float)
+        return -float(np.linalg.norm(f_vec))
+
+    x0 = np.zeros(len(system.coordinate_symbols))
+    res = scipy.optimize.minimize(objective, x0)
+
+    return float(-res.fun) if res.success else 0.0
+
+
+def _get_langevin_units(system: System) -> UnitSystem:
+    """Units scaled purely via intrinsic physical scales of V(x), T, m, and gamma."""
+    # Express rates in uniform units (s^-1)
+    rate_force = _get_max_force(system) / np.sqrt(system.m * system.kbt)
+    rate_force = 0.0 if rate_force == np.inf else float(rate_force)
+    rate_gamma = system.gamma
+
+    # Select dominant physical rate
+    # If gamma and force are both small, then dont scale the units
+    # Length is velocity * time, and time is 1 / nu_0
+    v_th = np.sqrt(system.kbt / system.m)
+    nu_0 = max(rate_force, rate_gamma, v_th / 1.0)
+    characteristic_length = v_th / nu_0
+
+    return UnitSystem(
+        boltzmann=1 / system.temperature,
+        atomic_mass=system.units.atomic_mass / system.m,
+        angstrom=system.units.angstrom / characteristic_length,
+    )
+
+
+def get_random_initial_conditions(
+    system: System,
+    n_samples: int,
+    *,
+    minimum_energy: float = 0.0,
+    _key: jax.Array,
+) -> tuple[
+    np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
+]:
+    """Get random initial conditions for a given system."""
+    _key = _get_key(_key)
+
+    x_points, p_points = _sample_initial_conditions(
+        system.as_canonical(),
+        n_samples,
+        minimum_energy=minimum_energy,
+        _key=_key,
+    )
+    x_points = np.array(x_points.reshape(-1, system.n_dim))
+    p_points = np.array(p_points.reshape(-1, system.n_dim))
+    return (x_points, p_points)
+
+
+def get_random_initial_conditions_ext(
+    system: System,
+    n_samples: int,
+    *,
+    minimum_energy: float = 0.0,
+    _key: jax.Array | None = None,
+) -> tuple[
+    np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
+]:
+    """Get random initial conditions for a given system."""
+    _key = _get_key(_key)
+    normalized_system = system.with_units(_get_langevin_units(system)).as_canonical()
+    x_points, p_points = get_random_initial_conditions(
+        normalized_system,
+        n_samples,
+        minimum_energy=system.units.energy_into(
+            minimum_energy, normalized_system.units
+        ),
+        _key=_key,
+    )
+    return (
+        normalized_system.units.length_into(x_points, system.units),
+        normalized_system.units.momentum_into(p_points, system.units),
+    )
+
+
 def _solve_many_path[S: System](
     system: S,
     time_span: TimeSpan,
@@ -125,7 +225,7 @@ def solve_many[S: System](
     _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of ULD Langevin trajectories in parallel via jax.vmap."""
-    normalized_system = system.with_normalized_units().as_canonical()
+    normalized_system = system.with_units(_get_langevin_units(system)).as_canonical()
     xs0_jax = jnp.asarray(
         system.units.length_into(initial_conditions[0], normalized_system.units)
     )
@@ -196,7 +296,7 @@ def solve_ensemble[S: System](
     """Solve an ensemble of trajectories."""
     _key = _get_key(_key)
 
-    simulated_system = system.with_normalized_units().as_canonical()
+    simulated_system = system.with_units(_get_langevin_units(system)).as_canonical()
     out = solve_many.load_or_call_uncached(
         simulated_system,
         _convert_time_span(time_span, system.units, simulated_system.units),
@@ -238,7 +338,7 @@ def solve_single_ballistic[S: System](
     _key: jax.Array | None = None,
 ) -> SingleLangevinSimulationResult[S]:
     """Solve the ULD Langevin equation for a single trajectory via vmap."""
-    simulated_system = system.with_normalized_units().as_canonical()
+    simulated_system = system.with_units(_get_langevin_units(system)).as_canonical()
     out = solve_single.load_or_call_uncached(
         dataclasses.replace(simulated_system, gamma=0.0),
         _convert_time_span(time_span, system.units, simulated_system.units),
@@ -265,7 +365,7 @@ def solve_many_ballistic[S: System](
     _key: jax.Array | None = None,
 ) -> SingleLangevinSimulationResult[S]:
     """Solve the ULD Langevin equation for a single trajectory via vmap."""
-    simulated_system = system.with_normalized_units().as_canonical()
+    simulated_system = system.with_units(_get_langevin_units(system)).as_canonical()
     out = solve_many.load_or_call_uncached(
         dataclasses.replace(simulated_system, gamma=0.0),
         _convert_time_span(time_span, system.units, simulated_system.units),
@@ -294,7 +394,7 @@ def solve_ensemble_ballistic[S: System](
     """Solve an ensemble of ballistic trajectories in parallel via jax.vmap."""
     _key = _get_key(_key)
 
-    simulated_system = system.with_normalized_units().as_canonical()
+    simulated_system = system.with_units(_get_langevin_units(system)).as_canonical()
     out = solve_ensemble(
         dataclasses.replace(simulated_system, gamma=0.0),
         _convert_time_span(time_span, system.units, simulated_system.units),
@@ -305,6 +405,20 @@ def solve_ensemble_ballistic[S: System](
 
     return LangevinSimulationResult[S](
         times=out.times, x_points=out.x_points, p_points=out.p_points, system=system
+    )
+
+
+def _get_overdamped_langevin_units(system: System) -> UnitSystem:
+    """Units scaled for the overdamped Langevin equation."""
+    # dx = (F(x) / gamma) dt + sqrt(2 kB T / gamma) dW
+    # scale so the noise is of order 1, i.e. sqrt(2 kB T / gamma) * sqrt(dt) ~ 1
+    # so we want gamma approx 1 in the new units
+    characteristic_length = np.sqrt(system.kbt * system.m) / system.gamma
+    characteristic_length = np.sqrt(system.kbt / system.m) / system.gamma
+    return UnitSystem(
+        boltzmann=1 / system.temperature,
+        atomic_mass=system.units.atomic_mass / system.m,
+        angstrom=system.units.angstrom / characteristic_length,
     )
 
 
@@ -333,20 +447,31 @@ def solve_many_overdamped[S: System](
     _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of overdamped Langevin trajectories in parallel via jax.vmap."""
+    simulated_system = system.with_units(
+        _get_overdamped_langevin_units(system)
+    ).as_canonical()
     times, x_points, p_points = solve_many_overdamped_jax(
-        system=system.as_canonical(),
-        time_span=time_span,
+        simulated_system,
+        _convert_time_span(time_span, system.units, simulated_system.units),
         initial_conditions=(
-            jnp.asarray(initial_conditions[0]),
-            jnp.asarray(initial_conditions[1]),
+            jnp.asarray(
+                system.units.length_into(initial_conditions[0], simulated_system.units)
+            ),
+            jnp.asarray(
+                system.units.momentum_into(
+                    initial_conditions[1], simulated_system.units
+                )
+            ),
         ),
         _key=_get_key(_key),
     )
 
     return LangevinSimulationResult(
-        times=np.array(times),
-        x_points=np.array(x_points),
-        p_points=np.zeros_like(p_points),
+        times=simulated_system.units.time_into(np.array(times), system.units),
+        x_points=simulated_system.units.length_into(np.array(x_points), system.units),
+        p_points=simulated_system.units.momentum_into(
+            np.zeros_like(p_points), system.units
+        ),
         system=system,
     )
 
@@ -373,7 +498,9 @@ def solve_ensemble_overdamped[S: System](
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of overdamped Langevin trajectories in parallel via jax.vmap."""
     _key = _get_key(_key)
-    simulated_system = system.with_normalized_units().as_canonical()
+    simulated_system = system.with_units(
+        _get_overdamped_langevin_units(system)
+    ).as_canonical()
     result = solve_many_overdamped.call_uncached(
         simulated_system,
         _convert_time_span(time_span, system.units, simulated_system.units),

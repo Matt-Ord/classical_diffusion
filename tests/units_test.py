@@ -3,6 +3,9 @@ import numpy as np
 from classical_diffusion.langevin import (
     PeriodicSystem1D,
 )
+from classical_diffusion.langevin._langevin import (  # ruff: ignore[import-private-name]
+    _get_langevin_units,
+)
 
 
 def test_units() -> None:
@@ -14,7 +17,8 @@ def test_units() -> None:
         barrier_energy=1.6e-22,
     )
 
-    normalized_system = system.with_normalized_units()
+    units = _get_langevin_units(system)
+    normalized_system = system.with_units(units)
 
     si_system = normalized_system.with_si_units()
 
