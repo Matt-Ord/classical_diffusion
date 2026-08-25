@@ -18,12 +18,13 @@ if TYPE_CHECKING:
 
 @timed
 def get_deterministic_isf[L: Lattice](
-    system: L,
-    probabilities: np.ndarray[tuple[int, int], np.dtype[np.float32]],
-    delta_k: float,
-) -> np.ndarray:
-    return jx.get_deterministic_isf(
-        system.as_canonical(), jnp.array(probabilities), delta_k
+    result: DeterministicSolverResult[L],
+    delta_k: tuple[float, ...],
+) -> np.ndarray[tuple[int], np.dtype[np.float32]]:
+    return np.array(
+        jx.get_deterministic_isf(
+            result.system.as_canonical(), jnp.array(result.probabilities), delta_k
+        )
     )
 
 
@@ -38,7 +39,7 @@ def plot_deterministic_isf[L: Lattice](
     """Plot the ensemble-averaged ISF over time, with a shaded ±1 SEM band."""
     fig, ax = get_figure(ax)
 
-    isf = get_deterministic_isf(result.system, result.probabilities, delta_k[0])
+    isf = get_deterministic_isf(result, delta_k)
     (line,) = ax.plot(np.array(result.times), amplitude * np.array(isf))
     line.set_label("ISF")
 
