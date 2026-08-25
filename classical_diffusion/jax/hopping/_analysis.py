@@ -6,7 +6,7 @@ if TYPE_CHECKING:
     from classical_diffusion.hopping import CanonicalLattice
 
 
-def get_deterministic_isf_jax[L: CanonicalLattice](
+def get_deterministic_isf[L: CanonicalLattice](
     system: L,
     probabilities: jnp.ndarray,
     delta_k: tuple[float, ...],

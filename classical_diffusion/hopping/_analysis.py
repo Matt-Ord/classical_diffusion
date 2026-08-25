@@ -3,8 +3,10 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 import numpy as np
 
-import classical_diffusion.jax as jx
 from classical_diffusion.hopping._system import Lattice
+from classical_diffusion.jax.hopping import (
+    get_deterministic_isf as get_deterministic_isf_jax,
+)
 from classical_diffusion.plot import get_figure
 from classical_diffusion.util import timed
 
@@ -22,7 +24,7 @@ def get_deterministic_isf[L: Lattice](
     delta_k: tuple[float, ...],
 ) -> np.ndarray[tuple[int], np.dtype[np.float32]]:
     return np.array(
-        jx.get_deterministic_isf(
+        get_deterministic_isf_jax(
             result.system.as_canonical(), jnp.array(result.probabilities), delta_k
         )
     )
