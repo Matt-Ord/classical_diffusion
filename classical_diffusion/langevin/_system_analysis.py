@@ -113,57 +113,25 @@ def plot_periodic_potential_1d(
     )
 
 
-def _add_unit_cell(  # ruff:ignore[too-many-locals]
+def _add_unit_cell(
     ax: Axes,
-    system: System,
-    origin_site: tuple[int, int] = (0, 0),
-    *,
-    a1_label_offset: tuple[float, float] = (-27.0, 0.0),
-    a2_label_offset: tuple[float, float] = (20.0, -13.0),
-) -> tuple[list[Line2D], Line2D, list[Annotation]]:
+    system: PeriodicSystemFCC,
+) -> tuple[Line2D, Annotation]:
     a1, a2 = np.asarray(system.lattice_vectors)
-    origin = origin_site[0] * a1 + origin_site[1] * a2
 
-    corner_points = [
-        origin,
-        origin + a1,
-        origin + a1 + a2,
-        origin + a2,
-    ]
+    corner_points = [(0, 0), a1, a1 + a2, a2, (0, 0)]
 
-    closed = [*corner_points, corner_points[0]]
-    xs, ys = zip(*closed, strict=False)
-    (edges,) = ax.plot(xs, ys, linestyle="-", linewidth=1.5, zorder=4)
+    (boundary,) = ax.plot(*np.array(corner_points).T)
+    boundary.set_marker("o")
 
-    corner_markers = [
-        ax.plot(*corner, marker="o", markersize=8, zorder=5)[0]
-        for corner in corner_points
-    ]
+    annotation = ax.annotate(
+        f"{np.linalg.norm(a1):.3g} m".strip(),
+        xy=np.array(a1) / 2,
+        ha="left",
+        va="center",
+    )
 
-    labelled_edges = [
-        (corner_points[0], corner_points[1], a1_label_offset),  # a1 edge
-        (corner_points[0], corner_points[3], a2_label_offset),  # a2 edge
-    ]
-
-    annotations = []
-    for start, end, offset in labelled_edges:
-        start_arr = np.asarray(start)
-        end_arr = np.asarray(end)
-        distance = float(np.linalg.norm(end_arr - start_arr))
-        midpoint = (start_arr + end_arr) / 2
-
-        annotation = ax.annotate(
-            f"{distance:.3g} m".strip(),
-            xy=midpoint,
-            xytext=offset,
-            textcoords="offset points",
-            ha="center",
-            va="center",
-            fontsize=9,
-        )
-        annotations.append(annotation)
-
-    return corner_markers, edges, annotations
+    return boundary, annotation
 
 
 def plot_potential_2d(
@@ -213,7 +181,6 @@ def plot_potential_2d(
 
     color_bar = fig.colorbar(mesh, ax=ax)
     color_bar.set_label(r"$V(x, y)$")
-    unit_cell = _add_unit_cell(ax=ax, system=system)
 
     ax.set_xlabel(r"x")
     ax.set_ylabel(r"y")
@@ -221,11 +188,11 @@ def plot_potential_2d(
     ax.set_ylim(start[1], end[1])
     ax.set_aspect("equal", adjustable="box")
 
-    return fig, ax, mesh, unit_cell
+    return fig, ax, mesh
 
 
 def plot_periodic_potential_fcc(
-    params: PeriodicSystemFCC,
+    system: PeriodicSystemFCC,
     *,
     n_points: tuple[int, int] = (100, 100),
     ax: Axes | None = None,
@@ -233,21 +200,25 @@ def plot_periodic_potential_fcc(
     height: float = 4,
 ) -> tuple[Figure, Axes, QuadMesh, tuple]:
     """Plot the periodic potential in 2D."""
-    return plot_potential_2d(
-        params,
-        (-width / 2 * params.delta_x, -height / 2 * params.delta_x),
+    fig, ax, mesh = plot_potential_2d(
+        system,
+        (-width / 2 * system.delta_x, -height / 2 * system.delta_x),
         (
-            width / 2 * params.delta_x,
-            height / 2 * params.delta_x,
+            width / 2 * system.delta_x,
+            height / 2 * system.delta_x,
         ),
         n_points=n_points,
         ax=ax,
     )
 
+    unit_cell = _add_unit_cell(ax=ax, system=system)
+    unit_cell[0].set_color("C2")
+    return fig, ax, mesh, unit_cell
+
 
 def add_bridge_site_energy(
     ax: Axes,
-    system: System,
+    system: PeriodicSystemFCC,
     origin_site: tuple[int, int] = (0, 0),
     *,
     label_offset: tuple[float, float] = (18.0, 12.0),
@@ -288,7 +259,7 @@ def add_bridge_site_energy(
 
 def add_top_site_energy(
     ax: Axes,
-    system: System,
+    system: PeriodicSystemFCC,
     origin_site: tuple[int, int] = (0, 0),
     *,
     label_offset: tuple[float, float] = (12.0, -12.0),
@@ -326,7 +297,7 @@ def add_top_site_energy(
 
 def add_hollow_site_distance(
     ax: Axes,
-    system: System,
+    system: PeriodicSystemFCC,
     origin_site: tuple[int, int] = (0, 0),
     *,
     label_offset: tuple[float, float] = (12.0, 0.0),
