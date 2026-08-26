@@ -19,6 +19,7 @@ from classical_diffusion.langevin._experimental_systems import (
 from classical_diffusion.langevin._langevin import (
     LangevinSimulationResult,
     SingleLangevinSimulationResult,
+    _get_langevin_units,
     solve_ensemble,
     solve_ensemble_ballistic,
     solve_ensemble_overdamped,
@@ -67,7 +68,9 @@ __all__ = [
     "PeriodicSystemFCC",
     "SingleLangevinSimulationResult",
     "System",
+    "_get_langevin_units",
     "breakdown_ballistic_trajectory",
+    "calculate_quantum_traversal_time",
     "get_characteristic_friction_time",
     "get_diffusion_time",
     "get_effective_mass",
