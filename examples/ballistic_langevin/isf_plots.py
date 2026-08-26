@@ -131,5 +131,8 @@ def _plot_periodic_isf_2d() -> None:
 
 
 if __name__ == "__main__":
+    # These examples plot the ensemble isf of the provided system for a full langevin and ballistic trajectory.
+    # It also splits ballistic trajectories into elastic and inelastic components (see filtered_paths) and plots
+    # the corresponding ensemble isf on the same figure
     _plot_periodic_isf_1d()
     _plot_periodic_isf_2d()

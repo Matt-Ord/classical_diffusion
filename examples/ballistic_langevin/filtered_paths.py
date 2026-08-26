@@ -123,15 +123,6 @@ def _annotate_hollow_site_distance(
     )
 
 
-def _plot_periodic_system_1d() -> None:
-
-    system = SODIUM_COPPER_SYSTEM_1D
-
-    fig, ax = get_fancy_figure()
-    _, _, _ = plot_periodic_potential_1d(system, ax=ax)
-    fig.savefig("examples/ballistic_langevin/1d_periodic.potential.pdf")
-
-
 def _truncate_results[S: System](
     result: LangevinSimulationResult[S],
     times: tuple[float, float],
@@ -148,6 +139,10 @@ def _truncate_results[S: System](
 def _plot_filtered_ballistic_trajectory_1d() -> None:
 
     system = SODIUM_COPPER_SYSTEM_1D
+
+    fig, ax = get_fancy_figure()
+    _, _, _ = plot_periodic_potential_1d(system, ax=ax)
+    fig.savefig("examples/ballistic_langevin/1d_periodic.potential.pdf")
 
     result = solve_ensemble_ballistic.call_uncached(
         system,
@@ -179,7 +174,7 @@ def _plot_filtered_ballistic_trajectory_1d() -> None:
     fig.savefig("examples/ballistic_langevin/1d_periodic.trajectory.pdf")
 
 
-def _plot_periodic_system_fcc() -> None:
+def _plot_filtered_ballistic_trajectory_2d() -> None:
 
     system = SODIUM_COPPER_SYSTEM_2D
 
@@ -192,11 +187,6 @@ def _plot_periodic_system_fcc() -> None:
     _annotate_hollow_site_distance(system, ax=ax)
 
     fig.savefig("examples/ballistic_langevin/2d_fcc.potential.pdf", dpi=600)
-
-
-def _plot_filtered_ballistic_trajectory_2d() -> None:
-
-    system = SODIUM_COPPER_SYSTEM_2D
 
     result = solve_ensemble_ballistic.call_uncached(
         system,
@@ -233,7 +223,14 @@ def _plot_filtered_ballistic_trajectory_2d() -> None:
 
 
 if __name__ == "__main__":
-    _plot_periodic_system_1d()
+    # These examples plot the potential of the provided system and to comparison of the
+    # trajectory before and after a butterworth filter has been applied to split
+    # into elastic and inelastic components of the motion.
+    #
+    # A filter timescale of 1 / gamma removes all frequencies of motion that would
+    # be washed away once friction is reintroduced
+    #
+    # Time spans positive and negative values s=to remove edge effects, from applying the filter
+    # at t = 0.
     _plot_filtered_ballistic_trajectory_1d()
-    _plot_periodic_system_fcc()
     _plot_filtered_ballistic_trajectory_2d()

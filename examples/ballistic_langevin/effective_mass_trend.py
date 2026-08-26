@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from matplotlib.lines import Line2D
 
 
-def with_barrier_energy(
+def _with_barrier_energy(
     system: PeriodicSystem1D, barrier_energy: float
 ) -> PeriodicSystem1D:
     """Return a copy of the system with a new barrier energy."""
@@ -125,7 +125,7 @@ def _get_simulated_effective_mass(
             tqdm(np.ndindex(barrier_energy.shape), total=barrier_energy.size)
         ):
             result = solve_ensemble_ballistic(
-                with_barrier_energy(
+                _with_barrier_energy(
                     system,
                     barrier_energy=barrier_energy[idx],
                 ).as_canonical(),
@@ -156,7 +156,7 @@ def _get_exact_effective_mass(
             total=barrier_energy_ratio_fine.size,
         )
     ):
-        system = with_barrier_energy(
+        system = _with_barrier_energy(
             system, barrier_energy_ratio_fine[idx] * system.kbt
         )
         exact_effective_mass_ratio[idx] = _get_single_exact_effective_mass_ratio(system)

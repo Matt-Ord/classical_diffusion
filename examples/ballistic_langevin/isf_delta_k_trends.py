@@ -45,4 +45,7 @@ def _plot_inelastic_trends() -> None:
 
 
 if __name__ == "__main__":
+    # These example plots the ensemble isf inelastic and elastic components (see filtered_paths) .
+    # It also splits trajectories into elastic and inelastic components (see filtered_paths) and plots
+    # the corresponding ensemble isf on the same figure
     _plot_inelastic_trends()
