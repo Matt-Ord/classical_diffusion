@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.constants import Boltzmann
 
-from classical_diffusion.analysis import plot_isf
+from classical_diffusion.analysis import plot_isf, plot_x_evolution_1d
 from classical_diffusion.langevin import (
     HarmonicSystem,
     plot_exact_flat_isf,
@@ -50,7 +50,7 @@ def _plot_harmonic_isf() -> None:
     )
     ax.set_xlim(0, 2 / system.gamma)
     ax.set_ylim(0, 1)
-    fig.savefig("./examples/analytical_isf.harmonic.pdf", dpi=300, bbox_inches="tight")
+    fig.savefig("./examples/analytical_isf.harmonic.pdf")
 
 
 def _plot_flat_isf() -> None:
@@ -76,7 +76,11 @@ def _plot_flat_isf() -> None:
     )
     ax.set_xlim(0, 2 / system.gamma)
     ax.set_ylim(0, 1)
-    fig.savefig("./examples/analytical_isf.flat.pdf", dpi=300, bbox_inches="tight")
+    fig.savefig("./examples/analytical_isf.flat.pdf")
+
+    fig, ax = get_fancy_figure()
+    plot_x_evolution_1d(result, ax=ax)
+    fig.savefig("./examples/analytical_isf.flat_x_evolution.pdf")
 
 
 def _plot_flat_isf_2d() -> None:
@@ -104,7 +108,7 @@ def _plot_flat_isf_2d() -> None:
     )
     ax.set_xlim(0, 2 / system.gamma)
     ax.set_ylim(0, 1)
-    fig.savefig("./examples/analytical_isf.flat_2d.pdf", dpi=300, bbox_inches="tight")
+    fig.savefig("./examples/analytical_isf.flat_2d.pdf")
 
 
 if __name__ == "__main__":

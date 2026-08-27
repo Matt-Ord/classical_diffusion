@@ -273,7 +273,7 @@ def solve_single[S: System](
     _key: jax.Array | None = None,
 ) -> SingleLangevinSimulationResult[S]:
     """Solve the ULD Langevin equation for a single trajectory via vmap."""
-    return solve_many.load_or_call_uncached(
+    return solve_many.call_uncached(
         system,
         time_span,
         (
@@ -297,7 +297,7 @@ def solve_ensemble[S: System](
     _key = _get_key(_key)
 
     simulated_system = system.with_units(_get_langevin_units(system)).as_canonical()
-    out = solve_many.load_or_call_uncached(
+    out = solve_many.call_uncached(
         simulated_system,
         _convert_time_span(time_span, system.units, simulated_system.units),
         get_random_initial_conditions(
@@ -339,7 +339,7 @@ def solve_single_ballistic[S: System](
 ) -> SingleLangevinSimulationResult[S]:
     """Solve the ULD Langevin equation for a single trajectory via vmap."""
     simulated_system = system.with_units(_get_langevin_units(system)).as_canonical()
-    out = solve_single.load_or_call_uncached(
+    out = solve_single.call_uncached(
         dataclasses.replace(simulated_system, gamma=0.0),
         _convert_time_span(time_span, system.units, simulated_system.units),
         initial_condition,
@@ -366,7 +366,7 @@ def solve_many_ballistic[S: System](
 ) -> SingleLangevinSimulationResult[S]:
     """Solve the ULD Langevin equation for a single trajectory via vmap."""
     simulated_system = system.with_units(_get_langevin_units(system)).as_canonical()
-    out = solve_many.load_or_call_uncached(
+    out = solve_many.call_uncached(
         dataclasses.replace(simulated_system, gamma=0.0),
         _convert_time_span(time_span, system.units, simulated_system.units),
         initial_conditions,

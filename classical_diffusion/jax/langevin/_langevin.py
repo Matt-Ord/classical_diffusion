@@ -142,7 +142,7 @@ def _run_langevin_ensemble_jit(
         bm = dfx.VirtualBrownianTree(
             t0=0,
             t1=times[-1],
-            tol=1e-3,
+            tol=1e-4,
             shape=(system.n_dim,),
             key=key,
             levy_area=dfx.SpaceTimeTimeLevyArea,
@@ -160,16 +160,20 @@ def _run_langevin_ensemble_jit(
             dt0=times[1] - times[0],
             y0=(x0, p0),
             args=None,
-            stepsize_controller=dfx.PIDController(
-                rtol=1e-2,  # cspell: disable-line
-                atol=1e-3,
+            stepsize_controller=dfx.ClipStepSizeController(
+                dfx.PIDController(
+                    rtol=1e-2,  # cspell: disable-line
+                    atol=1e-3,
+                ),
+                step_ts=times,
             ),
             saveat=dfx.SaveAt(ts=times),
             max_steps=100_000_000,
         )
         return sol.ys
 
-    return jax.vmap(solve_one, in_axes=(0, 0, 0))(xs0, ps0, keys)
+    x_out, v_out = jax.vmap(solve_one, in_axes=(0, 0, 0))(xs0, ps0 / system.m, keys)
+    return x_out, v_out * system.m
 
 
 def solve_many[S: CanonicalSystem](
