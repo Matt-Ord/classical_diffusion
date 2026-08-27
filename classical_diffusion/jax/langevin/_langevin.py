@@ -129,7 +129,7 @@ def _run_langevin_ensemble_jit(
     keys: jax.Array,
     times: jnp.ndarray,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
-    gamma = jnp.broadcast_to(system.gamma, (system.n_dim,))
+    gamma = jnp.broadcast_to(system.gamma / system.m, (system.n_dim,))
     u = jnp.broadcast_to(system.kbt / system.m, (system.n_dim,))
     force_fn = _get_force_fn(system)
 
