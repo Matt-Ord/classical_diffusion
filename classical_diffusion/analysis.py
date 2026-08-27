@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import matplotlib as mpl
 import numpy as np
 
-from classical_diffusion.jax import get_pairwise_isf as get_pairwise_isf_jax
+from classical_diffusion.jax.analysis import get_pairwise_isf as get_pairwise_isf_jax
 from classical_diffusion.langevin._langevin import LangevinSimulationResult
 from classical_diffusion.plot import CAM_BLUE_CMAP, get_figure, get_measured_data
 from classical_diffusion.simulation import SimulationResult
@@ -26,7 +26,7 @@ def get_isf(
     *,
     origin_idx: int = 0,
 ) -> np.ndarray[Any, np.dtype[np.complex128]]:
-    """Get the restored displacement of a wavepacket."""
+    """Get the isf, calculated from with respect to a fixed reference position."""
     phase = np.einsum(
         "i,...ij->...j",
         delta_k,
@@ -39,7 +39,7 @@ def get_pairwise_isf(
     positions: np.ndarray[Any, np.dtype[np.floating]],
     delta_k: tuple[float, ...],
 ) -> np.ndarray[Any, np.dtype[np.complex128]]:
-    """Get the restored displacement of a wavepacket."""
+    """Get the ISF, calculated from the pairwise correlation of the positions."""
     return np.array(get_pairwise_isf_jax(jnp.array(positions), jnp.asarray(delta_k)))
 
 

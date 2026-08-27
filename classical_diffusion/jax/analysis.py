@@ -19,11 +19,8 @@ def _time_average(
     return time_sum / jnp.arange(1, size + 1)[::-1]
 
 
-def get_pairwise_isf(
-    positions: jnp.ndarray,
-    delta_k: jnp.ndarray,
-) -> jnp.ndarray:
-    """Get the restored displacement of a wavepacket."""
+def get_pairwise_isf(positions: jnp.ndarray, delta_k: jnp.ndarray) -> jnp.ndarray:
+    """Get the ISF, calculated from the pairwise correlation of the positions."""
     scatter = jnp.exp(-1j * jnp.einsum("i,...ij->...j", delta_k, positions))
 
     # convolution_j = \sum_i^N-j e^(ik.x_i+j) e^(-ik.x_i)
