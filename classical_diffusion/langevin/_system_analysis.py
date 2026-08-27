@@ -5,6 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 import sympy as sp
 
+from classical_diffusion.langevin import LangevinSimulationResult
 from classical_diffusion.langevin._langevin import _get_langevin_units
 from classical_diffusion.plot import CAM_BLUE_CMAP, get_figure
 from classical_diffusion.util import _get_key
@@ -391,4 +392,19 @@ def get_under_barrier_probability(
             barrier_energy=barrier_energy,
             n_samples=N_SAMPLES,
         )
+    )
+
+
+def fold_to_unit_cell_1d(
+    result: LangevinSimulationResult, system: PeriodicSystem1D
+) -> LangevinSimulationResult:
+    delta_x = system.delta_x
+    x = result.x_points
+    n_shift = np.round(x[:, :, 0] / delta_x)
+    x_folded = x - n_shift[:, :, None] * delta_x
+    return LangevinSimulationResult(
+        times=result.times,
+        x_points=x_folded,
+        p_points=result.p_points,
+        system=result.system,
     )
