@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 from scipy.constants import Boltzmann
 
@@ -14,6 +16,7 @@ from classical_diffusion.langevin import (
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.simulation import TimeSpan
+from classical_diffusion.util import cache_base_path
 
 
 def _plot_periodic_system() -> None:
@@ -78,6 +81,7 @@ def _plot_periodic_isf() -> None:
 
 
 if __name__ == "__main__":
-    _plot_periodic_system()
-    _plot_periodic_trajectory()
-    _plot_periodic_isf()
+    with cache_base_path(Path("examples/data")):
+        _plot_periodic_system()
+        _plot_periodic_trajectory()
+        _plot_periodic_isf()

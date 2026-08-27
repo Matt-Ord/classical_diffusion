@@ -15,7 +15,12 @@ from classical_diffusion.langevin import (
 )
 from classical_diffusion.plot import CAM_BLUE, CAM_CHERRY, get_fancy_figure, get_figure
 from classical_diffusion.simulation import TimeSpan
-from classical_diffusion.util import cached, disabled_timing, hash_array
+from classical_diffusion.util import (
+    cache_base_path,
+    cached,
+    disabled_timing,
+    hash_array,
+)
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -100,7 +105,7 @@ def _solve_effective_mass_path(
     t_end: float,
 ) -> Path:
     filename = f"{t_end}_{t_end}_{hash_array((n_samples,))}_{t_end}_{hash_array((barrier_energy_ratio,))}_{hash(system)}.npz"
-    return Path("examples/data") / filename
+    return Path(filename)
 
 
 @cached(_solve_effective_mass_path)
@@ -212,4 +217,5 @@ def _plot_effective_mass_ratio() -> None:
 
 
 if __name__ == "__main__":
-    _plot_effective_mass_ratio()
+    with cache_base_path(Path("examples/data")):
+        _plot_effective_mass_ratio()

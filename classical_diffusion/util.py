@@ -6,6 +6,7 @@ import zlib
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import update_wrapper, wraps
+from pathlib import Path
 from types import FunctionType
 from typing import TYPE_CHECKING, Literal, TypeVar, overload
 
@@ -14,7 +15,6 @@ import numpy as np
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
-    from pathlib import Path
 
 
 _timing_disabled = ContextVar("timing_disabled", default=False)
@@ -77,6 +77,19 @@ def _reduce_typevars(obj: object) -> tuple[type, tuple[str]]:
     return str, (str(obj),)
 
 
+_cache_base_path = ContextVar[Path | None]("cache_base_path", default=Path("data"))
+
+
+@contextmanager
+def cache_base_path(path: Path) -> Generator[None]:
+    """Context manager to temporarily set the cache base path."""
+    token = _cache_base_path.set(path)
+    try:
+        yield
+    finally:
+        _cache_base_path.reset(token)
+
+
 class CachedFunction[**P, R]:
     """A function wrapper which is used to cache the output."""
 
@@ -94,9 +107,10 @@ class CachedFunction[**P, R]:
 
     def _get_cache_path(self, *args: P.args, **kw: P.kwargs) -> Path | None:
         cache_path = self.Path(*args, **kw) if callable(self.Path) else self.Path  # ty:ignore[call-top-callable]
-        if cache_path is None:
+        base_path = _cache_base_path.get()
+        if cache_path is None or base_path is None:
             return None
-        return cache_path  # ty:ignore[invalid-return-type]
+        return base_path / cache_path  # ty: ignore[unsupported-operator]
 
     def call_uncached(self, *args: P.args, **kw: P.kwargs) -> R:
         """Call the function, without using the cache."""

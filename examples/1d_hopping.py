@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 
 from classical_diffusion.analysis import plot_isf, plot_x_evolution_1d
@@ -11,6 +13,7 @@ from classical_diffusion.plot import (
     get_fancy_figure,
 )
 from classical_diffusion.simulation import TimeSpan
+from classical_diffusion.util import cache_base_path
 
 
 def _plot_1d_hopping_isf() -> None:
@@ -71,5 +74,6 @@ def _plot_1d_deterministic_isf() -> None:
 
 
 if __name__ == "__main__":
-    _plot_1d_deterministic_isf()
-    _plot_1d_hopping_isf()
+    with cache_base_path(Path("examples/data")):
+        _plot_1d_deterministic_isf()
+        _plot_1d_hopping_isf()
