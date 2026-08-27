@@ -42,6 +42,7 @@ from classical_diffusion.langevin._system import (
     get_diffusion_time,
 )
 from classical_diffusion.langevin._system_analysis import (
+    fold_to_unit_cell_1d,
     get_characteristic_friction_time,
     get_exact_flat_ballistic_isf,
     get_exact_flat_isf,
@@ -70,7 +71,7 @@ __all__ = [
     "System",
     "_get_langevin_units",
     "breakdown_ballistic_trajectory",
-    "calculate_quantum_traversal_time",
+    "fold_to_unit_cell_1d",
     "get_characteristic_friction_time",
     "get_diffusion_time",
     "get_effective_mass",

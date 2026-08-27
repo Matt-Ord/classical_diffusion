@@ -45,6 +45,8 @@ def _with_mass(system: PeriodicSystem1D, m: float) -> PeriodicSystem1D:
 
 
 def _calculate_action(system: PeriodicSystem1D, energy: float) -> float:
+    """Calculate the quantum action, integrating in real space if energy is."""
+    """lower than the barrierand imaginary space if the energy is above the barrier."""
     epsilon = energy / system.barrier_energy
     if epsilon <= 1:
 
@@ -86,16 +88,18 @@ def _calculate_tunneling_time(system: PeriodicSystem1D, energy: float) -> float:
     )
 
 
-def _calculate_tunneling_probability(system: PeriodicSystem1D, energy) -> float:
+def _calculate_tunneling_probability(system: PeriodicSystem1D, energy: float) -> float:
+    """Calculate the probability of tunneling using Kemble's formula."""
     s = _calculate_action(system, energy)
     exponent = 2 * s / hbar
     return 1 / (1 + np.exp(exponent))
 
 
-def _calculate_time_between_hits(system, energy) -> float:
+def _calculate_time_between_hits(system: PeriodicSystem1D, energy: float) -> float:
+    """Calculate the time for a particle to move between its classical turning points if below the barrier energy, or to traverse the unit cell if above."""
     epsilon = energy / system.barrier_energy
 
-    def integrand(u: float):
+    def integrand(u: float) -> float:
         return 1 / np.sqrt(u * (1 - u) * (epsilon - u))
 
     if energy > system.barrier_energy:
@@ -110,14 +114,15 @@ def _calculate_time_between_hits(system, energy) -> float:
     )
 
 
-def _calculate_quantum_traversal_time(system, energy) -> float:
+def _calculate_quantum_traversal_time(system: PeriodicSystem1D, energy: float) -> float:
+    """Combine the probability of tunneling with time between attempts to get average traversal time."""
     prob = _calculate_tunneling_probability(system, energy)
     return _calculate_time_between_hits(
         system, energy
     ) / prob + _calculate_tunneling_time(system, energy)
 
 
-def _calculate_quantum_p_elastic(system, energy) -> float:
+def _calculate_quantum_p_elastic(system: PeriodicSystem1D, energy: float) -> float:
     return system.m * system.delta_x / _calculate_quantum_traversal_time(system, energy)
 
 
@@ -125,12 +130,9 @@ _ELEMENT_MASSES = {"H": 1.008, "He": 4.003, "Li": 6.94, "Na": 22.990}  # amu
 
 
 def _add_element_markers(
-    cbar: mpl.colorbar.Colorbar,
+    cbar: mpl.colorbar.Colorbar,  # ty: ignore[possibly-missing-submodule]
     elements: dict[str, float] = _ELEMENT_MASSES,
 ) -> None:
-    """Mark specific element masses on a mass colorbar, labeled on the left
-    so they don't collide with the colorbar's own tick numbers on the right.
-    """
     for label, mass in elements.items():
         if not (cbar.norm.vmin <= mass <= cbar.norm.vmax):
             continue
@@ -314,7 +316,7 @@ def _plot_boltzmann_distribution(
     return fig, ax, dist
 
 
-def _plot_quantum_classical_comparison() -> None:
+def _plot_quantum_classical_comparison() -> None:  # ruff: ignore[too-many-locals]
     system = SODIUM_COPPER_SYSTEM_1D
 
     normalized_energies = np.linspace(0.75, 1.5, 2000)
@@ -383,7 +385,7 @@ def _plot_quantum_time_period() -> None:
     normalized_energies = np.linspace(0.75, 1.5, 2000)
 
     quantum_periods = []
-    for idx, mass in enumerate(normalized_masses):
+    for mass in normalized_masses:
         quantum_period = np.zeros_like(normalized_energies)
         system = _with_mass(system, m=mass * atomic_mass)
         for idx, _ in enumerate(normalized_energies):
@@ -428,7 +430,7 @@ def _calculate_classical_elastic_p_squared_over_m(
 def _p_elastic_squared_against_energy() -> None:
     system = SODIUM_COPPER_SYSTEM_1D
 
-    normalized_masses = np.linspace(1, 50, 8)
+    normalized_masses = np.linspace(1, 100, 16)
     normalized_energies = np.linspace(0.75, 1.5, 2000)
 
     classical_p_elastic_squared_over_m = np.array(
@@ -439,7 +441,7 @@ def _p_elastic_squared_against_energy() -> None:
     )
 
     quantum_p_elastic_squared_over_ms = []
-    for idx, mass in enumerate(normalized_masses):
+    for mass in normalized_masses:
         p_elastic_squared_over_m = np.zeros_like(normalized_energies)
         system = _with_mass(system, m=mass * atomic_mass)
         for idx, _ in enumerate(normalized_energies):
@@ -536,9 +538,6 @@ def _calculate_dynamic_energy_cutoff_interp(
     *,
     epsilon_grid: np.ndarray[Any, np.dtype[np.floating[Any]]] | None = None,
 ) -> float:
-    """Find the dynamic/static cutoff energy by interpolating a precomputed
-    sweep rather than root-finding -- avoids ever evaluating near threshold.
-    """
     if epsilon_grid is None:
         epsilon_grid = np.linspace(1e-3, 0.99, 500)
 
@@ -634,11 +633,6 @@ def _calculate_restricted_partition_function(
 def _calculate_mean_p_elastic_squared_dynamic(
     system: PeriodicSystem1D, observation_time: float
 ) -> float:
-    """Boltzmann average of p_e^2 restricted to dynamic states -- energies above
-    the cutoff where quantum_traversal_time <= observation_time -- so states too
-    slow to hop within the observed window are excluded from both the weighting
-    integral and the partition function normalizing it.
-    """
     epsilon_min = (
         _calculate_dynamic_energy_cutoff_interp(system, observation_time)
         / system.barrier_energy
