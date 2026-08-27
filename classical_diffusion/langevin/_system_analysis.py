@@ -260,7 +260,7 @@ def get_exact_flat_isf(
     kbt, m, gamma = system.kbt, system.m, system.gamma
     k_squared = np.sum(np.array(delta_k) ** 2)
     return np.exp(
-        ((k_squared**2) * kbt / (gamma**2 * m))
+        ((k_squared) * kbt / (gamma**2 * m))
         * (1 - gamma * times - np.exp(-gamma * times))
     )
 
