@@ -286,6 +286,20 @@ def solve_single[S: System](
     )[0]
 
 
+def _solve_ensemble_path[S: System](
+    system: S,
+    time_span: TimeSpan,
+    n_samples: int,
+    *,
+    minimum_energy: float = 0.0,
+    _key: jax.Array | None = None,
+) -> Path:
+    return Path(
+        f"solve_ensemble_{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}_{minimum_energy}.npz"
+    )
+
+
+@cached(_solve_ensemble_path)
 @timed
 def solve_ensemble[S: System](
     system: S,
@@ -314,19 +328,6 @@ def solve_ensemble[S: System](
     ).with_units(system.units)
     return LangevinSimulationResult[S](
         times=out.times, x_points=out.x_points, p_points=out.p_points, system=system
-    )
-
-
-def _solve_ensemble_ballistic_path[S: System](
-    system: S,
-    time_span: TimeSpan,
-    n_samples: int,
-    *,
-    minimum_energy: float = 0.0,
-    _key: jax.Array | None = None,
-) -> Path:
-    return Path(
-        f"{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}_{minimum_energy}.npz"
     )
 
 
@@ -384,6 +385,19 @@ def solve_many_ballistic[S: System](
     )
 
 
+def _solve_ensemble_ballistic_path[S: System](
+    system: S,
+    time_span: TimeSpan,
+    n_samples: int,
+    *,
+    minimum_energy: float = 0.0,
+    _key: jax.Array | None = None,
+) -> Path:
+    return Path(
+        f"solve_ensemble_ballistic_{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}_{minimum_energy}.npz"
+    )
+
+
 @cached(_solve_ensemble_ballistic_path)
 @timed
 def solve_ensemble_ballistic[S: System](
@@ -398,7 +412,7 @@ def solve_ensemble_ballistic[S: System](
     _key = _get_key(_key)
 
     simulated_system = system.with_units(_get_langevin_units(system)).as_canonical()
-    out = solve_ensemble(
+    out = solve_ensemble.call_uncached(
         dataclasses.replace(simulated_system, gamma=0.0),
         _convert_time_span(time_span, system.units, simulated_system.units),
         n_samples=n_samples,
