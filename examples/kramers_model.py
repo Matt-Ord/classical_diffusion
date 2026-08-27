@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 from scipy.constants import Boltzmann
 
@@ -20,6 +22,7 @@ from classical_diffusion.langevin import (
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.simulation import TimeSpan
+from classical_diffusion.util import cache_base_path
 
 
 def _plot_kramers_potential() -> None:
@@ -112,16 +115,17 @@ def _plot_kramers_hopping_comparison() -> None:
 
 
 if __name__ == "__main__":
-    # The kramers potential is a foundational model in rate theory.
-    # Classically, in the overdamped regime, the rate of hopping
-    # should depend only on the frequency of the top of the barrier.
-    # Here, the two different model pes are compared
-    _plot_kramers_potential()
-    # The rates are approximately equal, and therefore the overdamped
-    # ISF has approximately the same decay rate for both models (when
-    # the choice of delta_k is suitably adjusted).
-    _plot_kramers_periodic_comparison()
-    # We can also compare the kramers model to a hopping model,
-    # fro which there is an analytical equation which gives the hopping
-    # rates.
-    _plot_kramers_hopping_comparison()
+    with cache_base_path(Path("examples/data")):
+        # The kramers potential is a foundational model in rate theory.
+        # Classically, in the overdamped regime, the rate of hopping
+        # should depend only on the frequency of the top of the barrier.
+        # Here, the two different model pes are compared
+        _plot_kramers_potential()
+        # The rates are approximately equal, and therefore the overdamped
+        # ISF has approximately the same decay rate for both models (when
+        # the choice of delta_k is suitably adjusted).
+        _plot_kramers_periodic_comparison()
+        # We can also compare the kramers model to a hopping model,
+        # fro which there is an analytical equation which gives the hopping
+        # rates.
+        _plot_kramers_hopping_comparison()

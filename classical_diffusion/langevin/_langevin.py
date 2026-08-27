@@ -209,8 +209,9 @@ def _solve_many_path[S: System](
     *,
     _key: jax.Array | None = None,
 ) -> Path:
-    filename = f"{hash(system)}_{hash(time_span)}_{hash_array(initial_conditions)}.npz"
-    return Path("examples/data") / filename
+    return Path(
+        f"{hash(system)}_{hash(time_span)}_{hash_array(initial_conditions)}.npz"
+    )
 
 
 @cached(_solve_many_path)
@@ -257,8 +258,9 @@ def _solve_single_path[S: System](
     *,
     _key: jax.Array | None = None,
 ) -> Path:
-    filename = f"{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{hash_array(initial_condition)}.npz"
-    return Path("examples/data") / filename
+    return Path(
+        f"{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{hash_array(initial_condition)}.npz"
+    )
 
 
 @cached(_solve_single_path)
@@ -323,8 +325,9 @@ def _solve_ensemble_ballistic_path[S: System](
     minimum_energy: float = 0.0,
     _key: jax.Array | None = None,
 ) -> Path:
-    filename = f"{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}_{minimum_energy}.npz"
-    return Path("examples/data") / filename
+    return Path(
+        f"{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}_{minimum_energy}.npz"
+    )
 
 
 @timed
@@ -431,8 +434,9 @@ def _solve_many_overdamped_path[S: System](
     *,
     _key: jax.Array | None = None,
 ) -> Path:
-    filename = f"overdamped_{hash(system)}_{hash(time_span)}_{hash_array(initial_conditions)}.npz"
-    return Path("examples/data") / filename
+    return Path(
+        f"overdamped_{hash(system)}_{hash(time_span)}_{hash_array(initial_conditions)}.npz"
+    )
 
 
 @cached(_solve_many_overdamped_path)
@@ -483,8 +487,7 @@ def _solve_ensemble_overdamped_path[S: System](
     *,
     _key: jax.Array | None = None,
 ) -> Path:
-    filename = f"overdamped_ensemble_{hash(system)}_{hash(time_span)}_{n_samples}.npz"
-    return Path("examples/data") / filename
+    return Path(f"overdamped_ensemble_{hash(system)}_{hash(time_span)}_{n_samples}.npz")
 
 
 @cached(_solve_ensemble_overdamped_path)

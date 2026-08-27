@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -18,6 +19,7 @@ from classical_diffusion.langevin import (
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.simulation import TimeSpan
+from classical_diffusion.util import cache_base_path
 
 
 def fold_results(
@@ -190,7 +192,8 @@ if __name__ == "__main__":
     # sampled once every 1 / gamma, and the first 1 / gamma time is discarded as burn-in.
     #
     # In the periodic system, the x distribution is folded into the first Brillouin zone.
-    _plot_xp_distributions_periodic()
-    _plot_x_distribution_spread()
-    _plot_xp_distributions_harmonic()
-    _plot_x_distribution_spread_ballistic_sample()
+    with cache_base_path(Path("examples/data")):
+        _plot_xp_distributions_periodic()
+        _plot_x_distribution_spread()
+        _plot_xp_distributions_harmonic()
+        _plot_x_distribution_spread_ballistic_sample()
