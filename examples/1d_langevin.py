@@ -38,10 +38,12 @@ def _plot_periodic_system() -> None:
 
 def _plot_periodic_trajectory() -> None:
     system = SODIUM_COPPER_SYSTEM_1D
-    units = unit_with_trajectory_scale(
-        system.units, length=system.delta_x, time=1 / system.gamma
+    # Convert to a nice unit system where gamma = 1 and delta_x = 1
+    system = system.with_units(
+        unit_with_trajectory_scale(
+            system.units, length=system.delta_x, time=1 / system.gamma
+        )
     )
-    system = system.with_units(units)
 
     result = solve_ensemble(
         system,
@@ -57,7 +59,17 @@ def _plot_periodic_trajectory() -> None:
     ax.set_ylabel(r"$x \, / \, \Delta x$")
     ax.set_xlabel(r"$t \, / \, \gamma^{-1}$")
 
-    fig.savefig("./examples/1d_langevin.trajectory.long_time.pdf")
+    fig.savefig("./examples/1d_langevin.trajectory.pdf")
+
+
+def _plot_ballistic_trajectory() -> None:
+    system = SODIUM_COPPER_SYSTEM_1D
+    # Convert to a nice unit system where gamma = 1 and delta_x = 1
+    system = system.with_units(
+        unit_with_trajectory_scale(
+            system.units, length=system.delta_x, time=1 / system.gamma
+        )
+    )
 
     time_span = TimeSpan(t_end=1 / system.gamma, n_steps=4000)
     initial_condition = (np.asarray([0]), np.asarray([9e-24]))
@@ -79,12 +91,11 @@ def _plot_periodic_trajectory() -> None:
     ax.set_ylabel(r"$x \, / \, \Delta x$")
     ax.set_xlabel(r"$t \, / \, \gamma^{-1}$")
 
-    fig.savefig("./examples/1d_langevin.trajectory.short_time.pdf")
+    fig.savefig("./examples/1d_langevin.trajectory.ballistic_trajectory.pdf")
 
 
 def _plot_periodic_isf() -> None:
     system = SODIUM_COPPER_SYSTEM_1D
-
     result = solve_ensemble(
         system, TimeSpan(t_end=2 / system.gamma, n_steps=4000), n_samples=1000
     )
@@ -97,14 +108,14 @@ def _plot_periodic_isf() -> None:
 
     result = solve_ensemble_ballistic(
         system,
-        TimeSpan(t_end=1 / system.gamma, n_steps=1000),
+        TimeSpan(t_end=2 / system.gamma, n_steps=1000),
         n_samples=10000,
     )
 
     _, ax, line_1, _ = plot_isf(result=result, ax=ax, delta_k=delta_k, pairwise=False)
     line_1.set_label("ballistic simulation")
 
-    ax.set_xlim(0, 1 / system.gamma)
+    ax.set_xlim(0, 2 / system.gamma)
     ax.set_ylim(0, 1)
 
     ax.legend(handles=[line_0, line_1])
@@ -115,4 +126,5 @@ if __name__ == "__main__":
     with cache_base_path(Path("examples/data")):
         _plot_periodic_system()
         _plot_periodic_trajectory()
+        _plot_ballistic_trajectory()
         _plot_periodic_isf()
