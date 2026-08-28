@@ -4,6 +4,7 @@ import numpy as np
 
 from classical_diffusion.analysis import (
     plot_isf,
+    plot_root_mean_square_x,
     plot_x_evolution_1d,
 )
 from classical_diffusion.langevin import (
@@ -135,7 +136,19 @@ def _plot_force() -> None:
         result=result, ax=ax
     )
     ax.set_rasterized(True)
-    fig.savefig("examples/1d_langevin.frictional_force.pdf", dpi=2000)
+    fig.savefig("examples/1d_langevin.frictional_force.pdf", dpi=1000)
+
+
+def _plot_root_mean_square_x() -> None:
+    system = SODIUM_COPPER_SYSTEM_1D
+    result = solve_ensemble(
+        system, TimeSpan(t_end=2 / system.gamma, n_steps=4000), n_samples=1000
+    )
+
+    fig, ax = get_fancy_figure()
+
+    _, ax, _line_0 = plot_root_mean_square_x(result=result, ax=ax)
+    fig.savefig("examples/1d_langevin.rms.pdf")
 
 
 if __name__ == "__main__":
@@ -147,3 +160,4 @@ if __name__ == "__main__":
         # which scales as sqrt(2 m gamma k_B T / dt).
         _plot_force()
         _plot_periodic_isf()
+        _plot_root_mean_square_x()
