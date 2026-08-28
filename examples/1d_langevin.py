@@ -9,6 +9,7 @@ from classical_diffusion.analysis import (
 from classical_diffusion.langevin import (
     SODIUM_COPPER_SYSTEM_1D,
     plot_force_1d,
+    plot_frictional_force_distribution,
     plot_periodic_potential_1d,
     shift_origin_to_unit_cell_1d,
     solve_ensemble,
@@ -122,9 +123,27 @@ def _plot_periodic_isf() -> None:
     fig.savefig("examples/1d_langevin.isf.pdf")
 
 
+def _plot_force() -> None:
+    system = SODIUM_COPPER_SYSTEM_1D
+    result = solve_ensemble(
+        system, TimeSpan(t_end=2 / system.gamma, n_steps=4000), n_samples=1000
+    )
+
+    fig, ax = get_fancy_figure()
+
+    _, ax, (_line_0, _, _bars) = plot_frictional_force_distribution(
+        result=result, ax=ax
+    )
+    ax.set_rasterized(True)
+    fig.savefig("examples/1d_langevin.frictional_force.pdf", dpi=2000)
+
+
 if __name__ == "__main__":
     with cache_base_path(Path("examples/data")):
         _plot_periodic_system()
         _plot_periodic_trajectory()
         _plot_ballistic_trajectory()
+        # The particle experiences a frictional force,
+        # which scales as sqrt(2 m gamma k_B T / dt).
+        _plot_force()
         _plot_periodic_isf()

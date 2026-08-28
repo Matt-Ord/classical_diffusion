@@ -1,18 +1,25 @@
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+import scipy
 import sympy as sp
 
-from classical_diffusion.langevin import LangevinSimulationResult
+from classical_diffusion.langevin import (
+    LangevinSimulationResult,
+    SingleLangevinSimulationResult,
+)
 from classical_diffusion.langevin._langevin import _get_langevin_units
 from classical_diffusion.plot import CAM_BLUE_CMAP, get_figure
 from classical_diffusion.util import _get_key
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from matplotlib.axes import Axes
     from matplotlib.collections import QuadMesh
+    from matplotlib.container import BarContainer
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
 
@@ -430,3 +437,85 @@ def shift_origin_to_unit_cell_fcc[S: PeriodicSystemFCC](
         p_points=result.p_points,
         system=result.system,
     )
+
+
+def _get_force_fn(
+    system: System, *, idx: int = 0
+) -> Callable[[np.ndarray], np.ndarray]:
+    """Compute a callable force function, taking and returning an array."""
+    raw_fn = sp.lambdify(
+        system.lambda_symbols,
+        system.force_expr[idx],
+        modules=[{"DerivativeSafeMod": jnp.mod}, "numpy"],
+    )
+    return lambda x_array: np.array(
+        # Note, transpose to move (x,y,z) axis to the first dimension
+        raw_fn(*np.einsum("ijk->jik", x_array), *system.params)
+    )
+
+
+def _get_forces[S: System](
+    result: LangevinSimulationResult[S], *, idx: int = 0
+) -> np.ndarray[Any, np.dtype[np.float64]]:
+    force_fn = _get_force_fn(result.system)
+    static_force = force_fn(result.x_points)
+    stiffness = static_force - result.system.gamma * result.p_points[:, idx]
+    dt = result.times[1] - result.times[0]
+    return (np.diff(result.p_points[:, idx]) / dt) - stiffness[:, :-1]
+
+
+def _get_expected_std_force(system: System, *, dt: float) -> float:
+    return np.sqrt(2 * system.m * system.gamma * system.kbt / dt)
+
+
+def plot_frictional_force_distribution[S: System](
+    result: LangevinSimulationResult[S] | SingleLangevinSimulationResult[S],
+    *,
+    ax: Axes | None = None,
+    idx: int = 0,
+) -> tuple[Figure, Axes, tuple[Line2D, Line2D, BarContainer]]:
+    fig, ax = get_figure(ax)
+
+    result = (
+        result
+        if isinstance(result, LangevinSimulationResult)
+        else LangevinSimulationResult.from_iter([result])
+    )
+
+    forces = _get_forces(result, idx=idx).ravel()
+
+    std_force = np.std(forces).item()
+    ax.set_xlim(-5 * std_force, 5 * std_force)
+
+    # Plot a histogram of the force distribution
+    _, _, b = ax.hist(
+        forces,
+        bins=int(np.sqrt(forces.size)),
+        density=True,
+        alpha=1,
+        range=(-5 * std_force, 5 * std_force),
+    )
+    ax.set_title("Force Distribution")
+    ax.set_xlabel("Force / N")
+    ax.set_ylabel("Probability Density")
+
+    # The force is a gaussian random variable, so plot a gaussian fit
+
+    start, end = ax.get_xlim()
+    x = np.linspace(start, end, 400)
+    (fitted_line,) = ax.plot(x, scipy.stats.norm.pdf(x, scale=std_force))
+    fitted_line.set_label("Gaussian Fit")
+    fitted_line.set_color("C1")
+
+    expected_std = _get_expected_std_force(
+        result.system, dt=result.times[1] - result.times[0]
+    )
+    (classical_line,) = ax.plot(x, scipy.stats.norm.pdf(x, scale=expected_std))
+    classical_line.set_linestyle("--")
+    classical_line.set_color("C2")
+    classical_line.set_label(r"$\sqrt{2 m \gamma k_B T / \Delta t}$")
+
+    ax.legend()
+    ax.set_xlim(start, end)
+
+    return fig, ax, (fitted_line, classical_line, cast("BarContainer", b))
