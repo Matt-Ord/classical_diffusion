@@ -53,9 +53,9 @@ class SimulationResult[S: Any]:
         x_points: np.ndarray[Any, np.dtype[np.floating]],
         system: S,
     ) -> None:
-        _times = times
-        _x_points = x_points
-        _system = system
+        self._times = times
+        self._x_points = x_points
+        self._system = system
 
     @property
     def times(self) -> np.ndarray[tuple[int], np.dtype[np.floating]]:
