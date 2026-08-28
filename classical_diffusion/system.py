@@ -154,6 +154,21 @@ class UnitSystem:
         )
 
 
+def unit_with_trajectory_scale(
+    units: UnitSystem, *, length: float = 1, time: float = 1, momentum: float = 1
+) -> UnitSystem:
+    """Get a new unit system with the specified length, time, and momentum scales.
+
+    The new unit system will be scaled such that the length, time, and momentum
+    values are equal to 1 in the new unit system.
+    """
+    return UnitSystem(
+        boltzmann=units.boltzmann * time / (length * momentum),
+        atomic_mass=units.atomic_mass * length / (time * momentum),
+        angstrom=units.angstrom / length,
+    )
+
+
 @jax.tree_util.register_dataclass
 @final
 @dataclass(frozen=True, kw_only=True)

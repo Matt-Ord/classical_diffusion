@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -20,6 +21,7 @@ from classical_diffusion.langevin import (
 )
 from classical_diffusion.plot import get_fancy_figure, get_figure, get_two_panel_figure
 from classical_diffusion.simulation import TimeSpan
+from classical_diffusion.util import cache_base_path
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -142,7 +144,7 @@ def _plot_filtered_ballistic_trajectory_1d() -> None:
 
     fig, ax = get_fancy_figure()
     _, _, _ = plot_periodic_potential_1d(system, ax=ax)
-    fig.savefig("examples/ballistic_langevin/1d_periodic.potential.pdf")
+    fig.savefig("examples/ballistic_langevin/filtered_paths.1d.potential.pdf")
 
     result = solve_ensemble_ballistic.call_uncached(
         system,
@@ -171,7 +173,7 @@ def _plot_filtered_ballistic_trajectory_1d() -> None:
     ax[0].legend(handles=[lines[0], lines_e[0]], labels=["ballistic", "elastic"])
     ax[1].legend(handles=[lines_i[0]], labels=["inelastic"])
 
-    fig.savefig("examples/ballistic_langevin/1d_periodic.trajectory.pdf")
+    fig.savefig("examples/ballistic_langevin/filtered_paths.1d.pdf")
 
 
 def _plot_filtered_ballistic_trajectory_2d() -> None:
@@ -186,9 +188,11 @@ def _plot_filtered_ballistic_trajectory_2d() -> None:
     _annotate_top_site_energy(ax, system)
     _annotate_hollow_site_distance(system, ax=ax)
 
-    fig.savefig("examples/ballistic_langevin/2d_fcc.potential.pdf", dpi=600)
+    fig.savefig(
+        "examples/ballistic_langevin/filtered_paths.2d_fcc.potential.pdf", dpi=600
+    )
 
-    result = solve_ensemble_ballistic.call_uncached(
+    result = solve_ensemble_ballistic(
         system,
         TimeSpan(t_start=-10e-11, t_end=10e-11, n_steps=1000),
         n_samples=1,
@@ -219,7 +223,7 @@ def _plot_filtered_ballistic_trajectory_2d() -> None:
         labels=["inelastic"],
     )
 
-    fig.savefig("examples/ballistic_langevin/2d_fcc.trajectory.pdf")
+    fig.savefig("examples/ballistic_langevin/filtered_paths.2d_fcc.pdf")
 
 
 if __name__ == "__main__":
@@ -232,5 +236,6 @@ if __name__ == "__main__":
     #
     # Time spans positive and negative values s=to remove edge effects, from applying the filter
     # at t = 0.
-    _plot_filtered_ballistic_trajectory_1d()
-    _plot_filtered_ballistic_trajectory_2d()
+    with cache_base_path(Path("examples/data")):
+        _plot_filtered_ballistic_trajectory_1d()
+        _plot_filtered_ballistic_trajectory_2d()

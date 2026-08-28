@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 
 from classical_diffusion.analysis import (
@@ -10,6 +12,7 @@ from classical_diffusion.langevin import (
 )
 from classical_diffusion.plot import get_two_panel_figure
 from classical_diffusion.simulation import TimeSpan
+from classical_diffusion.util import cache_base_path
 
 
 def _plot_inelastic_trends() -> None:
@@ -48,4 +51,5 @@ if __name__ == "__main__":
     # These example plots the ensemble isf inelastic and elastic components (see filtered_paths) .
     # It also splits trajectories into elastic and inelastic components (see filtered_paths) and plots
     # the corresponding ensemble isf on the same figure
-    _plot_inelastic_trends()
+    with cache_base_path(Path("examples/data")):
+        _plot_inelastic_trends()

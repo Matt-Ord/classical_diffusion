@@ -8,9 +8,9 @@ from classical_diffusion.analysis import (
 )
 from classical_diffusion.langevin import (
     SODIUM_COPPER_SYSTEM_1D,
-    fold_to_unit_cell_1d,
     plot_force_1d,
     plot_periodic_potential_1d,
+    shift_origin_to_unit_cell_1d,
     solve_ensemble,
     solve_ensemble_ballistic,
     solve_single,
@@ -18,32 +18,40 @@ from classical_diffusion.langevin import (
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.simulation import TimeSpan
+from classical_diffusion.system import unit_with_trajectory_scale
 from classical_diffusion.util import cache_base_path
 
 
 def _plot_periodic_system() -> None:
     system = SODIUM_COPPER_SYSTEM_1D
     fig, ax = get_fancy_figure()
-    _, _, _ = plot_periodic_potential_1d(system, ax=ax)
-    _, _, _ = plot_force_1d(system, 0, system.delta_x, ax=ax)
+    _, _, line0 = plot_periodic_potential_1d(system, ax=ax)
+    line0.set_label("potential")
+
+    _, _, line1 = plot_force_1d(system, 0, system.delta_x, ax=ax.twinx())
+    line1.set_color("C1")
+    line1.set_label("force")
+
+    ax.legend(handles=[line0, line1])
     fig.savefig("examples/1d_langevin.potential.pdf")
 
 
 def _plot_periodic_trajectory() -> None:
     system = SODIUM_COPPER_SYSTEM_1D
+    units = unit_with_trajectory_scale(
+        system.units, length=system.delta_x, time=1 / system.gamma
+    )
+    system = system.with_units(units)
 
     result = solve_ensemble(
         system,
         TimeSpan(t_end=5 / system.gamma, n_steps=4000),
         n_samples=20,
     )
+    result = shift_origin_to_unit_cell_1d(result)
 
     fig, ax = get_fancy_figure()
-    folded_result = fold_to_unit_cell_1d(result, system)
-
-    _, _, _ = plot_x_evolution_1d(
-        result=folded_result, ax=ax, x_scale=1 / system.gamma, y_scale=system.delta_x
-    )
+    _, _, _ = plot_x_evolution_1d(result=result, ax=ax)
     ax.set_ylim(-8, 8)
     ax.set_xlim(0, 3)
     ax.set_ylabel(r"$x \, / \, \Delta x$")
@@ -61,13 +69,9 @@ def _plot_periodic_trajectory() -> None:
     )
 
     fig, ax = get_fancy_figure()
-    _, _, langevin_line = plot_x_evolution_1d(
-        result=langevin_result, ax=ax, x_scale=1 / system.gamma, y_scale=system.delta_x
-    )
+    _, _, langevin_line = plot_x_evolution_1d(result=langevin_result, ax=ax)
     langevin_line[0].set_label("langevin")
-    _, _, ballistic_line = plot_x_evolution_1d(
-        result=ballistic_result, ax=ax, x_scale=1 / system.gamma, y_scale=system.delta_x
-    )
+    _, _, ballistic_line = plot_x_evolution_1d(result=ballistic_result, ax=ax)
     ballistic_line[0].set_label("ballistic")
 
     ax.set_ylim(-0.2, 0.2)
@@ -82,9 +86,7 @@ def _plot_periodic_isf() -> None:
     system = SODIUM_COPPER_SYSTEM_1D
 
     result = solve_ensemble(
-        system,
-        TimeSpan(t_end=2 / system.gamma, n_steps=4000),
-        n_samples=1000,
+        system, TimeSpan(t_end=2 / system.gamma, n_steps=4000), n_samples=1000
     )
 
     fig, ax = get_fancy_figure()

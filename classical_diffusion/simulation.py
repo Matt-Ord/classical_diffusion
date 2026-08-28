@@ -33,6 +33,11 @@ class SingleSimulationResult[S: Any]:
             system=self.system.with_units(units),
         )
 
+    @property
+    def units(self) -> UnitSystem:
+        """The units used for the simulation."""
+        return self.system.units
+
 
 class SimulationResult[S: Any]:
     """Results of a simulation ensemble."""
@@ -69,6 +74,11 @@ class SimulationResult[S: Any]:
     def system(self) -> S:
         """The system used for the simulation."""
         return self._system
+
+    @property
+    def units(self) -> UnitSystem:
+        """The units used for the simulation."""
+        return self.system.units
 
     def __getitem__(self, idx: int) -> SingleSimulationResult[S]:
         """Get a single trajectory from the ensemble."""
