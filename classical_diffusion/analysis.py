@@ -159,6 +159,13 @@ def plot_x_evolution_2d(
         (line,) = ax.plot(res.x_points[idx[0]], res.x_points[idx[1]])
         lines.append(line)
 
+    if len(lines) > 1:
+        for line in lines[:-1]:
+            line.set_color("C1")
+            line.set_alpha(0.2)
+
+        lines[-1].set_color("C0")
+
     ax.set_xlabel("$x$")
     ax.set_ylabel("$y$")
     ax.set_aspect("equal")
