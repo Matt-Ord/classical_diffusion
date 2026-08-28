@@ -122,15 +122,13 @@ def plot_x_evolution_1d(
     *,
     ax: Axes | None = None,
     idx: int = 0,
-    x_scale: float = 1,
-    y_scale: float = 1,
 ) -> tuple[Figure, Axes, list[Line2D]]:
     """Plot x against t for each trajectory."""
     fig, ax = get_figure(ax)
 
     lines = []
     for res in result if isinstance(result, SimulationResult) else [result]:
-        (line,) = ax.plot(res.times / x_scale, res.x_points[idx] / y_scale)
+        (line,) = ax.plot(res.times, res.x_points[idx])
         lines.append(line)
 
     if len(lines) > 1:
@@ -139,8 +137,6 @@ def plot_x_evolution_1d(
             line.set_alpha(0.5)
 
         lines[-1].set_color("C0")
-        lines[-1].set_zorder(10)
-        lines[-1].set_alpha(1.0)
 
     ax.set_xlabel("$time$")
     ax.set_ylabel("$x$")

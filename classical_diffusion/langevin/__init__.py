@@ -19,7 +19,6 @@ from classical_diffusion.langevin._experimental_systems import (
 from classical_diffusion.langevin._langevin import (
     LangevinSimulationResult,
     SingleLangevinSimulationResult,
-    _get_langevin_units,
     solve_ensemble,
     solve_ensemble_ballistic,
     solve_ensemble_overdamped,
@@ -42,7 +41,6 @@ from classical_diffusion.langevin._system import (
     get_diffusion_time,
 )
 from classical_diffusion.langevin._system_analysis import (
-    fold_to_unit_cell_1d,
     get_characteristic_friction_time,
     get_exact_flat_ballistic_isf,
     get_exact_flat_isf,
@@ -56,6 +54,8 @@ from classical_diffusion.langevin._system_analysis import (
     plot_periodic_potential_fcc,
     plot_potential_1d,
     plot_potential_2d,
+    shift_origin_to_unit_cell_1d,
+    shift_origin_to_unit_cell_fcc,
 )
 
 __all__ = [
@@ -69,9 +69,7 @@ __all__ = [
     "PeriodicSystemFCC",
     "SingleLangevinSimulationResult",
     "System",
-    "_get_langevin_units",
     "breakdown_ballistic_trajectory",
-    "fold_to_unit_cell_1d",
     "get_characteristic_friction_time",
     "get_diffusion_time",
     "get_effective_mass",
@@ -96,6 +94,8 @@ __all__ = [
     "plot_potential_2d",
     "plot_x_distribution_histogram",
     "plot_x_distribution_kde",
+    "shift_origin_to_unit_cell_1d",
+    "shift_origin_to_unit_cell_fcc",
     "solve_ensemble",
     "solve_ensemble_ballistic",
     "solve_ensemble_overdamped",

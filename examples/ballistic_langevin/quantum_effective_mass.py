@@ -306,11 +306,13 @@ def _plot_boltzmann_distribution(
     z = _calculate_partition_function(system)
     probability = weight / z
 
-    ax_boltz = ax.twinx()
-    dist = ax_boltz.fill_between(normalized_energy, probability, alpha=0.2, zorder=0)
-    ax_boltz.set_ylabel("Probability density")
-    ax_boltz.set_ylim(bottom=0)
-    ax_boltz.set_zorder(ax.get_zorder() - 1)
+    ax_boltzmann = ax.twinx()
+    dist = ax_boltzmann.fill_between(
+        normalized_energy, probability, alpha=0.2, zorder=0
+    )
+    ax_boltzmann.set_ylabel("Probability density")
+    ax_boltzmann.set_ylim(bottom=0)
+    ax_boltzmann.set_zorder(ax.get_zorder() - 1)
     ax.patch.set_visible(False)
 
     return fig, ax, dist
@@ -532,7 +534,7 @@ def _p_elastic_squared_against_mass() -> None:
     )
 
 
-def _calculate_dynamic_energy_cutoff_interp(
+def _calculate_dynamic_energy_cutoff_interp(  # cspell: disable-line
     system: PeriodicSystem1D,
     observation_time: float,
     *,
@@ -551,9 +553,9 @@ def _calculate_dynamic_energy_cutoff_interp(
     # traversal_time spans many orders of magnitude and decreases with epsilon
     # (away from the near-threshold region, excluded via the 0.99 upper bound),
     # so interpolate in log-time for accuracy, and reverse both arrays since
-    # np.interp needs its x-array ascending
+    # np.interp needs its x-array ascending # cspell: disable-line
     log_times = np.log(traversal_times)
-    epsilon_cutoff = np.interp(
+    epsilon_cutoff = np.interp(  # cspell: disable-line
         np.log(observation_time), log_times[::-1], epsilon_grid[::-1]
     )
     return epsilon_cutoff * system.barrier_energy
@@ -568,7 +570,9 @@ def _plot_dynamic_energy_cutoff(
     """Draw a vertical line at the dynamic/static energy cutoff, normalized by
     barrier energy to match the x-axis convention used elsewhere.
     """  # ruff: ignore[missing-blank-line-after-summary]
-    energy_cutoff = _calculate_dynamic_energy_cutoff_interp(system, observation_time)
+    energy_cutoff = _calculate_dynamic_energy_cutoff_interp(  # cspell: disable-line
+        system, observation_time
+    )
     epsilon_cutoff = energy_cutoff / system.barrier_energy
 
     return ax.axvline(x=epsilon_cutoff, linestyle="--", label="dynamic cutoff")
@@ -634,7 +638,9 @@ def _calculate_mean_p_elastic_squared_dynamic(
     system: PeriodicSystem1D, observation_time: float
 ) -> float:
     epsilon_min = (
-        _calculate_dynamic_energy_cutoff_interp(system, observation_time)
+        _calculate_dynamic_energy_cutoff_interp(  # cspell: disable-line
+            system, observation_time
+        )
         / system.barrier_energy
     )
     u0 = system.barrier_energy / system.kbt

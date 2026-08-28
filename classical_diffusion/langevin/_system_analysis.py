@@ -395,13 +395,35 @@ def get_under_barrier_probability(
     )
 
 
-def fold_to_unit_cell_1d(
-    result: LangevinSimulationResult, system: PeriodicSystem1D
-) -> LangevinSimulationResult:
-    delta_x = system.delta_x
-    x = result.x_points
-    n_shift = np.round(x[:, :, 0] / delta_x)
-    x_folded = x - n_shift[:, :, None] * delta_x
+def shift_origin_to_unit_cell_1d[S: PeriodicSystem1D](
+    result: LangevinSimulationResult[S],
+) -> LangevinSimulationResult[S]:
+    # Initial position of all trajectories
+    x0 = result.x_points[:, :, 0]
+
+    n_shift = np.round(x0 / result.system.delta_x)
+    x_folded = result.x_points - n_shift[:, :, None] * result.system.delta_x
+    return LangevinSimulationResult(
+        times=result.times,
+        x_points=x_folded,
+        p_points=result.p_points,
+        system=result.system,
+    )
+
+
+def shift_origin_to_unit_cell_fcc[S: PeriodicSystemFCC](
+    result: LangevinSimulationResult[S],
+) -> LangevinSimulationResult[S]:
+    lattice_vectors = result.system.lattice_vectors
+
+    # Initial position of all trajectories
+    x0 = result.x_points[:, :, 0]
+    n_shift = np.round(x0 @ np.linalg.inv(lattice_vectors))
+    cartesian_shifts = np.round(n_shift) @ lattice_vectors
+
+    # 6. Broadcast subtract the shift across all time points (shape: n_samples, 2, n_time_points)
+    x_folded = result.x_points - cartesian_shifts[:, :, np.newaxis]
+
     return LangevinSimulationResult(
         times=result.times,
         x_points=x_folded,
