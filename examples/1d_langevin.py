@@ -153,10 +153,10 @@ def _plot_root_mean_square_x() -> None:
 if __name__ == "__main__":
     with cache_base_path(Path("examples/data")):
         _plot_periodic_system()
-        # _plot_periodic_trajectory()
+        _plot_periodic_trajectory()
         _plot_ballistic_trajectory()
         # The particle experiences a frictional force,
         # which scales as sqrt(2 m gamma k_B T / dt).
         _plot_force()
-        # _plot_periodic_isf()
-        # _plot_root_mean_square_x()
+        _plot_periodic_isf()
+        _plot_root_mean_square_x()
