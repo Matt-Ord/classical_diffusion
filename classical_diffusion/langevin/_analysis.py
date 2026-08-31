@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING, Any, cast, overload
 
+import matplotlib as mpl
 import numpy as np
 import scipy.stats
 import sympy as sp
@@ -211,7 +212,7 @@ def plot_x_distribution_kde(
         x_points = np.linspace(np.min(result.x_points), np.max(result.x_points), 200)
 
     norm = Normalize(vmin=float(result.times[0]), vmax=float(result.times[-1]))
-    sm = ScalarMappable(cmap="viridis", norm=norm)
+    sm = ScalarMappable(cmap=mpl.rcParams["image.cmap"], norm=norm)
     colors = sm.to_rgba(result.times)
     lines: list[Line2D] = []
 
@@ -295,7 +296,7 @@ def plot_phase_space_density(
         result.p_points[..., 1:].reshape(-1),
         bins=bins,
         density=True,
-        cmap="viridis",
+        cmap=mpl.rcParams["image.cmap"],
     )
 
     fig.colorbar(mesh, ax=ax, label="Probability Density")
