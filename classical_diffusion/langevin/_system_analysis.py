@@ -473,7 +473,7 @@ def plot_frictional_force_distribution[S: System](
     *,
     ax: Axes | None = None,
     idx: int = 0,
-) -> tuple[Figure, Axes, tuple[Line2D, Line2D, BarContainer]]:
+) -> tuple[Figure, Axes, tuple[Line2D, BarContainer]]:
     fig, ax = get_figure(ax)
 
     result = (
@@ -503,10 +503,6 @@ def plot_frictional_force_distribution[S: System](
 
     start, end = ax.get_xlim()
     x = np.linspace(start, end, 400)
-    (fitted_line,) = ax.plot(x, scipy.stats.norm.pdf(x, scale=std_force))
-    fitted_line.set_label("Gaussian Fit")
-    fitted_line.set_color("C1")
-
     expected_std = _get_expected_std_force(
         result.system, dt=result.times[1] - result.times[0]
     )
@@ -518,4 +514,4 @@ def plot_frictional_force_distribution[S: System](
     ax.legend()
     ax.set_xlim(start, end)
 
-    return fig, ax, (fitted_line, classical_line, cast("BarContainer", b))
+    return fig, ax, (classical_line, cast("BarContainer", b))
