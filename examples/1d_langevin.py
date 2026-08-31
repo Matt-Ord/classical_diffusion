@@ -132,8 +132,9 @@ def _plot_force() -> None:
 
     fig, ax = get_fancy_figure()
 
-    _, ax, (_, _bars) = plot_frictional_force_distribution(result=result, ax=ax)
-    ax.set_rasterized(True)
+    _, _, (_line, _bars) = plot_frictional_force_distribution(
+        result=result, ax=ax, n_bins=100
+    )
     fig.savefig("examples/1d_langevin.frictional_force.pdf", dpi=1000)
 
 

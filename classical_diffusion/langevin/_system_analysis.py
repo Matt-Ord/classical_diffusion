@@ -473,6 +473,7 @@ def plot_frictional_force_distribution[S: System](
     *,
     ax: Axes | None = None,
     idx: int = 0,
+    n_bins: int | None = None,
 ) -> tuple[Figure, Axes, tuple[Line2D, BarContainer]]:
     fig, ax = get_figure(ax)
 
@@ -490,11 +491,12 @@ def plot_frictional_force_distribution[S: System](
     # Plot a histogram of the force distribution
     _, _, b = ax.hist(
         forces,
-        bins=int(np.sqrt(forces.size)),
+        bins=n_bins if n_bins is not None else int(np.sqrt(forces.size)),
         density=True,
         alpha=1,
         range=(-5 * std_force, 5 * std_force),
     )
+
     ax.set_title("Force Distribution")
     ax.set_xlabel("Force / N")
     ax.set_ylabel("Probability Density")
@@ -506,12 +508,15 @@ def plot_frictional_force_distribution[S: System](
     expected_std = _get_expected_std_force(
         result.system, dt=result.times[1] - result.times[0]
     )
-    (classical_line,) = ax.plot(x, scipy.stats.norm.pdf(x, scale=expected_std))
-    classical_line.set_linestyle("--")
-    classical_line.set_color("C2")
-    classical_line.set_label(r"$\sqrt{2 m \gamma k_B T / \Delta t}$")
+    (line,) = ax.plot(x, scipy.stats.norm.pdf(x, scale=expected_std))
+    line.set_linestyle("--")
+    line.set_label(r"$\sqrt{2 m \gamma k_B T / \Delta t}$")
+
+    line.set_color("C0")
+    for bar in cast("BarContainer", b):
+        bar.set_color("C1")
 
     ax.legend()
     ax.set_xlim(start, end)
 
-    return fig, ax, (classical_line, cast("BarContainer", b))
+    return fig, ax, (line, cast("BarContainer", b))
