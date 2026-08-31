@@ -38,7 +38,7 @@ def _plot_periodic_system() -> None:
     fig.savefig("examples/1d_langevin.potential.pdf")
 
 
-def _plot_periodic_trajectory() -> None:
+def _plot_trajectory() -> None:
     system = SODIUM_COPPER_SYSTEM_1D
     # Convert to a nice unit system where gamma = 1 and delta_x = 1
     system = system.with_units(
@@ -49,7 +49,7 @@ def _plot_periodic_trajectory() -> None:
 
     result = solve_ensemble(
         system,
-        TimeSpan(t_end=5 / system.gamma, n_steps=4000),
+        TimeSpan(t_end=10 / system.gamma, n_steps=4000),
         n_samples=20,
     )
     result = shift_origin_to_unit_cell_1d(result)
@@ -57,9 +57,9 @@ def _plot_periodic_trajectory() -> None:
     fig, ax = get_fancy_figure()
     _, _, _ = plot_x_evolution_1d(result=result, ax=ax)
     ax.set_ylim(-8, 8)
-    ax.set_xlim(0, 3)
+    ax.set_xlim(0, 6)
     ax.set_ylabel(r"$x \, / \, \Delta x$")
-    ax.set_xlabel(r"$t \, / \, \gamma^{-1}$")
+    ax.set_xlabel(r"$\gamma t$")
 
     fig.savefig("./examples/1d_langevin.trajectory.pdf")
 
@@ -96,7 +96,7 @@ def _plot_ballistic_trajectory() -> None:
     fig.savefig("./examples/1d_langevin.trajectory.ballistic_trajectory.pdf")
 
 
-def _plot_periodic_isf() -> None:
+def _plot_isf() -> None:
     system = SODIUM_COPPER_SYSTEM_1D
     result = solve_ensemble(
         system, TimeSpan(t_end=2 / system.gamma, n_steps=4000), n_samples=1000
@@ -105,7 +105,9 @@ def _plot_periodic_isf() -> None:
     fig, ax = get_fancy_figure()
 
     delta_k = (0.5 * 2 * np.pi / system.delta_x,)
-    _, ax, line_0, _fill_0 = plot_isf(result=result, ax=ax, delta_k=delta_k)
+    _, ax, line_0, _fill_0 = plot_isf(
+        result=result, ax=ax, delta_k=delta_k, pairwise=False
+    )
     line_0.set_label("full simulation")
 
     result = solve_ensemble_ballistic(
@@ -153,10 +155,12 @@ def _plot_root_mean_square_x() -> None:
 if __name__ == "__main__":
     with cache_base_path(Path("examples/data")):
         _plot_periodic_system()
-        _plot_periodic_trajectory()
+        _plot_trajectory()
+        # At short times, the friction free trajectory
+        # is the same as the Langevin trajectory
         _plot_ballistic_trajectory()
         # The particle experiences a frictional force,
         # which scales as sqrt(2 m gamma k_B T / dt).
         _plot_force()
-        _plot_periodic_isf()
         _plot_root_mean_square_x()
+        _plot_isf()

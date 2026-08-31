@@ -225,12 +225,12 @@ def plot_root_mean_square_x[S: Any](
     *,
     ax: Axes | None = None,
     idx: int = 0,
-) -> tuple[Figure, Axes, Line2D]:
+) -> tuple[Figure, Axes, tuple[Line2D, Line2D]]:
     """Plot the root mean square of the displacement over time."""
     fig, ax = get_figure(ax)
 
     delta_x2 = _get_delta_x2(result.x_points[:, idx])
-    average_rms = np.mean(np.sqrt(delta_x2), axis=0)
+    average_rms = np.sqrt(np.mean(delta_x2, axis=0))
     (line,) = ax.plot(result.times, average_rms)
     line.set_label(r"$\sqrt{ \Delta x^2 }$")
 
@@ -238,10 +238,15 @@ def plot_root_mean_square_x[S: Any](
     fill = ax.fill_between(result.times, average_rms - std_rms, average_rms + std_rms)
     fill.set_color(line.get_color())
 
+    thermal_v = np.sqrt(result.system.kbt / result.system.m)
+
+    (line_b,) = ax.plot(result.times, thermal_v * result.times, linestyle="--")
+    line_b.set_label("Ballistic")
+
     ax.set_xlabel("Time / s")
     ax.set_ylabel(r"$\sqrt{ \Delta x^2 }$ /m")
     ax.legend()
     ax.set_xlim(result.times[0], result.times[-1])
-    ax.set_ylim(0, None)
+    ax.set_ylim(0, np.max(average_rms) * 1.1)
 
-    return fig, ax, line
+    return fig, ax, (line, line_b)
