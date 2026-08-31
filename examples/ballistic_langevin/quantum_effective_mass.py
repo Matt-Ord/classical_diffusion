@@ -167,7 +167,7 @@ def _plot_period_against_energy_color_map(
     fig, ax = get_figure(ax)
 
     norm = mpl.colors.Normalize(vmin=np.min(masses).item(), vmax=np.max(masses).item())
-    cmap = CAM_BLUE_CMAP
+    cmap = mpl.colormaps[mpl.rcParams["image.cmap"]]
     for idx, m in enumerate(masses):
         _, _, line = _plot_period_against_energy(
             energy,
@@ -254,7 +254,7 @@ def _plot_p_elastic_squared_over_m_against_energy_color_map(
     fig, ax = get_figure(ax)
 
     norm = mpl.colors.Normalize(vmin=np.min(masses).item(), vmax=np.max(masses).item())
-    cmap = CAM_BLUE_CMAP
+    cmap = mpl.colormaps[mpl.rcParams["image.cmap"]]
     for idx, m in enumerate(masses):
         _, _, line = _plot_p_elastic_squared_over_m_against_energy(
             energy,
@@ -677,8 +677,9 @@ def _quantum_effective_mass(system: PeriodicSystem1D, observation_time: float) -
 
 
 if __name__ == "__main__":
-    _plot_quantum_classical_comparison()
-    _classify_dynamic_states()
-    _plot_quantum_time_period()
-    _p_elastic_squared_against_energy()
-    _p_elastic_squared_against_mass()
+    with mpl.rc_context({"image.cmap": CAM_BLUE_CMAP.name}):
+        _plot_quantum_classical_comparison()
+        _classify_dynamic_states()
+        _plot_quantum_time_period()
+        _p_elastic_squared_against_energy()
+        _p_elastic_squared_against_mass()

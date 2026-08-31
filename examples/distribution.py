@@ -15,6 +15,7 @@ from classical_diffusion.langevin import (
     plot_phase_space_density,
     plot_x_distribution_histogram,
     plot_x_distribution_kde,
+    shift_origin_to_unit_cell_1d,
     solve_ensemble,
 )
 from classical_diffusion.plot import get_fancy_figure
@@ -99,6 +100,7 @@ def _plot_x_distribution_spread() -> None:
     result = solve_ensemble(
         system, TimeSpan(t_end=100 / system.gamma, n_steps=100), n_samples=4000
     )
+    result = shift_origin_to_unit_cell_1d(result)
 
     fig, ax = get_fancy_figure()
 
@@ -178,7 +180,7 @@ def _plot_x_distribution_spread_ballistic_sample() -> None:
     _, ax, _lines = plot_x_distribution_histogram(result=result_folded, ax=ax)
     ax.set_xlim(0, system.delta_x)
 
-    fig.savefig("examples/distribution.1d_periodic.x_spread.pdf")
+    fig.savefig("examples/distribution.1d_periodic.x_histogram.pdf")
 
 
 if __name__ == "__main__":

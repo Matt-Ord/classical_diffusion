@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+import matplotlib as mpl
 import matplotlib.font_manager as fm
 import matplotlib.pyplot as plt
 import numpy as np
@@ -121,22 +122,24 @@ CAM_SLATE_4 = "#232830"
 
 
 CAM_BLUE_CMAP = LinearSegmentedColormap.from_list(
-    "cambridge_potential",
+    "CAM_BLUE_CMAP",
     [
         CAM_BLUE.light,
         CAM_BLUE.warm,
         CAM_BLUE.dark,
     ],
 )
+mpl.colormaps.register(cmap=CAM_BLUE_CMAP, name="CAM_BLUE_CMAP", force=True)
 
 CAM_CHERRY_CMAP = LinearSegmentedColormap.from_list(
-    "cambridge_potential",
+    "CAM_CHERRY_CMAP",
     [
         CAM_CHERRY.light,
         CAM_CHERRY.warm,
         CAM_CHERRY.dark,
     ],
 )
+mpl.colormaps.register(cmap=CAM_CHERRY_CMAP, name="CAM_CHERRY_CMAP", force=True)
 
 
 def get_fig_size() -> tuple[float, float]:

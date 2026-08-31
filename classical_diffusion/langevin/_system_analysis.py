@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import jax
 import jax.numpy as jnp
+import matplotlib as mpl
 import numpy as np
 import scipy
 import sympy as sp
@@ -11,7 +12,7 @@ from classical_diffusion.langevin import (
     SingleLangevinSimulationResult,
 )
 from classical_diffusion.langevin._langevin import _get_langevin_units
-from classical_diffusion.plot import CAM_BLUE_CMAP, get_figure
+from classical_diffusion.plot import get_figure
 from classical_diffusion.util import _get_key
 
 if TYPE_CHECKING:
@@ -163,7 +164,9 @@ def plot_potential_2d(
         potential_func(x_grid, y_grid, *system.params), x_grid.shape
     )
 
-    mesh = ax.pcolormesh(x_grid, y_grid, potential, cmap=CAM_BLUE_CMAP)
+    mesh = ax.pcolormesh(
+        x_grid, y_grid, potential, cmap=mpl.rcParams["image.cmap"], shading="auto"
+    )
 
     color_bar = fig.colorbar(mesh, ax=ax)
     color_bar.set_label(r"$V(x, y)$")
