@@ -75,7 +75,7 @@ def plot_isf(
     fill.set_alpha(0.3)
     fill.set_color(line.get_color())
 
-    ax.set_xlabel("Time / s")
+    ax.set_xlabel("Time")
     ax.set_ylabel("ISF")
     ax.set_xlim(times[0], times[-1])
 
