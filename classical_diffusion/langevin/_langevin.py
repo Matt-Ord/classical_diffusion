@@ -187,7 +187,7 @@ def get_random_initial_conditions_ext(
 ]:
     """Get random initial conditions for a given system."""
     _key = _get_key(_key)
-    normalized_system = system.with_units(_get_langevin_units(system)).as_canonical()
+    normalized_system = system.with_units(_get_langevin_units(system))
     x_points, p_points = get_random_initial_conditions(
         normalized_system,
         n_samples,
