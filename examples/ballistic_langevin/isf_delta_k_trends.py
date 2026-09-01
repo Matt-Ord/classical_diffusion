@@ -15,7 +15,7 @@ from classical_diffusion.simulation import TimeSpan
 from classical_diffusion.util import cache_base_path
 
 
-def _plot_inelastic_trends() -> None:
+def _plot_isf_trends() -> None:
 
     system = SODIUM_COPPER_SYSTEM_1D
 
@@ -44,7 +44,7 @@ def _plot_inelastic_trends() -> None:
     ax[0].set_xlim(0, 1e-12)
     ax[0].set_ylim(0.8, 1.0)
     ax[1].set_xlim(0, 1e-12)
-    fig.savefig("examples/ballistic_langevin/isf_delta_k_trends.pdf")
+    fig.savefig("examples/ballistic_langevin/isf_delta_k_trends.both.pdf")
 
 
 if __name__ == "__main__":
@@ -52,4 +52,4 @@ if __name__ == "__main__":
     # It also splits trajectories into elastic and inelastic components (see filtered_paths) and plots
     # the corresponding ensemble isf on the same figure
     with cache_base_path(Path("examples/data")):
-        _plot_inelastic_trends()
+        _plot_isf_trends()

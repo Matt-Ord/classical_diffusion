@@ -181,7 +181,7 @@ def _plot_filtered_ballistic_trajectory_2d() -> None:
     system = SODIUM_COPPER_SYSTEM_2D
 
     fig, ax = get_fancy_figure()
-    fig, ax, mesh, _unit_cell = plot_periodic_potential_fcc(system, ax=ax, shape=(5, 4))
+    _, _, mesh, _unit_cell = plot_periodic_potential_fcc(system, ax=ax, shape=(5, 4))
     mesh.set_rasterized(True)
 
     _annotate_bridge_site_energy(ax, system)
@@ -191,16 +191,16 @@ def _plot_filtered_ballistic_trajectory_2d() -> None:
     fig.savefig(
         "examples/ballistic_langevin/filtered_paths.2d_fcc.potential.pdf", dpi=600
     )
-
     result = solve_ensemble_ballistic(
         system,
-        TimeSpan(t_start=-10e-11, t_end=10e-11, n_steps=1000),
+        TimeSpan(t_start=-20 / system.gamma, t_end=20 / system.gamma, n_steps=1000),
         n_samples=1,
+        minimum_energy=SODIUM_COPPER_SYSTEM_1D.barrier_energy,
     )
 
     elastic, inelastic = breakdown_ballistic_trajectory(
         result,
-        filter_timescale=1 / system.gamma,
+        filter_timescale=0.5 / system.gamma,
     )
 
     fig, ax = get_two_panel_figure()
