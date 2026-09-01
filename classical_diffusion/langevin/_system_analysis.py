@@ -1,7 +1,5 @@
 from typing import TYPE_CHECKING, Any
 
-import jax
-import jax.numpy as jnp
 import matplotlib as mpl
 import numpy as np
 import sympy as sp
@@ -9,11 +7,13 @@ import sympy as sp
 from classical_diffusion.langevin import (
     LangevinSimulationResult,
 )
-from classical_diffusion.langevin._langevin import _get_langevin_units
+from classical_diffusion.langevin._analysis import _get_energy
+from classical_diffusion.langevin._langevin import get_random_initial_conditions_ext
 from classical_diffusion.plot import get_figure
-from classical_diffusion.util import _get_key
+from classical_diffusion.util import _get_key, timed
 
 if TYPE_CHECKING:
+    import jax
     from matplotlib.axes import Axes
     from matplotlib.collections import QuadMesh
     from matplotlib.figure import Figure
@@ -25,8 +25,6 @@ if TYPE_CHECKING:
         PeriodicSystemFCC,
         System,
     )
-
-    from ._system import CanonicalSystem
 
 
 def plot_potential_1d(
@@ -341,63 +339,20 @@ def get_characteristic_friction_time(system: System) -> float:
     return 1 / system.gamma
 
 
-SAMPLE_REGION = 10
-
-
-@jax.jit(static_argnames=("n_samples"))
-def _get_under_barrier_probability_jax(
-    system: "CanonicalSystem",  # ruff: ignore[quoted-annotation]
-    barrier_energy: float,
-    n_samples: int,
-    key: jax.Array,
-) -> jax.Array:
-    # To find the under barrier probability, the V(x) is sampled at x
-    # points centered around the origin, and the momentum is sampled from the Maxwell-Boltzmann distribution.
-    # The fraction of phase space under the barrier is then computed using importance sampling:
-    # P(under barrier) = sum(w(x) * I(V(x) + K(p) < barrier)) / sum(w(x))
-    # where w(x) = exp(-V(x)/kBT) / q(x) is the importance weight, and q(x) is the sampling distribution.
-    key_x, key_p = jax.random.split(key)
-
-    # Sample positions according to q(x)
-    x_samples = (
-        jax.random.normal(key_x, shape=(n_samples, system.n_dim)) * SAMPLE_REGION
-    )
-    p_standard_deviation = jnp.sqrt(system.m * system.kbt)
-    p_samples = (
-        jax.random.normal(key_p, shape=(n_samples, system.n_dim)) * p_standard_deviation
-    )
-
-    potential_fn = sp.lambdify(system.lambda_symbols, system.potential_expr, "jax")
-    v_energies = jax.vmap(lambda x: potential_fn(*x, *system.params))(x_samples)
-    kinetic_energies = jnp.sum(p_samples**2, axis=-1) / (2.0 * system.m)
-    total_energies = v_energies + kinetic_energies
-
-    # Importance weights for x: w(x) = exp(-V(x)/kBT) / q(x)
-    log_weights = -v_energies / system.kbt + jnp.sum(x_samples**2, axis=-1) / (
-        2.0 * SAMPLE_REGION**2
-    )
-    weights = jnp.exp(log_weights - jnp.max(log_weights))
-    return jnp.average(total_energies < barrier_energy, weights=weights)
-
-
 N_SAMPLES = 1_000_000
 
 
+@timed
 def get_under_barrier_probability(
     system: System, barrier_energy: float, *, _key: jax.Array | None = None
 ) -> float:
     _key = _get_key(_key)
 
-    canonical_system = system.with_units(_get_langevin_units(system)).as_canonical()
-    barrier_energy = system.units.energy_into(barrier_energy, canonical_system.units)
-    return float(
-        _get_under_barrier_probability_jax(
-            key=_key,
-            system=canonical_system,
-            barrier_energy=barrier_energy,
-            n_samples=N_SAMPLES,
-        )
+    x_points, p_points = get_random_initial_conditions_ext(
+        system, n_samples=N_SAMPLES, _key=_key
     )
+    energies = _get_energy(system, x_points, p_points)
+    return np.mean(energies < barrier_energy)
 
 
 def shift_origin_to_unit_cell_1d[S: PeriodicSystem1D](

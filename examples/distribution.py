@@ -39,18 +39,14 @@ def fold_results(
 def _plot_xp_distributions_periodic() -> None:
 
     system = PeriodicSystem1D(
-        gamma=5e11,
-        temperature=110,
-        m=8e-27,
-        delta_x=3e-10,
-        barrier_energy=1.6e-21,
+        gamma=0.5, temperature=0.5 / Boltzmann, m=1.0, delta_x=5, barrier_energy=2
     )
 
     fig, ax = get_fancy_figure()
 
     result = solve_ensemble(
         system,
-        TimeSpan(t_end=system.units.time_into(1000 / system.gamma), n_steps=1000),
+        TimeSpan(t_end=1000 / system.gamma, n_steps=1000),
         n_samples=10,
     )
 
@@ -63,14 +59,14 @@ def _plot_xp_distributions_periodic() -> None:
     fig, ax = get_fancy_figure()
     _, ax, _bars = plot_p_distribution_histogram(result=result, ax=ax)
     ax.set_ylim(-1e23, 1e-23)
-    fig.savefig("examples/distribution.1d_periodic.p.pdf")
+    fig.savefig("examples/distribution.1d_periodic.p_histogram.pdf")
 
     result_folded = fold_results(result, delta=system.delta_x)
 
     fig, ax = get_fancy_figure()
     _, ax, _bars = plot_x_distribution_histogram(result=result_folded, ax=ax)
     ax.set_xlim(0, system.delta_x)
-    fig.savefig("examples/distribution.1d_periodic.x.pdf")
+    fig.savefig("examples/distribution.1d_periodic.x_histogram.pdf")
 
     fig, ax = get_fancy_figure()
     _, ax, mesh = plot_phase_space_density(result=result_folded, ax=ax)
@@ -125,13 +121,13 @@ def _plot_x_distribution_spread() -> None:
 
 
 def _plot_xp_distributions_harmonic() -> None:
-    system = HarmonicSystem(gamma=5e11, temperature=110, m=8e-27, omega=10e12)
+    system = HarmonicSystem(gamma=0.5, temperature=0.5 / Boltzmann, m=1, omega=1)
 
     fig, ax = get_fancy_figure()
 
     result = solve_ensemble(
         system,
-        TimeSpan(t_end=system.units.time_into(2000 / system.gamma), n_steps=2000),
+        TimeSpan(t_end=2000 / system.gamma, n_steps=2000),
         n_samples=10,
     )
 
@@ -184,6 +180,12 @@ def _plot_x_distribution_spread_thermal_sample() -> None:
     _, _, _lines = plot_p_distribution_histogram(result=result_folded, ax=ax)
 
     fig.savefig("examples/distribution.thermal.p_histogram.pdf")
+
+    fig, ax = get_fancy_figure()
+    _, _, mesh = plot_phase_space_density(result=result_folded, ax=ax)
+    mesh.set_rasterized(True)
+    ax.set_xlim(0, system.delta_x)
+    fig.savefig("examples/distribution.thermal.phase_space.pdf", dpi=1000)
 
 
 if __name__ == "__main__":
