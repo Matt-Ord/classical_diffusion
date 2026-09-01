@@ -11,6 +11,7 @@ from classical_diffusion.langevin import (
     SODIUM_COPPER_SYSTEM_1D,
     PeriodicSystem1D,
     get_effective_mass,
+    get_under_barrier_probability,
     solve_ensemble_ballistic,
 )
 from classical_diffusion.plot import CAM_BLUE, CAM_CHERRY, get_fancy_figure, get_figure
@@ -102,9 +103,8 @@ def _solve_effective_mass_path(
     system: PeriodicSystem1D,
     barrier_energy_ratio: np.ndarray,
     n_samples: np.ndarray,
-    t_end: float,
 ) -> Path:
-    filename = f"{t_end}_{t_end}_{hash_array((n_samples,))}_{t_end}_{hash_array((barrier_energy_ratio,))}_{hash(system)}.npz"
+    filename = f"effective_mass_{hash_array((n_samples,))}_{hash_array((barrier_energy_ratio,))}_{hash(system)}.npz"
     return Path(filename)
 
 
@@ -113,10 +113,9 @@ def _get_simulated_effective_mass(
     system: PeriodicSystem1D,
     barrier_energy_ratio: np.ndarray,
     n_samples: np.ndarray,
-    t_end: float,
 ) -> np.ndarray:
     keys = jrandom.split(jrandom.PRNGKey(100), barrier_energy_ratio.size)
-    simulated_effective_mass_ratio = np.zeros_like(barrier_energy_ratio)
+    out = np.zeros_like(barrier_energy_ratio)
 
     barrier_energy = barrier_energy_ratio * system.kbt
 
@@ -125,25 +124,28 @@ def _get_simulated_effective_mass(
             tqdm(np.ndindex(barrier_energy.shape), total=barrier_energy.size)
         ):
             result = solve_ensemble_ballistic(
-                _with_barrier_energy(
-                    system,
-                    barrier_energy=barrier_energy[idx],
-                ).as_canonical(),
-                TimeSpan(
-                    t_end=t_end,
-                    n_steps=1000,
-                ),
+                _with_barrier_energy(system, barrier_energy=barrier_energy[idx]),
+                TimeSpan(t_end=8 / system.gamma, n_steps=1000),
                 minimum_energy=barrier_energy[idx],
                 n_samples=n_samples[idx],
                 _key=keys[idx],
             )
 
-            simulated_effective_mass_ratio[idx] = (
-                get_effective_mass(result, filter_timescale=1 / system.gamma).item()
+            trapped_probability = get_under_barrier_probability(
+                result.system,
+                barrier_energy=result.system.barrier_energy,
+            )
+
+            out[idx] = (
+                get_effective_mass(
+                    result,
+                    filter_timescale=1 / system.gamma,
+                    trapped_probability=trapped_probability,
+                ).item()
                 / system.m
             )
 
-        return simulated_effective_mass_ratio
+        return out
 
 
 def _get_exact_effective_mass(
@@ -166,10 +168,10 @@ def _get_exact_effective_mass(
 def _plot_effective_mass_ratio() -> None:
 
     barrier_energy_ratio = np.logspace(-3, 1, 10)
+
     simulated_effective_mass_ratio = _get_simulated_effective_mass(
         system=SODIUM_COPPER_SYSTEM_1D,
         barrier_energy_ratio=barrier_energy_ratio,
-        t_end=40e-12,
         n_samples=(1000 / np.sqrt(barrier_energy_ratio)).astype(int),
     )
 
