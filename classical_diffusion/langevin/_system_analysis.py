@@ -255,7 +255,7 @@ def plot_exact_harmonic_isf(
     line.set_label("ISF")
 
     ax.set_title("Intermediate Scattering Function Over Time")
-    ax.set_xlabel("Time / s")
+    ax.set_xlabel("Time")
     ax.set_ylabel("ISF")
     ax.legend()
 
@@ -267,7 +267,7 @@ def get_exact_flat_isf(
     delta_k: tuple[float, ...],
     times: np.ndarray[Any, np.dtype[np.floating[Any]]],
 ) -> np.ndarray:
-    """Return the exact ISF for a 1D flat (potential-free) surface."""
+    """Return the exact ISF for a flat (potential-free) surface."""
     kbt, m, gamma = system.kbt, system.m, system.gamma
     k_squared = np.sum(np.array(delta_k) ** 2)
     return np.exp(
@@ -283,7 +283,7 @@ def plot_exact_flat_isf(
     *,
     ax: Axes | None = None,
 ) -> tuple[Figure, Axes, Line2D]:
-    """Plot the exact ISF for a 1D flat (potential-free) surface."""
+    """Plot the exact ISF for a flat (potential-free) surface."""
     fig, ax = get_figure(ax)
 
     times = times if times is not None else np.linspace(0, 10, 1000)
@@ -293,7 +293,7 @@ def plot_exact_flat_isf(
     line.set_label("Exact Flat ISF")
 
     ax.set_title("Intermediate Scattering Function Over Time")
-    ax.set_xlabel("Time / s")
+    ax.set_xlabel("Time")
     ax.set_ylabel("ISF")
     ax.legend()
 
@@ -305,7 +305,7 @@ def get_exact_flat_ballistic_isf(
     delta_k: tuple[float, ...],
     times: np.ndarray[Any, np.dtype[np.floating[Any]]],
 ) -> np.ndarray:
-    """Return the exact ballistic ISF for a 1D flat (potential-free) surface."""
+    """Return the exact ballistic ISF for a flat (potential-free) surface."""
     kbt, m = system.kbt, system.m
     m = np.atleast_2d(m)
     inv_m = np.linalg.inv(m)
@@ -321,7 +321,7 @@ def plot_exact_flat_ballistic_isf(
     ax: Axes | None = None,
     offset: float = 0,
 ) -> tuple[Figure, Axes, Line2D]:
-    """Plot the exact ISF for a 1D flat (potential-free) surface."""
+    """Plot the exact ISF for a flat (potential-free) surface."""
     fig, ax = get_figure(ax)
 
     times = times if times is not None else np.linspace(0, 30, 1000)
@@ -332,7 +332,7 @@ def plot_exact_flat_ballistic_isf(
     (line,) = ax.plot(times, isf_exact)
 
     ax.set_title("Intermediate Scattering Function Over Time")
-    ax.set_xlabel("Time / s")
+    ax.set_xlabel("Time")
     ax.set_ylabel("ISF")
     ax.legend()
 
