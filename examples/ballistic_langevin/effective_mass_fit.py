@@ -9,6 +9,8 @@ from classical_diffusion.analysis import (
 from classical_diffusion.langevin import (
     SODIUM_COPPER_SYSTEM_1D,
     SODIUM_COPPER_SYSTEM_2D,
+    LangevinSimulationResult,
+    System,
     breakdown_ballistic_trajectory,
     get_effective_mass,
     get_under_barrier_occupation,
@@ -20,20 +22,41 @@ from classical_diffusion.simulation import TimeSpan
 from classical_diffusion.util import cache_base_path
 
 
+def _truncate_results[S: System](
+    result: LangevinSimulationResult[S],
+    times: tuple[float, float],
+) -> LangevinSimulationResult[S]:
+    mask = (result.times >= times[0]) & (result.times <= times[1])
+    return LangevinSimulationResult(
+        system=result.system,
+        times=result.times[mask],
+        x_points=result.x_points[:, :, mask],
+        p_points=result.p_points[:, :, mask],
+    )
+
+
 def _plot_effective_mass_fitted_isf_1d() -> None:
 
     system = SODIUM_COPPER_SYSTEM_1D
+
     fig, ax = get_fancy_figure()
     delta_k = (2 * np.pi / system.delta_x * 0.2,)
 
     result = solve_ensemble_ballistic(
         system,
-        TimeSpan(t_end=8 / system.gamma, n_steps=5000),
-        n_samples=5000,
+        TimeSpan(t_end=8 / system.gamma, n_steps=4000),
+        n_samples=10000,
     )
+    _, ax, line_0, fill_0 = plot_isf(
+        result=result, ax=ax, delta_k=delta_k, pairwise=False
+    )
+
     elastic_result, _ = breakdown_ballistic_trajectory(
         result,
         filter_timescale=1 / system.gamma,
+    )
+    elastic_result = _truncate_results(
+        elastic_result, times=(2 / system.gamma, 4 / system.gamma)
     )
 
     _, ax, line_0, fill_0 = plot_isf(
@@ -62,7 +85,6 @@ def _plot_effective_mass_fitted_isf_1d() -> None:
     effective_mass = get_effective_mass(
         result,
         filter_timescale=1 / system.gamma,
-        trapped_probability=trapped_probability,
     )
 
     _, ax, line_2 = plot_exact_flat_ballistic_isf(
@@ -94,10 +116,17 @@ def _plot_effective_mass_fitted_isf_2d() -> None:
     result = solve_ensemble_ballistic(
         system,
         TimeSpan(t_end=8 / system.gamma, n_steps=1000),
-        n_samples=100,
+        n_samples=1000,
     )
+    _, ax, line_0, fill_0 = plot_isf(
+        result=result, ax=ax, delta_k=delta_k, pairwise=False
+    )
+
     elastic_result, _ = breakdown_ballistic_trajectory(
         result, filter_timescale=1 / system.gamma
+    )
+    elastic_result = _truncate_results(
+        elastic_result, times=(2 / system.gamma, 4 / system.gamma)
     )
 
     _, ax, line_0, fill_0 = plot_isf(
@@ -123,7 +152,6 @@ def _plot_effective_mass_fitted_isf_2d() -> None:
     effective_mass = get_effective_mass(
         result,
         filter_timescale=1 / system.gamma,
-        trapped_probability=trapped_probability,
     )
 
     _, ax, line_2 = plot_exact_flat_ballistic_isf(
@@ -137,7 +165,7 @@ def _plot_effective_mass_fitted_isf_2d() -> None:
     line_2.set_linestyle(":")
     line_2.set_color(CAM_CHERRY.dark)
 
-    ax.set_xlim(0, 3e-12)
+    ax.set_xlim(0, 1 / system.gamma)
     ax.set_ylim(0.5, 1)
     ax.legend(handles=[line_0, line_1, line_2])
     fig.savefig("examples/ballistic_langevin/effective_mass_fit.2d.pdf")

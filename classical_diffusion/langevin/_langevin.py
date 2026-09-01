@@ -153,11 +153,20 @@ def _get_langevin_units(system: System) -> UnitSystem:
     )
 
 
+def _convert_energy_range(
+    energy_range: tuple[float, float], old_units: UnitSystem, new_units: UnitSystem
+) -> tuple[float, float]:
+    return (
+        old_units.energy_into(energy_range[0], new_units),
+        old_units.energy_into(energy_range[1], new_units),
+    )
+
+
 def get_random_initial_conditions(
     system: System,
     n_samples: int,
     *,
-    minimum_energy: float = 0.0,
+    energy_range: tuple[float, float] = (-np.inf, np.inf),
     _key: jax.Array,
 ) -> tuple[
     np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
@@ -168,7 +177,7 @@ def get_random_initial_conditions(
     x_points, p_points = _sample_initial_conditions(
         system.as_canonical(),
         n_samples,
-        minimum_energy=minimum_energy,
+        energy_range=energy_range,
         _key=_key,
     )
     x_points = np.array(x_points.reshape(-1, system.n_dim))
@@ -180,7 +189,7 @@ def get_random_initial_conditions_ext(
     system: System,
     n_samples: int,
     *,
-    minimum_energy: float = 0.0,
+    energy_range: tuple[float, float] = (-np.inf, np.inf),
     _key: jax.Array | None = None,
 ) -> tuple[
     np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
@@ -191,8 +200,8 @@ def get_random_initial_conditions_ext(
     x_points, p_points = get_random_initial_conditions(
         normalized_system,
         n_samples,
-        minimum_energy=system.units.energy_into(
-            minimum_energy, normalized_system.units
+        energy_range=_convert_energy_range(
+            energy_range, system.units, normalized_system.units
         ),
         _key=_key,
     )
@@ -291,11 +300,11 @@ def _solve_ensemble_path[S: System](
     time_span: TimeSpan,
     n_samples: int,
     *,
-    minimum_energy: float = 0.0,
+    energy_range: tuple[float, float] = (-np.inf, np.inf),
     _key: jax.Array | None = None,
 ) -> Path:
     return Path(
-        f"solve_ensemble_{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}_{minimum_energy}.npz"
+        f"solve_ensemble_{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}_{energy_range[0]}_{energy_range[1]}.npz"
     )
 
 
@@ -306,7 +315,7 @@ def solve_ensemble[S: System](
     time_span: TimeSpan,
     n_samples: int,
     *,
-    minimum_energy: float = 0.0,
+    energy_range: tuple[float, float] = (-np.inf, np.inf),
     _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of trajectories."""
@@ -319,8 +328,8 @@ def solve_ensemble[S: System](
         get_random_initial_conditions(
             simulated_system,
             n_samples,
-            minimum_energy=system.units.energy_into(
-                minimum_energy, simulated_system.units
+            energy_range=_convert_energy_range(
+                energy_range, system.units, simulated_system.units
             ),
             _key=_key,
         ),
@@ -404,11 +413,11 @@ def _solve_ensemble_ballistic_path[S: System](
     time_span: TimeSpan,
     n_samples: int,
     *,
-    minimum_energy: float = 0.0,
+    energy_range: tuple[float, float] = (-np.inf, np.inf),
     _key: jax.Array | None = None,
 ) -> Path:
     return Path(
-        f"solve_ensemble_ballistic_{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}_{minimum_energy}.npz"
+        f"solve_ensemble_ballistic_{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}_{energy_range[0]}_{energy_range[1]}.npz"
     )
 
 
@@ -419,7 +428,7 @@ def solve_ensemble_ballistic[S: System](
     time_span: TimeSpan,
     n_samples: int,
     *,
-    minimum_energy: float = 0.0,
+    energy_range: tuple[float, float] = (-np.inf, np.inf),
     _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of ballistic trajectories in parallel via jax.vmap."""
@@ -430,7 +439,9 @@ def solve_ensemble_ballistic[S: System](
         dataclasses.replace(simulated_system, gamma=0.0),
         _convert_time_span(time_span, system.units, simulated_system.units),
         n_samples=n_samples,
-        minimum_energy=system.units.energy_into(minimum_energy, simulated_system.units),
+        energy_range=_convert_energy_range(
+            energy_range, system.units, simulated_system.units
+        ),
         _key=_key,
     ).with_units(system.units)
 
@@ -513,9 +524,12 @@ def _solve_ensemble_overdamped_path[S: System](
     time_span: TimeSpan,
     n_samples: int,
     *,
+    energy_range: tuple[float, float] = (-np.inf, np.inf),
     _key: jax.Array | None = None,
 ) -> Path:
-    return Path(f"overdamped_ensemble_{hash(system)}_{hash(time_span)}_{n_samples}.npz")
+    return Path(
+        f"overdamped_ensemble_{hash(system)}_{hash(time_span)}_{n_samples}_{energy_range[0]}_{energy_range[1]}.npz"
+    )
 
 
 @cached(_solve_ensemble_overdamped_path)
@@ -525,6 +539,7 @@ def solve_ensemble_overdamped[S: System](
     time_span: TimeSpan,
     n_samples: int,
     *,
+    energy_range: tuple[float, float] = (-np.inf, np.inf),
     _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of overdamped Langevin trajectories in parallel via jax.vmap."""
@@ -535,7 +550,14 @@ def solve_ensemble_overdamped[S: System](
     result = solve_many_overdamped.call_uncached(
         simulated_system,
         _convert_time_span(time_span, system.units, simulated_system.units),
-        get_random_initial_conditions(simulated_system, n_samples, _key=_key),
+        initial_conditions=get_random_initial_conditions(
+            simulated_system,
+            n_samples,
+            energy_range=_convert_energy_range(
+                energy_range, system.units, simulated_system.units
+            ),
+            _key=_key,
+        ),
         _key=_key,
     ).with_units(system.units)
 

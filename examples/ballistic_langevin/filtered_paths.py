@@ -5,6 +5,7 @@ import numpy as np
 import sympy as sp
 
 from classical_diffusion.analysis import (
+    plot_p_evolution_1d,
     plot_x_evolution_1d,
     plot_x_evolution_2d,
 )
@@ -21,6 +22,7 @@ from classical_diffusion.langevin import (
 )
 from classical_diffusion.plot import get_fancy_figure, get_figure, get_two_panel_figure
 from classical_diffusion.simulation import TimeSpan
+from classical_diffusion.system import unit_with_trajectory_scale
 from classical_diffusion.util import cache_base_path
 
 if TYPE_CHECKING:
@@ -141,29 +143,36 @@ def _truncate_results[S: System](
 def _plot_filtered_ballistic_trajectory_1d() -> None:
 
     system = SODIUM_COPPER_SYSTEM_1D
-
+    system = system.with_units(
+        unit_with_trajectory_scale(
+            system.units,
+            length=system.delta_x,
+            time=1 / system.gamma,
+            momentum=np.sqrt(system.m * system.kbt),
+        )
+    )
     fig, ax = get_fancy_figure()
     _, _, _ = plot_periodic_potential_1d(system, ax=ax)
     fig.savefig("examples/ballistic_langevin/filtered_paths.1d.potential.pdf")
 
-    result = solve_ensemble_ballistic.call_uncached(
+    result = solve_ensemble_ballistic(
         system,
-        TimeSpan(t_start=-20e-12, t_end=20e-12, n_steps=5000),
+        TimeSpan(t_start=-2 / system.gamma, t_end=6 / system.gamma, n_steps=4000),
         n_samples=1,
+        energy_range=(-np.inf, system.barrier_energy),
     )
 
     elastic, inelastic = breakdown_ballistic_trajectory(
         result, filter_timescale=1 / system.gamma
     )
-    elastic = _truncate_results(elastic, times=(0, 0.5e-12))
-    inelastic = _truncate_results(inelastic, times=(0, 0.5e-12))
-    result = _truncate_results(result, times=(0, 0.5e-12))
+    elastic = _truncate_results(elastic, times=(0, 4 / system.gamma))
+    inelastic = _truncate_results(inelastic, times=(0, 4 / system.gamma))
+    result = _truncate_results(result, times=(0, 4 / system.gamma))
 
     fig, ax = get_two_panel_figure()
 
     _, _ax_0, lines = plot_x_evolution_1d(result=result, ax=ax[0])
     _, _ax_0, lines_e = plot_x_evolution_1d(result=elastic, ax=ax[0])
-
     _, _ax_1, lines_i = plot_x_evolution_1d(result=inelastic, ax=ax[1])
 
     lines[0].set_color("C1")
@@ -173,7 +182,22 @@ def _plot_filtered_ballistic_trajectory_1d() -> None:
     ax[0].legend(handles=[lines[0], lines_e[0]], labels=["ballistic", "elastic"])
     ax[1].legend(handles=[lines_i[0]], labels=["inelastic"])
 
-    fig.savefig("examples/ballistic_langevin/filtered_paths.1d.pdf")
+    fig.savefig("examples/ballistic_langevin/filtered_paths.1d_x.pdf")
+
+    fig, ax = get_two_panel_figure()
+
+    _, _ax_0, lines = plot_p_evolution_1d(result=result, ax=ax[0])
+    _, _ax_0, lines_e = plot_p_evolution_1d(result=elastic, ax=ax[0])
+    _, _ax_1, lines_i = plot_p_evolution_1d(result=inelastic, ax=ax[1])
+
+    lines[0].set_color("C1")
+    lines_e[0].set_color("C3")
+    lines_i[0].set_color("C2")
+
+    ax[0].legend(handles=[lines[0], lines_e[0]], labels=["ballistic", "elastic"])
+    ax[1].legend(handles=[lines_i[0]], labels=["inelastic"])
+
+    fig.savefig("examples/ballistic_langevin/filtered_paths.1d_p.pdf")
 
 
 def _plot_filtered_ballistic_trajectory_2d() -> None:
@@ -195,7 +219,7 @@ def _plot_filtered_ballistic_trajectory_2d() -> None:
         system,
         TimeSpan(t_start=-20 / system.gamma, t_end=20 / system.gamma, n_steps=1000),
         n_samples=1,
-        minimum_energy=SODIUM_COPPER_SYSTEM_1D.barrier_energy,
+        energy_range=(system.barrier_energy, np.inf),
     )
 
     elastic, inelastic = breakdown_ballistic_trajectory(

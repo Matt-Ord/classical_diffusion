@@ -168,7 +168,7 @@ def plot_x_evolution_2d(
 
     ax.set_xlabel("$x$")
     ax.set_ylabel("$y$")
-    ax.set_aspect("equal")
+    ax.set_aspect("equal", adjustable="datalim")
 
     return fig, ax, lines
 
