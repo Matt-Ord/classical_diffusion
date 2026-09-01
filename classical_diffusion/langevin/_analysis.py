@@ -17,6 +17,8 @@ from classical_diffusion.plot import get_figure
 from classical_diffusion.util import timed
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from matplotlib.axes import Axes
     from matplotlib.collections import QuadMesh
     from matplotlib.container import BarContainer
@@ -174,29 +176,27 @@ def plot_x_distribution_histogram(
     result: LangevinSimulationResult,
     *,
     ax: Axes | None = None,
-    bins: int | None = None,
+    n_bins: int | None = None,
 ) -> tuple[Figure, Axes, tuple[Line2D, BarContainer]]:
-    """Plot a fancy histogram of periodically sampled position or momentum.
-
-    Subsamples the trajectory every `sample_every` steps (to reduce
-    autocorrelation between adjacent time points) before histogramming.
-    """
+    """Plot a histogram of sampled positions."""
     fig, ax = get_figure(ax)
-
-    _bin_counts, _bin_edges, bars = ax.hist(
-        result.x_points[1:].reshape(-1),
-        bins=bins or int(np.sqrt(result.x_points.size)),
-        density=True,
-        alpha=1.0,
-    )
 
     x_grid, x_pdf = _get_exact_x_distribution_pdf(result)
     ax.plot(x_grid, x_pdf, lw=1.5)
 
+    _bin_counts, _bin_edges, bars = ax.hist(
+        result.x_points[1:].reshape(-1),
+        bins=n_bins or int(np.sqrt(result.x_points.size)),
+        density=True,
+        alpha=1.0,
+    )
+    bars = cast("BarContainer", bars)
+    for b in bars:
+        b.set_edgecolor(b.get_facecolor())
     ax.set_xlabel("x")
     ax.set_ylabel("Probability Density")
 
-    return fig, ax, cast("BarContainer", bars)
+    return fig, ax, bars
 
 
 def plot_x_distribution_kde(
@@ -253,33 +253,106 @@ def p_exact_pdf(result: LangevinSimulationResult, *, n_grid: int = 10_000) -> tu
     return p_grid, pdf_theory
 
 
-def plot_p_histogram(
+def plot_p_distribution_histogram(
     result: LangevinSimulationResult,
     *,
     ax: Axes | None = None,
-    bins: int = 100,
+    n_bins: int | None = None,
 ) -> tuple[Figure, Axes, tuple[Line2D, BarContainer]]:
-    """Plot a fancy histogram of periodically sampled position or momentum.
-
-    Subsamples the trajectory every `sample_every` steps (to reduce
-    autocorrelation between adjacent time points) before histogramming.
-    """
+    """Plot a histogram of sampled momentum."""
     fig, ax = get_figure(ax)
-
-    _bin_counts, _bin_edges, bars = ax.hist(
-        result.p_points.reshape(-1),
-        bins=bins,
-        density=True,
-        alpha=1.0,
-    )
 
     p_grid, p_pdf = p_exact_pdf(result=result)
     ax.plot(p_grid, p_pdf, lw=1.5)
 
+    _bin_counts, _bin_edges, bars = ax.hist(
+        result.p_points.reshape(-1),
+        bins=n_bins or int(np.sqrt(result.p_points.size)),
+        density=True,
+        alpha=1.0,
+    )
+    bars = cast("BarContainer", bars)
+    for b in bars:
+        b.set_edgecolor(b.get_facecolor())
     ax.set_xlabel("p")
     ax.set_ylabel("Probability Density")
 
-    return fig, ax, cast("BarContainer", bars)
+    return fig, ax, bars
+
+
+def _get_force_fn(
+    system: System, *, idx: int = 0
+) -> Callable[[np.ndarray], np.ndarray]:
+    """Compute a callable force function, taking and returning an array."""
+    raw_fn = sp.lambdify(
+        system.lambda_symbols,
+        system.force_expr[idx],
+        modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
+    )
+    return lambda x_array: np.array(
+        # Note, transpose to move (x,y,z) axis to the first dimension
+        raw_fn(*np.einsum("ijk->jik", x_array), *system.params)
+    )
+
+
+def _get_forces[S: System](
+    result: LangevinSimulationResult[S], *, idx: int = 0
+) -> np.ndarray[Any, np.dtype[np.float64]]:
+    force_fn = _get_force_fn(result.system)
+    static_force = force_fn(result.x_points)
+    stiffness = static_force - result.system.gamma * result.p_points[:, idx]
+    dt = result.times[1] - result.times[0]
+    return (np.diff(result.p_points[:, idx]) / dt) - stiffness[:, :-1]
+
+
+def _get_expected_std_force(system: System, *, dt: float) -> float:
+    return np.sqrt(2 * system.m * system.gamma * system.kbt / dt)
+
+
+def plot_force_distribution_histogram[S: System](
+    result: LangevinSimulationResult[S] | SingleLangevinSimulationResult[S],
+    *,
+    ax: Axes | None = None,
+    idx: int = 0,
+    n_bins: int | None = None,
+) -> tuple[Figure, Axes, tuple[Line2D, BarContainer]]:
+    """Plot a histogram of the stochastic force distribution."""
+    fig, ax = get_figure(ax)
+
+    result = (
+        result
+        if isinstance(result, LangevinSimulationResult)
+        else LangevinSimulationResult.from_iter([result])
+    )
+
+    expected_std = _get_expected_std_force(
+        result.system, dt=result.times[1] - result.times[0]
+    )
+    x = np.linspace(-5 * expected_std, 5 * expected_std, 400)
+    (line,) = ax.plot(x, scipy.stats.norm.pdf(x, scale=expected_std))
+    line.set_linestyle("--")
+    line.set_label(r"$\sqrt{2 m \gamma k_B T / \Delta t}$")
+
+    forces = _get_forces(result, idx=idx).ravel()
+    _, _, b = ax.hist(
+        forces,
+        bins=n_bins if n_bins is not None else int(np.sqrt(forces.size)),
+        density=True,
+        alpha=1,
+        range=(x[0], x[-1]),
+    )
+    bars = cast("BarContainer", b)
+    for bar in bars:
+        bar.set_edgecolor(bar.get_facecolor())
+
+    ax.set_title("Force Distribution")
+    ax.set_xlabel("Force / N")
+    ax.set_ylabel("Probability Density")
+
+    ax.legend()
+    ax.set_xlim(x[0], x[-1])
+
+    return fig, ax, (line, bars)
 
 
 def plot_phase_space_density(

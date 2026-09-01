@@ -10,7 +10,7 @@ from classical_diffusion.analysis import (
 from classical_diffusion.langevin import (
     SODIUM_COPPER_SYSTEM_1D,
     plot_force_1d,
-    plot_frictional_force_distribution,
+    plot_force_distribution_histogram,
     plot_periodic_potential_1d,
     shift_origin_to_unit_cell_1d,
     solve_ensemble,
@@ -134,7 +134,7 @@ def _plot_force() -> None:
 
     fig, ax = get_fancy_figure()
 
-    _, _, (_line, _bars) = plot_frictional_force_distribution(
+    _, _, (_line, _bars) = plot_force_distribution_histogram(
         result=result, ax=ax, n_bins=100
     )
     fig.savefig("examples/1d_langevin.frictional_force.pdf", dpi=1000)

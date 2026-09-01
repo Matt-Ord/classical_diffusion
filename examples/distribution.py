@@ -11,7 +11,7 @@ from classical_diffusion.langevin import (
     PeriodicSystem1D,
     get_random_initial_conditions,
     plot_kinetic_probability,
-    plot_p_histogram,
+    plot_p_distribution_histogram,
     plot_phase_space_density,
     plot_x_distribution_histogram,
     plot_x_distribution_kde,
@@ -61,7 +61,7 @@ def _plot_xp_distributions_periodic() -> None:
     fig.savefig("examples/distribution.1d_periodic.phase_space.pdf", dpi=1000)
 
     fig, ax = get_fancy_figure()
-    _, ax, _bars = plot_p_histogram(result=result, ax=ax)
+    _, ax, _bars = plot_p_distribution_histogram(result=result, ax=ax)
     ax.set_ylim(-1e23, 1e-23)
     fig.savefig("examples/distribution.1d_periodic.p.pdf")
 
@@ -145,7 +145,7 @@ def _plot_xp_distributions_harmonic() -> None:
     fig.savefig("examples/distribution.1d_harmonic.x.pdf")
 
     fig, ax = get_fancy_figure()
-    _, ax, _bars = plot_p_histogram(result=result, ax=ax)
+    _, ax, _bars = plot_p_distribution_histogram(result=result, ax=ax)
     fig.savefig("examples/distribution.1d_harmonic.p.pdf")
 
     fig, ax = get_fancy_figure()
@@ -160,14 +160,12 @@ def _plot_xp_distributions_harmonic() -> None:
     fig.savefig("examples/distribution.1d_harmonic.kinetic.pdf")
 
 
-def _plot_x_distribution_spread_ballistic_sample() -> None:
+def _plot_x_distribution_spread_thermal_sample() -> None:
 
     system = PeriodicSystem1D(
         gamma=0.5, temperature=0.5 / Boltzmann, m=1.0, delta_x=5, barrier_energy=2
     )
-    x_points, p_points = get_random_initial_conditions(
-        system, n_samples=4000, minimum_energy=0.0
-    )
+    x_points, p_points = get_random_initial_conditions(system, n_samples=32000)
     result = LangevinSimulationResult(
         system=system,
         times=np.array([0.0]),
@@ -177,10 +175,15 @@ def _plot_x_distribution_spread_ballistic_sample() -> None:
 
     fig, ax = get_fancy_figure()
     result_folded = fold_results(result, delta=system.delta_x)
-    _, ax, _lines = plot_x_distribution_histogram(result=result_folded, ax=ax)
+    _, _, _lines = plot_x_distribution_histogram(result=result_folded, ax=ax)
     ax.set_xlim(0, system.delta_x)
 
-    fig.savefig("examples/distribution.1d_periodic.x_histogram.pdf")
+    fig.savefig("examples/distribution.thermal.x_histogram.pdf")
+
+    fig, ax = get_fancy_figure()
+    _, _, _lines = plot_p_distribution_histogram(result=result_folded, ax=ax)
+
+    fig.savefig("examples/distribution.thermal.p_histogram.pdf")
 
 
 if __name__ == "__main__":
@@ -198,4 +201,4 @@ if __name__ == "__main__":
         _plot_xp_distributions_periodic()
         _plot_x_distribution_spread()
         _plot_xp_distributions_harmonic()
-        _plot_x_distribution_spread_ballistic_sample()
+        _plot_x_distribution_spread_thermal_sample()
