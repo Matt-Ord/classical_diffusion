@@ -342,10 +342,10 @@ def plot_elastic_p(
 
 
 def get_under_barrier_occupation(
-    system: System, x_points: np.ndarray, p_points: np.ndarray, barrier_energy: float
+    result: LangevinSimulationResult, barrier_energy: float
 ) -> float:
     """Return the probability of a particle being trapped under barrier."""
-    energies = _get_energy(system, x_points, p_points)
+    energies = _get_energy(result.system, result.x_points, result.p_points)
     is_under_barrier = energies < barrier_energy
     return np.sum(is_under_barrier) / is_under_barrier.size
 
@@ -366,7 +366,7 @@ def _truncate_results[S: System](
 def get_effective_mass(
     result: LangevinSimulationResult,
     *,
-    under_barrier_probability: float = 0,
+    trapped_probability: float = 0,
     filter_timescale: float = 0,
 ) -> np.ndarray[tuple[int, int], np.dtype[np.floating]]:
     """Return the effective mass, correcting for trapped trajectories analytically."""
@@ -382,11 +382,9 @@ def get_effective_mass(
         "nit,njt->nijt", elastic_result.p_points, elastic_result.p_points
     )
     escaped_p_squared = np.average(elastic_p_squared, axis=(0, 3))
-
-    escape_probability = 1 - under_barrier_probability
-
+    free_probability = 1 - trapped_probability
     return (
-        elastic_result.system.kbt * elastic_result.system.m**2 * escape_probability
+        elastic_result.system.kbt * elastic_result.system.m**2 * free_probability
     ) * np.linalg.inv(escaped_p_squared)
 
 

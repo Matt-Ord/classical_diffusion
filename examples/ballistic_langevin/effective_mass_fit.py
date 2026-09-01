@@ -43,18 +43,16 @@ def _plot_effective_mass_fitted_isf_1d() -> None:
     line_0.set_color(CAM_CHERRY.warm)
     fill_0.set_color(CAM_CHERRY.warm)
 
-    under_barrier_probability = get_under_barrier_occupation(
-        system,
-        x_points=result.x_points[:, :, 0],
-        p_points=result.p_points[:, :, 0],
-        barrier_energy=system.barrier_energy,
+    trapped_probability = get_under_barrier_occupation(
+        result,
+        system.barrier_energy,
     )
 
     _, ax, line_1 = plot_exact_flat_ballistic_isf(
         system=system,
         ax=ax,
         delta_k=delta_k,
-        offset=under_barrier_probability,
+        offset=trapped_probability,
         times=result.times,
     )
     line_1.set_label("actual mass")
@@ -64,14 +62,14 @@ def _plot_effective_mass_fitted_isf_1d() -> None:
     effective_mass = get_effective_mass(
         result,
         filter_timescale=1 / system.gamma,
-        under_barrier_probability=under_barrier_probability,
+        trapped_probability=trapped_probability,
     )
 
     _, ax, line_2 = plot_exact_flat_ballistic_isf(
         system=dataclasses.replace(system.as_canonical(), m=effective_mass),
         ax=ax,
         delta_k=delta_k,
-        offset=under_barrier_probability,
+        offset=trapped_probability,
         times=result.times,
     )
     line_2.set_label("effective mass")
@@ -109,18 +107,13 @@ def _plot_effective_mass_fitted_isf_2d() -> None:
     line_0.set_color(CAM_CHERRY.warm)
     fill_0.set_color(CAM_CHERRY.warm)
 
-    under_barrier_probability = get_under_barrier_occupation(
-        system,
-        x_points=result.x_points[:, :, 0],
-        p_points=result.p_points[:, :, 0],
-        barrier_energy=system.barrier_energy,
-    )
+    trapped_probability = get_under_barrier_occupation(result, system.barrier_energy)
 
     _, ax, line_1 = plot_exact_flat_ballistic_isf(
         system=system,
         ax=ax,
         delta_k=delta_k,
-        offset=under_barrier_probability,
+        offset=trapped_probability,
         times=result.times,
     )
     line_1.set_label("actual mass")
@@ -130,14 +123,14 @@ def _plot_effective_mass_fitted_isf_2d() -> None:
     effective_mass = get_effective_mass(
         result,
         filter_timescale=1 / system.gamma,
-        under_barrier_probability=under_barrier_probability,
+        trapped_probability=trapped_probability,
     )
 
     _, ax, line_2 = plot_exact_flat_ballistic_isf(
         system=dataclasses.replace(system.as_canonical(), m=effective_mass),
         ax=ax,
         delta_k=delta_k,
-        offset=under_barrier_probability,
+        offset=trapped_probability,
         times=result.times,
     )
     line_2.set_label("effective mass")
