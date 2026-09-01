@@ -439,8 +439,8 @@ def _truncate_results[S: System](
 def get_effective_mass(
     result: LangevinSimulationResult,
     *,
-    trapped_probability: float = 0,
     filter_timescale: float = 0,
+    trapped_probability: float | None = None,
 ) -> np.ndarray[tuple[int, int], np.dtype[np.floating]]:
     """Return the effective mass, correcting for trapped trajectories analytically."""
     elastic_result = breakdown_ballistic_trajectory(
@@ -448,14 +448,27 @@ def get_effective_mass(
     )[0]
 
     elastic_result = _truncate_results(
-        elastic_result, times=(filter_timescale, result.times[-1] - filter_timescale)
+        elastic_result,
+        times=(
+            2 * filter_timescale + result.times[0],
+            result.times[-1] - 2 * filter_timescale,
+        ),
     )
 
     elastic_p_squared = np.einsum(  # cspell: disable-next-line
         "nit,njt->nijt", elastic_result.p_points, elastic_result.p_points
     )
     escaped_p_squared = np.average(elastic_p_squared, axis=(0, 3))
+
+    if trapped_probability is None:
+        trapped_probability = np.average(
+            np.abs(elastic_result.p_points)
+            # States are trapped when elastic momentum is
+            # small compared to the thermal momentum
+            < 1e-2 * np.sqrt(result.system.kbt * result.system.m)
+        )
     free_probability = 1 - trapped_probability
+
     return (
         elastic_result.system.kbt * elastic_result.system.m**2 * free_probability
     ) * np.linalg.inv(escaped_p_squared)

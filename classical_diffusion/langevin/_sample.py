@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import sympy as sp
 
 if TYPE_CHECKING:
@@ -16,7 +17,7 @@ def _sample_initial_conditions(
     system: "CanonicalSystem",  # ruff: ignore[quoted-annotation]
     n_samples: int = 1,
     *,
-    minimum_energy: float = 0.0,
+    energy_range: tuple[float, float] = (-np.inf, np.inf),
     _key: jax.Array,
 ) -> tuple[jax.Array, jax.Array]:
 
@@ -49,7 +50,7 @@ def _sample_initial_conditions(
             energy = jnp.sum(p_candidate**2) / (2 * system.m) + v
 
             x_ok = jax.random.uniform(ku) < jnp.exp(-(v - v_min) / system.kbt)
-            accept = x_ok & (energy > minimum_energy)
+            accept = x_ok & (energy > energy_range[0]) & (energy < energy_range[1])
 
             return key, x_candidate, p_candidate, accept
 
