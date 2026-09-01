@@ -366,17 +366,17 @@ def solve_many_ballistic[S: System](
     ],
     *,
     _key: jax.Array | None = None,
-) -> SingleLangevinSimulationResult[S]:
+) -> LangevinSimulationResult[S]:
     """Solve the ULD Langevin equation for a single trajectory via vmap."""
-    simulated_system = system.with_units(_get_langevin_units(system)).as_canonical()
+    simulated_system = system.as_canonical()
     out = solve_many.call_uncached(
         dataclasses.replace(simulated_system, gamma=0.0),
-        _convert_time_span(time_span, system.units, simulated_system.units),
+        time_span,
         initial_conditions,
         _key=_key,
-    ).with_units(system.units)
+    )
 
-    return SingleLangevinSimulationResult(
+    return LangevinSimulationResult(
         times=out.times,
         x_points=out.x_points,
         p_points=out.p_points,
