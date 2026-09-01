@@ -357,6 +357,21 @@ def solve_single_ballistic[S: System](
     )
 
 
+def _solve_many_ballistic_path[S: System](
+    system: S,
+    time_span: TimeSpan,
+    initial_conditions: tuple[
+        np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
+    ],
+    *,
+    _key: jax.Array | None = None,
+) -> Path:
+    return Path(
+        f"many_ballistic_{hash(system)}_{hash(time_span)}_{hash_array(initial_conditions)}.npz"
+    )
+
+
+@cached(_solve_many_ballistic_path)
 @timed
 def solve_many_ballistic[S: System](
     system: S,
