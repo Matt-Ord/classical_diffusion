@@ -6,9 +6,11 @@ from scipy.constants import Boltzmann
 from classical_diffusion.analysis import plot_isf, plot_x_evolution_1d
 from classical_diffusion.langevin import (
     HarmonicSystem,
+    plot_exact_flat_ballistic_isf,
     plot_exact_flat_isf,
     plot_exact_harmonic_isf,
     solve_ensemble,
+    solve_ensemble_ballistic,
 )
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.simulation import TimeSpan
@@ -86,6 +88,36 @@ def _plot_flat_isf() -> None:
     fig.savefig("./examples/analytical_isf.flat_x_evolution.pdf")
 
 
+def _plot_flat_ballistic_isf() -> None:
+
+    system = HarmonicSystem(gamma=0.1, temperature=0.5 / Boltzmann, m=1.0, omega=0)
+
+    result = solve_ensemble_ballistic(
+        system, TimeSpan(t_end=2 / system.gamma, n_steps=1000), n_samples=1000
+    )
+
+    fig, ax = get_fancy_figure()
+
+    delta_k = (2 * np.pi / 40,)
+    _, ax, line_simulated, _ = plot_isf(
+        result=result, ax=ax, delta_k=delta_k, pairwise=False
+    )
+    line_simulated.set_label("simulation")
+
+    _, ax, line_exact = plot_exact_flat_ballistic_isf(
+        system, delta_k, result.times, ax=ax
+    )
+    line_exact.set_label("exact")
+    ax.legend(
+        loc="upper right",
+        handles=[line_simulated, line_exact],
+        labels=["Simulation", "Exact"],
+    )
+    ax.set_xlim(0, 2 / system.gamma)
+    ax.set_ylim(0, 1)
+    fig.savefig("./examples/analytical_isf.flat_ballistic.pdf")
+
+
 def _plot_flat_isf_2d() -> None:
 
     system = HarmonicSystem(
@@ -118,4 +150,5 @@ if __name__ == "__main__":
     with cache_base_path(Path("examples/data")):
         _plot_harmonic_isf()
         _plot_flat_isf()
+        _plot_flat_ballistic_isf()
         _plot_flat_isf_2d()

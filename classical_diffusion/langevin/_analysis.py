@@ -385,9 +385,9 @@ def get_effective_mass(
 
     escape_probability = 1 - under_barrier_probability
 
-    return (elastic_result.system.kbt * elastic_result.system.m**2) * np.linalg.inv(
-        escaped_p_squared * escape_probability
-    )
+    return (
+        elastic_result.system.kbt * elastic_result.system.m**2 * escape_probability
+    ) * np.linalg.inv(escaped_p_squared)
 
 
 def _breakdown_langevin_simulation_result[S: System](
@@ -435,7 +435,6 @@ def _breakdown_langevin_simulation_result[S: System](
 @overload
 def breakdown_ballistic_trajectory[S: System](
     result: SingleLangevinSimulationResult[S],
-    cutoff: float = 0,
     *,
     filter_timescale: float = 0,
 ) -> tuple[SingleLangevinSimulationResult[S], SingleLangevinSimulationResult[S]]: ...
@@ -444,7 +443,6 @@ def breakdown_ballistic_trajectory[S: System](
 @overload
 def breakdown_ballistic_trajectory[S: System](
     result: LangevinSimulationResult[S],
-    cutoff: float = 0,
     *,
     filter_timescale: float = 0,
 ) -> tuple[LangevinSimulationResult[S], LangevinSimulationResult[S]]: ...
