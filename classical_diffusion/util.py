@@ -229,10 +229,10 @@ def cached[**P, R](
     """
 
     def _cached(f: Callable[P, R]) -> CachedFunction[P, R]:
-        return update_wrapper(  # type: ignore aaa
-            CachedFunction(f, path, default_call=default_call),  # ty: ignore[invalid-argument-type]
+        return update_wrapper(
+            CachedFunction(f, path, default_call=default_call),
             f,
-        )
+        )  # ty: ignore[invalid-return-type]
 
     return _cached
 
