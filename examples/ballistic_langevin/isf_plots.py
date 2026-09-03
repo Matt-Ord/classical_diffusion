@@ -155,4 +155,4 @@ if __name__ == "__main__":
     # the corresponding ensemble isf on the same figure
     with cache_base_path(Path("examples/data")):
         _plot_periodic_isf_1d()
-        # _plot_periodic_isf_2d()
+        _plot_periodic_isf_2d()
