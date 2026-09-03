@@ -8,6 +8,8 @@ from classical_diffusion.analysis import (
 from classical_diffusion.langevin import (
     SODIUM_COPPER_SYSTEM_1D,
     SODIUM_COPPER_SYSTEM_2D,
+    LangevinSimulationResult,
+    System,
     breakdown_ballistic_trajectory,
     solve_ensemble,
     solve_ensemble_ballistic,
@@ -18,17 +20,31 @@ from classical_diffusion.system import unit_with_trajectory_scale
 from classical_diffusion.util import cache_base_path
 
 
+def _truncate_results[S: System](
+    result: LangevinSimulationResult[S],
+    times: tuple[float, float],
+) -> LangevinSimulationResult[S]:
+    mask = (result.times >= times[0]) & (result.times <= times[1])
+    return LangevinSimulationResult(
+        system=result.system,
+        times=result.times[mask],
+        x_points=result.x_points[:, :, mask],
+        p_points=result.p_points[:, :, mask],
+    )
+
+
 def _plot_periodic_isf_1d() -> None:
     system = SODIUM_COPPER_SYSTEM_1D
 
     full_result = solve_ensemble(
         system,
-        TimeSpan(t_end=20e-12, n_steps=1000),
-        n_samples=500,
+        TimeSpan(t_end=1 / system.gamma, n_steps=500),
+        n_samples=1000,
     )
 
     fig, ax = get_fancy_figure()
     delta_k = (2 * np.pi / system.delta_x * 0.3,)
+    print(f"delta_k = {delta_k[0]:0.2e}")
 
     _, ax, line_0, _fill_0 = plot_isf(
         result=full_result,
@@ -39,11 +55,8 @@ def _plot_periodic_isf_1d() -> None:
 
     ballistic_result = solve_ensemble_ballistic(
         system,
-        TimeSpan(
-            t_end=system.units.time_into(20e-12),
-            n_steps=2000,
-        ),
-        n_samples=5000,
+        TimeSpan(t_start=-2 / system.gamma, t_end=3 / system.gamma, n_steps=2000),
+        n_samples=1000,
     )
 
     _, ax, line_1, _ = plot_isf(
@@ -52,9 +65,10 @@ def _plot_periodic_isf_1d() -> None:
     line_1.set_label("ballistic simulation")
 
     elastic_result, inelastic_result = breakdown_ballistic_trajectory(
-        ballistic_result,
-        filter_timescale=1 / system.gamma,
+        ballistic_result, filter_timescale=1 / system.gamma
     )
+    elastic_result = _truncate_results(elastic_result, times=(0, 1 / system.gamma))
+    inelastic_result = _truncate_results(inelastic_result, times=(0, 1 / system.gamma))
 
     _, ax, line_2, _ = plot_isf(
         result=inelastic_result, ax=ax, delta_k=delta_k, pairwise=False
@@ -66,7 +80,7 @@ def _plot_periodic_isf_1d() -> None:
     )
     line_3.set_label("elastic")
 
-    ax.set_xlim(0, 6e-12)
+    ax.set_xlim(0, 1 / system.gamma)
 
     ax.set_ylim(0, 1.0)
 
@@ -142,4 +156,4 @@ if __name__ == "__main__":
     # the corresponding ensemble isf on the same figure
     with cache_base_path(Path("examples/data")):
         _plot_periodic_isf_1d()
-        _plot_periodic_isf_2d()
+        # _plot_periodic_isf_2d()
