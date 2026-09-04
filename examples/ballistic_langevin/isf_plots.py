@@ -5,6 +5,7 @@ import numpy as np
 from classical_diffusion.analysis import (
     plot_isf,
 )
+from classical_diffusion.hopping import get_kramers_parameters_cosine
 from classical_diffusion.langevin import (
     SODIUM_COPPER_SYSTEM_1D,
     SODIUM_COPPER_SYSTEM_2D,
@@ -66,8 +67,6 @@ def _plot_periodic_isf_1d() -> None:
     elastic_result, inelastic_result = breakdown_ballistic_trajectory(
         ballistic_result, filter_timescale=1 / system.gamma
     )
-    elastic_result = _truncate_results(elastic_result, times=(0, 1 / system.gamma))
-    inelastic_result = _truncate_results(inelastic_result, times=(0, 1 / system.gamma))
 
     _, ax, line_2, _ = plot_isf(
         result=inelastic_result, ax=ax, delta_k=delta_k, pairwise=False
@@ -95,11 +94,6 @@ def _plot_periodic_isf_2d() -> None:
             system.units, length=system.delta_x, time=1 / system.gamma
         )
     )
-    full_result = solve_ensemble(
-        system,
-        TimeSpan(t_end=4 / system.gamma, n_steps=1000),
-        n_samples=2000,
-    )
 
     direction = np.array([0, 1])
     delta_k = tuple(
@@ -107,45 +101,40 @@ def _plot_periodic_isf_2d() -> None:
     )
 
     fig, ax = get_fancy_figure()
-    _, ax, line_0, _fill_0 = plot_isf(
-        result=full_result,
-        ax=ax,
-        delta_k=delta_k,
-        pairwise=False,
-    )
-    line_0.set_label("full simulation")
 
-    ballistic_result = solve_ensemble_ballistic(
+    result = solve_ensemble_ballistic(
         system,
-        TimeSpan(t_end=4 / system.gamma, n_steps=1000),
+        TimeSpan(t_start=-2 / system.gamma, t_end=3 / system.gamma, n_steps=2000),
         n_samples=2000,
     )
 
-    _, ax, line_1, _ = plot_isf(
-        result=ballistic_result, ax=ax, delta_k=delta_k, pairwise=False
-    )
+    _, _, line_1, _ = plot_isf(result=result, ax=ax, delta_k=delta_k, pairwise=False)
     line_1.set_label("ballistic simulation")
 
+    omega = get_kramers_parameters_cosine(
+        SODIUM_COPPER_SYSTEM_1D.with_units(system.units)
+    ).omega_well / np.sqrt(system.m)
+
     elastic_result, inelastic_result = breakdown_ballistic_trajectory(
-        ballistic_result,
-        filter_timescale=1 / system.gamma,
+        result,
+        filter_timescale=2 * np.pi / omega,
     )
 
-    _, ax, line_2, _ = plot_isf(
+    _, _, line_2, _ = plot_isf(
         result=inelastic_result, ax=ax, delta_k=delta_k, pairwise=False
     )
     line_2.set_label("inelastic")
 
-    _, ax, line_3, _ = plot_isf(
+    _, _, line_3, _ = plot_isf(
         result=elastic_result, ax=ax, delta_k=delta_k, pairwise=False
     )
     line_3.set_label("elastic")
 
     ax.set_xlim(0, 0.5 / system.gamma)
-    ax.set_ylim(0.0, 1.0)
+    ax.set_ylim(0.5, 1.0)
     ax.set_xlabel(r"$\gamma t$")
 
-    ax.legend(handles=[line_0, line_1, line_2, line_3])
+    ax.legend(handles=[line_1, line_2, line_3])
     fig.savefig("examples/ballistic_langevin/isf_plots.2d.pdf")
 
 
@@ -155,4 +144,8 @@ if __name__ == "__main__":
     # the corresponding ensemble isf on the same figure
     with cache_base_path(Path("examples/data")):
         _plot_periodic_isf_1d()
+        # The 2D trajectory, and therefore the ISf is very sensitive to the
+        # the choice of frequency cutoff. This is because the dynamics are
+        # chaotic, and therefore the "true" translational
+        # trajectory is only present in the infinite frequency limit.
         _plot_periodic_isf_2d()

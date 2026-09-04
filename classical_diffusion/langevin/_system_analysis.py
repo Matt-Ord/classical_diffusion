@@ -356,12 +356,14 @@ def get_under_barrier_probability(
 
 
 def shift_origin_to_unit_cell_1d[S: PeriodicSystem1D](
-    result: LangevinSimulationResult[S],
+    result: LangevinSimulationResult[S], *, origin_idx: int | None = None
 ) -> LangevinSimulationResult[S]:
-    # Initial position of all trajectories
-    x0 = result.x_points[:, :, 0]
+    origin_idx = (
+        origin_idx if origin_idx is not None else np.argmin(np.abs(result.times)).item()
+    )
+    x0 = result.x_points[:, :, origin_idx]
 
-    n_shift = np.round(x0 / result.system.delta_x)
+    n_shift = np.floor(x0 / result.system.delta_x + 0.5)
     x_folded = result.x_points - n_shift[:, :, None] * result.system.delta_x
     return LangevinSimulationResult(
         times=result.times,
@@ -372,12 +374,14 @@ def shift_origin_to_unit_cell_1d[S: PeriodicSystem1D](
 
 
 def shift_origin_to_unit_cell_fcc[S: PeriodicSystemFCC](
-    result: LangevinSimulationResult[S],
+    result: LangevinSimulationResult[S], *, origin_idx: int | None = None
 ) -> LangevinSimulationResult[S]:
     lattice_vectors = result.system.lattice_vectors
 
-    # Initial position of all trajectories
-    x0 = result.x_points[:, :, 0]
+    origin_idx = (
+        origin_idx if origin_idx is not None else np.argmin(np.abs(result.times)).item()
+    )
+    x0 = result.x_points[:, :, origin_idx]
     n_shift = np.round(x0 @ np.linalg.inv(lattice_vectors))
     cartesian_shifts = np.round(n_shift) @ lattice_vectors
 
