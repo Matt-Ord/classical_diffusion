@@ -12,49 +12,18 @@ MIN_VARIANCE = 1e-15
 
 
 @eqx.filter_jit
-def _process_points(x: jnp.ndarray, delta_x: float) -> jnp.ndarray:
-    return jnp.round(x / delta_x) * delta_x
-
-
-@eqx.filter_jit
-def filter_trajectory(
-    x: jnp.ndarray,
-    *,
-    process_points: "Callable[[jnp.ndarray, float], jnp.ndarray] | None" = _process_points,  # ruff: ignore[quoted-annotation]
-    delta_x: float = 1.0,
-) -> jnp.ndarray:
-    """Discretize the signal using the objective Kalafut-Visscher step detection algorithm."""  # cspell: disable-line
-    if process_points is None:
-
-        def process_points(u: jnp.ndarray, delta_x: float) -> jnp.ndarray:  # ruff: ignore[unused-function-argument]
-            return u
-
-    n = x.shape[0]
-
-    final_breakpoints = get_trajectory_breakpoints(
-        x, process_points=process_points, delta_x=delta_x
-    )
-
-    # Reconstruct piecewise constant path in parallel
-    segment_ids = jnp.cumsum(final_breakpoints[:-1]) - 1
-    counts = jnp.bincount(segment_ids, length=n)
-    sums = jnp.bincount(segment_ids, weights=x, length=n)
-
-    segment_means = jnp.where(counts > 0, sums / jnp.maximum(counts, 1), 0.0)
-    processed_means = process_points(segment_means, delta_x)
-
-    return processed_means[segment_ids]
-
-
-@eqx.filter_jit
 def get_trajectory_breakpoints(
     x: jnp.ndarray,
     *,
-    delta_x: float,
-    process_points: "Callable[[jnp.ndarray, float], jnp.ndarray]" = _process_points,  # ruff: ignore[quoted-annotation]
+    process_points: "Callable[[jnp.ndarray], jnp.ndarray] | None" = None,  # ruff: ignore[quoted-annotation]
 ) -> jnp.ndarray:
     """Discretize the signal using the objective Kalafut-Visscher step detection algorithm."""  # cspell: disable-line
     n = x.shape[0]
+
+    if process_points is None:
+
+        def process_points(u: jnp.ndarray) -> jnp.ndarray:
+            return u
 
     # Precalculate prefix sums for O(1) segment variance and sum-of-squares evaluation
     p1 = jnp.pad(jnp.cumsum(x), (1, 0))
@@ -88,7 +57,7 @@ def get_trajectory_breakpoints(
         # Base segment statistics
         s1 = p1[end] - p1[start]
         s2 = p2[end] - p2[start]
-        base_mu = process_points(s1 / jnp.maximum(n_seg, 1), delta_x)
+        base_mu = process_points(s1 / jnp.maximum(n_seg, 1))
         base_ssr = s2 - 2 * base_mu * s1 + n_seg * base_mu**2
         base_var = base_ssr / jnp.maximum(n_seg, 1)
 
@@ -102,8 +71,8 @@ def get_trajectory_breakpoints(
         s1_left = p1[k] - p1[start]
         s1_right = s1 - s1_left
 
-        mu_left = process_points(s1_left / jnp.maximum(k_left_len, 1), delta_x)
-        mu_right = process_points(s1_right / jnp.maximum(k_right_len, 1), delta_x)
+        mu_left = process_points(s1_left / jnp.maximum(k_left_len, 1))
+        mu_right = process_points(s1_right / jnp.maximum(k_right_len, 1))
 
         split_ssr = (
             s2
@@ -150,3 +119,30 @@ def get_trajectory_breakpoints(
     _, _, _, final_breakpoints = jax.lax.while_loop(cond_fn, body_fn, init_state)
 
     return final_breakpoints
+
+
+@eqx.filter_jit
+def partition_trajectory(
+    x: jnp.ndarray,
+    *,
+    process_points: "Callable[[jnp.ndarray], jnp.ndarray] | None" = None,  # ruff: ignore[quoted-annotation]
+) -> jnp.ndarray:
+    """Discretize the signal using the objective Kalafut-Visscher step detection algorithm."""  # cspell: disable-line
+    n = x.shape[0]
+
+    if process_points is None:
+
+        def process_points(u: jnp.ndarray) -> jnp.ndarray:
+            return u
+
+    final_breakpoints = get_trajectory_breakpoints(x, process_points=process_points)
+
+    # Reconstruct piecewise constant path in parallel
+    segment_ids = jnp.cumsum(final_breakpoints[:-1]) - 1
+    counts = jnp.bincount(segment_ids, length=n)
+    sums = jnp.bincount(segment_ids, weights=x, length=n)
+
+    segment_means = jnp.where(counts > 0, sums / jnp.maximum(counts, 1), 0.0)
+    processed_means = process_points(segment_means)
+
+    return processed_means[segment_ids]

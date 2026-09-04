@@ -1,6 +1,5 @@
 from typing import TYPE_CHECKING, Any, cast, overload
 
-import jax.numpy as jnp
 import matplotlib as mpl
 import numpy as np
 import scipy.stats
@@ -9,9 +8,6 @@ from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
 from scipy.signal import butter, sosfiltfilt  # cspell: disable-line
 
-from classical_diffusion.jax.langevin._analysis import (
-    filter_trajectory as filter_trajectory_jax,
-)
 from classical_diffusion.langevin._langevin import (
     LangevinSimulationResult,
     SingleLangevinSimulationResult,
@@ -555,16 +551,4 @@ def breakdown_ballistic_trajectory[S: System](
 
     return _breakdown_langevin_simulation_result(
         result, filter_timescale=filter_timescale
-    )
-
-
-@timed
-def filter_trajectory(
-    x: np.ndarray,
-    *,
-    delta_x: float,
-    process_points: "Callable[[jnp.ndarray, float], jnp.ndarray] | None" = None,  # ruff: ignore[quoted-annotation]
-) -> jnp.ndarray:
-    return filter_trajectory_jax(
-        jnp.array(x), delta_x=delta_x, process_points=process_points
     )

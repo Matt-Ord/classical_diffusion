@@ -1,23 +1,32 @@
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast, overload
 
 import jax.numpy as jnp
 import matplotlib as mpl
 import numpy as np
 
 from classical_diffusion.jax.analysis import get_pairwise_isf as get_pairwise_isf_jax
+from classical_diffusion.jax.langevin import (
+    get_trajectory_breakpoints as get_trajectory_breakpoints_jax,
+)
+from classical_diffusion.jax.langevin import (
+    partition_trajectory as partition_trajectory_jax,
+)
 from classical_diffusion.langevin._langevin import LangevinSimulationResult
 from classical_diffusion.plot import get_figure, get_measured_data
-from classical_diffusion.simulation import SimulationResult
+from classical_diffusion.simulation import SimulationResult, SingleSimulationResult
+from classical_diffusion.util import timed
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from matplotlib.axes import Axes
     from matplotlib.collections import PolyCollection
+    from matplotlib.container import BarContainer
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
 
     from classical_diffusion.langevin import SingleLangevinSimulationResult
     from classical_diffusion.plot import Measure
-    from classical_diffusion.simulation import SingleSimulationResult
 
 
 def get_isf(
@@ -250,3 +259,129 @@ def plot_root_mean_square_x[S: Any](
     ax.set_ylim(0, np.max(average_rms) * 1.1)
 
     return fig, ax, (line, line_b)
+
+
+def _partition_single_trajectory[S: Any](
+    result: SingleSimulationResult[S],
+    *,
+    process_points: Callable[[jnp.ndarray], jnp.ndarray] | None = None,
+) -> SingleSimulationResult[S]:
+    assert result.x_points.shape[0] == 1, (
+        "Only 1d trajectory partitioning is supported."
+    )
+    data = partition_trajectory_jax(
+        jnp.array(result.x_points[0]), process_points=process_points
+    )
+
+    return SingleSimulationResult(
+        times=result.times,
+        x_points=np.array(data.reshape(1, -1)),
+        system=result.system,
+    )
+
+
+@overload
+def partition_trajectory[S: Any](
+    result: SingleSimulationResult[S],
+    *,
+    process_points: Callable[[jnp.ndarray], jnp.ndarray] | None = None,
+) -> SingleSimulationResult[S]: ...
+
+
+@overload
+def partition_trajectory[S: Any](
+    result: SimulationResult[S],
+    *,
+    process_points: Callable[[jnp.ndarray], jnp.ndarray] | None = None,
+) -> SimulationResult[S]: ...
+
+
+@timed
+def partition_trajectory[S: Any](
+    result: SingleSimulationResult[S] | SimulationResult[S],
+    *,
+    process_points: Callable[[jnp.ndarray], jnp.ndarray] | None = None,
+) -> SingleSimulationResult[S] | SimulationResult[S]:
+    """Filter a trajectory using the Kalafut-Visscher step detection algorithm."""  # cspell: disable-line
+    if isinstance(result, SingleSimulationResult):
+        return _partition_single_trajectory(result, process_points=process_points)
+    return SimulationResult.from_iter(
+        _partition_single_trajectory(r, process_points=process_points) for r in result
+    )
+
+
+def _get_hop_intervals_single_trajectory[S: Any](
+    result: SingleSimulationResult[S],
+    *,
+    process_points: Callable[[jnp.ndarray], jnp.ndarray] | None = None,
+) -> np.ndarray[Any, np.dtype[np.floating]]:
+    assert result.x_points.shape[0] == 1, (
+        "Only 1d trajectory partitioning is supported."
+    )
+
+    breakpoints = get_trajectory_breakpoints_jax(
+        jnp.array(result.x_points[0]), process_points=process_points
+    )
+
+    true_indices = np.flatnonzero(breakpoints)
+    # jnp.diff computes sequence lengths; [:-1] excludes the final sequence
+    dt = result.times[1] - result.times[0]
+    return np.diff(true_indices)[:-1] * dt
+
+
+@overload
+def get_hop_times[S: Any](
+    result: SingleSimulationResult[S],
+    *,
+    process_points: Callable[[jnp.ndarray], jnp.ndarray] | None = None,
+) -> np.ndarray[Any, np.dtype[np.floating]]: ...
+@overload
+def get_hop_times[S: Any](
+    result: SimulationResult[S],
+    *,
+    process_points: Callable[[jnp.ndarray], jnp.ndarray] | None = None,
+) -> np.ndarray[Any, np.dtype[np.floating]]: ...
+
+
+@timed
+def get_hop_times[S: Any](
+    result: SingleSimulationResult[S] | SimulationResult[S],
+    *,
+    process_points: Callable[[jnp.ndarray], jnp.ndarray] | None = None,
+) -> np.ndarray[Any, np.dtype[np.floating]]:
+    """Get the intervals between hops in a trajectory."""
+    if isinstance(result, SingleSimulationResult):
+        return _get_hop_intervals_single_trajectory(
+            result, process_points=process_points
+        )
+
+    intervals = [
+        _get_hop_intervals_single_trajectory(r, process_points=process_points)
+        for r in result
+    ]
+    return np.concatenate(intervals) if intervals else np.array([], dtype=float)
+
+
+def plot_hop_time_distribution_histogram(
+    result: SingleSimulationResult | SimulationResult,
+    process_points: Callable[[jnp.ndarray], jnp.ndarray] | None = None,
+    *,
+    ax: Axes | None = None,
+    n_bins: int | None = None,
+) -> tuple[Figure, Axes, tuple[Line2D, BarContainer]]:
+    """Plot a histogram of sampled momentum."""
+    fig, ax = get_figure(ax)
+
+    hop_times = get_hop_times(result, process_points=process_points)
+
+    n_bins = int(np.sqrt(hop_times.size) / 4) if n_bins is None else n_bins
+    bins = np.quantile(hop_times, np.linspace(0, 1, n_bins + 1))
+    _bin_counts, _bin_edges, bars = ax.hist(hop_times, bins=bins, density=True)  # ty: ignore[invalid-argument-type]
+
+    bars = cast("BarContainer", bars)
+    for b in bars:
+        b.set_edgecolor(b.get_facecolor())
+    ax.set_xlabel("hop time")
+    ax.set_ylabel("Probability Density")
+
+    return fig, ax, bars

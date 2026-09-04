@@ -86,12 +86,19 @@ class LangevinSimulationResult[S: System](SimulationResult[S]):
         )
 
     @classmethod
-    def from_iter(cls, results: Iterable[SingleLangevinSimulationResult[S]]) -> Self:
+    def from_iter(cls, results: Iterable[SingleSimulationResult[S]]) -> Self:
         results_list = list(results)
         return cls(
             times=results_list[0].times,
             x_points=np.stack([r.x_points for r in results_list]),
-            p_points=np.stack([r.p_points for r in results_list]),
+            p_points=np.stack(
+                [
+                    r.p_points
+                    if isinstance(r, SingleLangevinSimulationResult)
+                    else np.zeros_like(r.x_points)
+                    for r in results_list
+                ]
+            ),
             system=results_list[0].system,
         )
 
