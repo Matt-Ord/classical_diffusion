@@ -11,6 +11,10 @@ MIN_SPLIT_POINTS = 4
 MIN_VARIANCE = 1e-15
 
 
+def _identity(u: jax.Array) -> jax.Array:
+    return u
+
+
 @eqx.filter_jit
 def get_trajectory_breakpoints(
     x: jnp.ndarray,
@@ -20,10 +24,7 @@ def get_trajectory_breakpoints(
     """Discretize the signal using the objective Kalafut-Visscher step detection algorithm."""  # cspell: disable-line
     n = x.shape[0]
 
-    if process_points is None:
-
-        def process_points(u: jnp.ndarray) -> jnp.ndarray:
-            return u
+    process_points = process_points if process_points is not None else _identity
 
     # Precalculate prefix sums for O(1) segment variance and sum-of-squares evaluation
     p1 = jnp.pad(jnp.cumsum(x), (1, 0))
@@ -130,10 +131,7 @@ def partition_trajectory(
     """Discretize the signal using the objective Kalafut-Visscher step detection algorithm."""  # cspell: disable-line
     n = x.shape[0]
 
-    if process_points is None:
-
-        def process_points(u: jnp.ndarray) -> jnp.ndarray:
-            return u
+    process_points = process_points if process_points is not None else _identity
 
     final_breakpoints = get_trajectory_breakpoints(x, process_points=process_points)
 
