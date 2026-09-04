@@ -120,7 +120,7 @@ def _plot_filtered_trajectory() -> None:
 
     # Display grid lines aligned with ticks
     # Use axis='y' for horizontal lines, axis='x' for vertical lines, or axis='both'
-    ax.grid(True, axis="y", color="gray", linestyle="--", linewidth=0.7)  # ruff: ignore[boolean-positional-value-in-call]
+    ax.grid(visible=True, axis="y", color="gray", linestyle="--", linewidth=0.7)
 
     ax.set_xlabel("Time")
     ax.set_ylabel("Position")
@@ -185,7 +185,7 @@ def _plot_hop_intervals_histogram() -> None:
     ax.set_xlabel("Sequence Length (steps)")
     ax.set_ylabel("Frequency")
     ax.set_title(f"Distribution of Sequence Lengths (Bin Size = {bin_width})")
-    ax.grid(True, axis="y", linestyle="--", alpha=0.7)  # ruff: ignore[boolean-positional-value-in-call]
+    ax.grid(visible=True, axis="y", linestyle="--", alpha=0.7)
 
     fig.savefig("./examples/hopping_model/1d_filtered.histogram.pdf")
 
@@ -227,7 +227,6 @@ def _get_rate_comparison() -> None:  # ruff: ignore[too-many-locals]
     all_sequence_lengths = []
     filtered_trajectories = []
     for trajectory in trajectories:
-        print("new traj")
         filtered_trajectory = filter_trajectory_jax(
             trajectory[0], delta_x=system.delta_x
         )
@@ -240,30 +239,6 @@ def _get_rate_comparison() -> None:  # ruff: ignore[too-many-locals]
     all_lengths = np.fromiter(
         itertools.chain.from_iterable(all_sequence_lengths), dtype=int
     )
-
-    bin_width = 10
-
-    max_length = np.max(all_lengths)
-    bins = np.arange(0, max_length + bin_width, bin_width)
-
-    fig, ax = get_fancy_figure()
-    fig, ax = get_figure(ax)
-    ax.hist(
-        all_lengths,
-        bins=bins,
-        density=True,
-        edgecolor="black",
-        alpha=0.6,
-        color="skyblue",
-        label="Langevin data",
-    )
-
-    ax.set_xlabel("Sequence Length (steps)")
-    ax.set_ylabel("Frequency")
-    ax.set_title(f"Distribution of Sequence Lengths (Bin Size = {bin_width})")
-    ax.grid(True, axis="y", linestyle="--", alpha=0.7)  # ruff: ignore[boolean-positional-value-in-call]
-
-    fig.savefig("./examples/hopping_model/1d_filtered.histogram.pdf")
 
     result = SimulationResult(
         times=np.array(times),
@@ -299,7 +274,7 @@ def _get_rate_comparison() -> None:  # ruff: ignore[too-many-locals]
 
     ax.legend()
     fig.savefig(
-        "./examples/hopping_model/1d_filtered.isfs.pdf", dpi=300, bbox_inches="tight"
+        "./examples/hopping_model/1d_filtered.isf.pdf", dpi=300, bbox_inches="tight"
     )
 
 
