@@ -3,11 +3,10 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Self, final
 
 import jax
+import numpy as np
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
-    import numpy as np
+    from collections.abc import Iterable, Iterator
 
     from classical_diffusion.system import UnitSystem
 
@@ -92,6 +91,16 @@ class SimulationResult[S: Any]:
         """Iterate over the trajectories in the ensemble."""
         for i in range(self.x_points.shape[0]):
             yield self[i]
+
+    @classmethod
+    def from_iter(cls, results: Iterable[SingleSimulationResult[S]]) -> Self:
+        """Create a SimulationResult from an iterable of SingleSimulationResults."""
+        results_list = list(results)
+        return cls(
+            times=results_list[0].times,
+            x_points=np.stack([r.x_points for r in results_list]),
+            system=results_list[0].system,
+        )
 
     def with_units(self, units: UnitSystem) -> Self:
         """Return the rescaled simulation of the system."""
