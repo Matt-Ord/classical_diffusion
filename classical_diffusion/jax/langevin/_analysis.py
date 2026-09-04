@@ -26,10 +26,10 @@ def filter_trajectory(
     """Discretize the signal using the objective Kalafut-Visscher step detection algorithm."""  # cspell: disable-line
     if process_points is None:
 
-        def process_points(u: jnp.ndarray, delta_x: float) -> jnp.ndarray:
+        def process_points(u: jnp.ndarray, delta_x: float) -> jnp.ndarray:  # ruff: ignore[unused-function-argument]
             return u
 
-    N = x.shape[0]
+    n = x.shape[0]
 
     final_breakpoints = get_trajectory_breakpoints(
         x, process_points=process_points, delta_x=delta_x
@@ -37,8 +37,8 @@ def filter_trajectory(
 
     # Reconstruct piecewise constant path in parallel
     segment_ids = jnp.cumsum(final_breakpoints[:-1]) - 1
-    counts = jnp.bincount(segment_ids, length=N)
-    sums = jnp.bincount(segment_ids, weights=x, length=N)
+    counts = jnp.bincount(segment_ids, length=n)
+    sums = jnp.bincount(segment_ids, weights=x, length=n)
 
     segment_means = jnp.where(counts > 0, sums / jnp.maximum(counts, 1), 0.0)
     processed_means = process_points(segment_means, delta_x)
@@ -54,17 +54,17 @@ def get_trajectory_breakpoints(
     process_points: "Callable[[jnp.ndarray, float], jnp.ndarray]" = _process_points,  # ruff: ignore[quoted-annotation]
 ) -> jnp.ndarray:
     """Discretize the signal using the objective Kalafut-Visscher step detection algorithm."""  # cspell: disable-line
-    N = x.shape[0]
+    n = x.shape[0]
 
     # Precalculate prefix sums for O(1) segment variance and sum-of-squares evaluation
     p1 = jnp.pad(jnp.cumsum(x), (1, 0))
     p2 = jnp.pad(jnp.cumsum(x**2), (1, 0))
 
     # Initialize fixed-size execution stack and boundary tracking
-    stack_starts = jnp.zeros(N, dtype=jnp.int32).at[0].set(0)
-    stack_ends = jnp.zeros(N, dtype=jnp.int32).at[0].set(N)
+    stack_starts = jnp.zeros(n, dtype=jnp.int32).at[0].set(0)
+    stack_ends = jnp.zeros(n, dtype=jnp.int32).at[0].set(n)
     stack_ptr = jnp.int32(1)
-    breakpoints = jnp.zeros(N + 1, dtype=jnp.bool_).at[0].set(True).at[N].set(True)
+    breakpoints = jnp.zeros(n + 1, dtype=jnp.bool_).at[0].set(True).at[n].set(True)
 
     init_state = (stack_starts, stack_ends, stack_ptr, breakpoints)
 
@@ -77,7 +77,7 @@ def get_trajectory_breakpoints(
     def body_fn(  # ruff: ignore[too-many-locals]
         state: tuple[jnp.ndarray, jnp.ndarray, jax.Array, jnp.ndarray],
     ) -> tuple[jnp.ndarray, jnp.ndarray, jax.Array, jnp.ndarray]:
-        starts, ends, ptr, bpts = state
+        starts, ends, ptr, breakpoints = state
 
         # Pop current top segment
         pop_ptr = ptr - 1
@@ -95,7 +95,7 @@ def get_trajectory_breakpoints(
         can_split = (n_seg > MIN_SPLIT_POINTS) & (base_var > MIN_VARIANCE)
 
         # Evaluate all candidate split points k in parallel across length N+1
-        k = jnp.arange(N + 1)
+        k = jnp.arange(n + 1)
         k_left_len = k - start
         k_right_len = end - k
 
@@ -128,7 +128,9 @@ def get_trajectory_breakpoints(
         should_split = can_split & (best_delta > 0)
 
         # Update breakpoints and stack buffers
-        new_bpts = jnp.where(should_split, bpts.at[best_k].set(True), bpts)
+        new_breakpoints = jnp.where(
+            should_split, breakpoints.at[best_k].set(True), breakpoints
+        )
 
         new_starts = jnp.where(
             should_split,
@@ -142,7 +144,7 @@ def get_trajectory_breakpoints(
         )
         new_ptr = jnp.where(should_split, pop_ptr + 2, pop_ptr)
 
-        return (new_starts, new_ends, new_ptr, new_bpts)
+        return (new_starts, new_ends, new_ptr, new_breakpoints)
 
     # Execute bounded segmentation loop
     _, _, _, final_breakpoints = jax.lax.while_loop(cond_fn, body_fn, init_state)

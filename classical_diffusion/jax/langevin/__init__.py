@@ -8,7 +8,6 @@ from classical_diffusion.jax.langevin._langevin import (
     solve_many,
     solve_many_overdamped,
 )
-
 from classical_diffusion.jax.langevin._system import (
     KramersParametersJax as KramersParameters,
 )
@@ -18,7 +17,6 @@ __all__ = [
     "KramersParameters",
     "KramersSystem1D",
     "filter_trajectory",
-    "get_isf_offset",
     "get_trajectory_breakpoints",
     "solve_many",
     "solve_many_overdamped",
