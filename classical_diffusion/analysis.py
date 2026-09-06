@@ -310,7 +310,7 @@ def partition_trajectory[S: Any](
     )
 
 
-def _get_hop_intervals_single_trajectory[S: Any](
+def _get_hop_times_single_trajectory[S: Any](
     result: SingleSimulationResult[S],
     *,
     process_points: Callable[[jnp.ndarray], jnp.ndarray] | None = None,
@@ -351,12 +351,10 @@ def get_hop_times[S: Any](
 ) -> np.ndarray[Any, np.dtype[np.floating]]:
     """Get the intervals between hops in a trajectory."""
     if isinstance(result, SingleSimulationResult):
-        return _get_hop_intervals_single_trajectory(
-            result, process_points=process_points
-        )
+        return _get_hop_times_single_trajectory(result, process_points=process_points)
 
     intervals = [
-        _get_hop_intervals_single_trajectory(r, process_points=process_points)
+        _get_hop_times_single_trajectory(r, process_points=process_points)
         for r in result
     ]
     return np.concatenate(intervals) if intervals else np.array([], dtype=float)

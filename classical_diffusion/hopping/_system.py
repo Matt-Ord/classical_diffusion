@@ -5,11 +5,13 @@ from typing import TYPE_CHECKING, Any, final
 import jax
 import jax.numpy as jnp
 import numpy as np
+import scipy
+import sympy as sp
 
 from classical_diffusion.system import UnitSystem
 
 if TYPE_CHECKING:
-    from classical_diffusion.langevin import PeriodicSystem1D
+    from classical_diffusion.langevin import PeriodicSystem1D, System
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -141,6 +143,30 @@ def get_kramers_rate(params: KramersParameters) -> float:
     return (
         (params.omega_well * params.omega_barrier) / (2 * np.pi * params.gamma)
     ) * np.exp(-params.barrier_energy / (params.kbt))
+
+
+def get_lifson_jackson_rate(
+    system: System, *, delta_x: float, start: float = 0
+) -> float:
+    """Get the overdamped first passage time."""
+    assert system.n_dim == 1, "Only 1D systems are supported."
+
+    potential_func = sp.lambdify(
+        system.lambda_symbols,
+        system.potential_expr,
+        modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
+    )
+
+    def integrand_plus(x: np.ndarray) -> np.ndarray:
+        return np.exp(potential_func(x, *system.params) / system.kbt)
+
+    def integrand_minus(x: np.ndarray) -> np.ndarray:
+        return np.exp(-potential_func(x, *system.params) / system.kbt)
+
+    i_plus, _ = scipy.integrate.quad(integrand_plus, start, start + delta_x)
+    i_minus, _ = scipy.integrate.quad(integrand_minus, start, start + delta_x)
+
+    return system.kbt / (system.gamma * (i_plus * i_minus))
 
 
 def get_kramers_parameters_cosine(system: PeriodicSystem1D) -> KramersParameters:
