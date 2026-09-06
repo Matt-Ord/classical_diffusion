@@ -12,9 +12,8 @@ from classical_diffusion.analysis import (
     plot_hop_time_distribution_histogram,
     plot_x_evolution_1d,
 )
-from classical_diffusion.hopping import get_kramers_rate
+from classical_diffusion.hopping import KramersParameters, get_lifson_jackson_rate
 from classical_diffusion.langevin import (
-    KramersParameters,
     KramersSystem1D,
     solve_ensemble_overdamped,
 )
@@ -93,11 +92,11 @@ def _plot_hop_intervals_histogram() -> None:
 
     fig, ax = get_fancy_figure()
 
-    average = 1 / (2 * get_kramers_rate(system.kramers_params))
+    average = 1 / (2 * get_lifson_jackson_rate(system, delta_x=system.delta_x))
     times = np.linspace(0, 2 * average, 100)
     kramers_pdf = (1 / average) * np.exp(-times / average)
     (line,) = ax.plot(times, kramers_pdf)
-    line.set_label("Kramers Theory")
+    line.set_label("Lifson Jackson Theory")
     line.set_linestyle("--")
 
     plot_hop_time_distribution_histogram(

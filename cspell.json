@@ -64,7 +64,8 @@
         "trange",
         "tqdm",
         "jrandom",
-        "srepr"
+        "srepr",
+        "lifson"
     ],
     "flagWords": [
         "hte",
