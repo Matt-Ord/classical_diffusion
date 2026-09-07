@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 MIN_SPLIT_POINTS = 4
-MIN_VARIANCE = 1e-15
+MIN_VARIANCE = 1e-7
 
 
 @eqx.filter_jit

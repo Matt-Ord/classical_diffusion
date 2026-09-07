@@ -55,7 +55,6 @@ def _test_model(
     time_span: TimeSpan,
     test_data: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray],
 ) -> None:
-    print("Testing model")
 
     test_omega_wells = test_data[0][:, 0]
     filtered_hop_times = test_data[1]
@@ -69,11 +68,18 @@ def _test_model(
         -1.0 / 0.5
     )
 
-    (line1,) = ax.plot(test_omega_wells, filtered_hop_rates)
-    line1.set_label("filtered hop rates")
+    # Quick model's
+    model_hop_times = jax.vmap(model, (0))(test_data[0])
+    model_hop_rates = 1.0 / model_hop_times
 
-    line2 = ax.scatter(test_omega_wells, kramers_hop_rates)
-    line2.set_label("kramers hop rates")
+    (line1,) = ax.plot(test_omega_wells, kramers_hop_rates)
+    line1.set_label("kramers hop rates")
+
+    line2 = ax.scatter(test_omega_wells, filtered_hop_rates)
+    line2.set_label("filtered hop rates")
+
+    line3 = ax.scatter(test_omega_wells, model_hop_rates)
+    line3.set_label("model hop rates")
 
     ax.set_xlabel("Omega well")
     ax.set_ylabel("Rate")
@@ -84,7 +90,7 @@ def _test_model(
 
     times = np.linspace(time_span.t_start, time_span.t_end, time_span.n_steps + 1)
 
-    for i in range(len(test_data[0])):
+    for i in range(min(len(test_data[0]), 10)):
         _fig, ax = get_fancy_figure()
         fig, ax = get_figure(ax)
 
@@ -128,7 +134,7 @@ def _test_model(
         )
 
         # Model prediction
-        model_time = model(jnp.array(jnp.array(params[0])))[0]
+        model_time = model(jnp.array(jnp.array(params)))[0]
         print(f"Model hop time: {model_time}")
         model_lattice = Lattice1D(
             kramers_params.delta_x, float(model_time)
@@ -164,9 +170,9 @@ def _test_model(
 def learn_varying_omega_well() -> None:
     """Generate training data, train a model and test it."""
     # Simulation parameters - adjust these and the system parameters to get quick, sensible data
-    time_span = TimeSpan(t_end=100.0, n_steps=1000)
-    num_training_trajectories = 500
-    num_validation_trajectories = 50
+    time_span = TimeSpan(t_end=100.0, n_steps=100)
+    num_training_trajectories = 9
+    num_validation_trajectories = 1
 
     # Generate trajectory data
     print("\nGenerate trajectory data")

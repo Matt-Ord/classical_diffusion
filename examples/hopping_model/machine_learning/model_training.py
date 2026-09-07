@@ -4,10 +4,6 @@ import jax.numpy as jnp
 import optax
 from scipy.constants import Boltzmann
 
-from classical_diffusion.jax.langevin import (
-    KramersParameters,
-)
-
 os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = ".85"
@@ -20,8 +16,8 @@ jax.config.update("jax_enable_x64", val=False)
 
 
 CHECK_EVERY = 100
-EARLY_STOP = 0.0001  # Improvement to loss over CHECK_EVERY epochs deemed small enough to have reached training plateau
-NUM_EPOCHS = 2000
+EARLY_STOP = 0.1  # Improvement to loss over CHECK_EVERY epochs deemed small enough to have reached training plateau
+NUM_EPOCHS = 4000
 BATCH_SIZE = (
     500  # Number of trajectories to test on at a time (does this need to be limited?)
 )
@@ -52,8 +48,6 @@ class ResNet(eqx.Module):
 
     input_layer: eqx.nn.Linear
     residual_block: ResidualBlock
-    linear1: eqx.nn.Linear
-    linear2: eqx.nn.Linear
     output_layer: eqx.nn.Linear
 
     def __init__(
@@ -62,21 +56,15 @@ class ResNet(eqx.Module):
         hidden_dim: int = 16,
         key: jax.Array,
     ) -> None:
-        input_key, residual_block_key, lin1_key, lin2_key, output_key = (
-            jax.random.split(key, 5)
-        )
+        input_key, residual_block_key, output_key = jax.random.split(key, 3)
 
         # Project input channel up to hidden layer channels
         self.input_layer = eqx.nn.Linear(
-            in_features=1, out_features=hidden_dim, key=input_key
+            in_features=6, out_features=hidden_dim, key=input_key
         )
 
         # Run residual block
         self.residual_block = ResidualBlock(dim=hidden_dim, key=residual_block_key)
-
-        self.linear1 = eqx.nn.Linear(hidden_dim, hidden_dim, key=lin1_key)
-
-        self.linear2 = eqx.nn.Linear(hidden_dim, hidden_dim, key=lin2_key)
 
         # Project hidden channels down to output
         self.output_layer = eqx.nn.Linear(hidden_dim, 1, key=output_key)
@@ -84,26 +72,14 @@ class ResNet(eqx.Module):
     def __call__(self, x: jnp.ndarray) -> jax.Array:
         """Propagate input through model layers."""
         # Normalise inputs
-        # x = x.at[4].set(
-        #     x[4] * Boltzmann
-        # )  # Turn temperature into kbt for simplified calculation
+        x = x.at[4].set(
+            x[4] * Boltzmann
+        )  # Turn temperature into kbt for simplified calculation
 
         # Run model
         x = jax.nn.relu(self.input_layer(x))  # shape = (hidden_dim,)
-        x = jax.nn.relu(self.residual_block(x))  # shape = (hidden_dim,)
-        x = jax.nn.relu(self.linear1(x))
-        x = jax.nn.relu(self.linear2(x))
+        x = self.residual_block(x)  # shape = (hidden_dim,)
         return self.output_layer(x)  # shape = (1,)
-
-
-default_params = KramersParameters(
-    omega_well=1.0,
-    omega_barrier=1.0,
-    barrier_energy=3.0,
-    m=1.0,
-    temperature=0.5 / Boltzmann,
-    gamma=0.1,
-)
 
 
 @eqx.filter_jit
@@ -121,7 +97,7 @@ def loss_fn(
     # Test num hops: Array of the corresponding number of hops (i.e. weighting of error) in filtered trajectory
 
     # Pass batched params through the model to predict hopping rates and isf offsets
-    model_hop_times = jax.vmap(model, (0))(test_params[:, 0:1])  # ty: ignore[invalid-argument-type]
+    model_hop_times = jax.vmap(model, (0))(test_params)  # ty: ignore[invalid-argument-type]
 
     reshaped_model_hop_times = model_hop_times.squeeze(-1)
 
@@ -245,4 +221,4 @@ def train_model(
             break
 
     # Return trained model
-    return model
+    return carry[1]

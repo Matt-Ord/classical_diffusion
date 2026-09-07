@@ -31,7 +31,7 @@ from classical_diffusion.util import cached, timed
 default_params = KramersParameters(
     omega_well=1.0,
     omega_barrier=5.0,
-    barrier_energy=1.0,
+    barrier_energy=2.0,
     m=1.0,
     temperature=0.5 / Boltzmann,
     gamma=0.1,
@@ -44,7 +44,7 @@ def _vary_omega_well(
 ) -> tuple[jnp.ndarray, "CanonicalSystem"]:  # ruff: ignore[quoted-annotation]
 
     min_value = 0.2
-    max_value = 5.0
+    max_value = 10.0
 
     params = [
         jax.random.uniform(_key, shape=(), minval=min_value, maxval=max_value).astype(
