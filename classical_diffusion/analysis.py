@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING, Any, cast, overload
 
+import jax
 import jax.numpy as jnp
 import matplotlib as mpl
 import numpy as np
@@ -310,6 +311,75 @@ def partition_trajectory[S: Any](
     )
 
 
+@jax.jit
+def _partition_jax(
+    x_points: jnp.ndarray[Any, np.dtype[np.floating]],
+) -> jnp.ndarray[Any, np.dtype[np.floating]]:
+    def step(n_prev: jnp.ndarray, x: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        # Boundaries: remain in n_prev until within 0.1 of neighboring integer
+        upper = n_prev + 0.8
+        lower = n_prev - 0.8
+
+        # Handle single or multi-grid jumps across boundaries
+        n_up = jnp.ceil(x - 0.8)
+        n_down = jnp.floor(x + 0.8)
+
+        n_next = jnp.where(x > upper, n_up, jnp.where(x < lower, n_down, n_prev))
+        return n_next, n_next
+
+    # Initialize at the closest integer grid index
+    n_0 = jnp.round(x_points[0])
+    _, partitioned = jax.lax.scan(step, n_0, x_points)
+    return partitioned
+
+
+def _partition_single_trajectory_periodic[S: Any](
+    result: SingleSimulationResult[S], *, delta_x: float, origin: float = 0
+) -> SingleSimulationResult[S]:
+    assert result.x_points.shape[0] == 1, (
+        "Only 1d trajectory partitioning is supported."
+    )
+
+    shifted = (result.x_points[0] - origin) / delta_x
+    partitioned = _partition_jax(shifted)
+
+    return SingleSimulationResult(
+        times=result.times,
+        x_points=np.array(partitioned * delta_x + origin).reshape(1, -1),
+        system=result.system,
+    )
+
+
+@overload
+def partition_trajectory_periodic[S: Any](
+    result: SingleSimulationResult[S], *, delta_x: float, origin: float = 0
+) -> SingleSimulationResult[S]: ...
+
+
+@overload
+def partition_trajectory_periodic[S: Any](
+    result: SimulationResult[S], *, delta_x: float, origin: float = 0
+) -> SimulationResult[S]: ...
+
+
+@timed
+def partition_trajectory_periodic[S: Any](
+    result: SingleSimulationResult[S] | SimulationResult[S],
+    *,
+    delta_x: float,
+    origin: float = 0,
+) -> SingleSimulationResult[S] | SimulationResult[S]:
+    """Filter a trajectory using the Kalafut-Visscher step detection algorithm."""  # cspell: disable-line
+    if isinstance(result, SingleSimulationResult):
+        return _partition_single_trajectory_periodic(
+            result, delta_x=delta_x, origin=origin
+        )
+    return SimulationResult.from_iter(
+        _partition_single_trajectory_periodic(r, delta_x=delta_x, origin=origin)
+        for r in result
+    )
+
+
 def _get_hop_times_single_trajectory[S: Any](
     result: SingleSimulationResult[S],
     *,
@@ -371,6 +441,89 @@ def plot_hop_time_distribution_histogram(
     fig, ax = get_figure(ax)
 
     hop_times = get_hop_times(result, process_points=process_points)
+
+    n_bins = int(np.sqrt(hop_times.size) / 4) if n_bins is None else n_bins
+    bins = np.quantile(hop_times, np.linspace(0, 1, n_bins + 1))
+    _bin_counts, _bin_edges, bars = ax.hist(hop_times, bins=bins, density=True)  # ty: ignore[invalid-argument-type]
+
+    bars = cast("BarContainer", bars)
+    for b in bars:
+        b.set_edgecolor(b.get_facecolor())
+    ax.set_xlabel("hop time")
+    ax.set_ylabel("Probability Density")
+
+    return fig, ax, bars
+
+
+def _get_periodic_hop_times_single_trajectory[S: Any](
+    result: SingleSimulationResult[S],
+    delta_x: float,
+    origin: float = 0,
+) -> np.ndarray[Any, np.dtype[np.floating]]:
+    assert result.x_points.shape[0] == 1, (
+        "Only 1d trajectory partitioning is supported."
+    )
+
+    partitioned_result = _partition_single_trajectory_periodic(
+        result, delta_x=delta_x, origin=origin
+    )
+    partitioned_x = partitioned_result.x_points[0]
+
+    # Find indices where state transitions occur
+    change_indices = np.flatnonzero(partitioned_x[1:] != partitioned_x[:-1])
+
+    dt = result.times[1] - result.times[0]
+    return np.diff(change_indices) * dt
+
+
+@overload
+def get_periodic_hop_times[S: Any](
+    result: SingleSimulationResult[S],
+    *,
+    delta_x: float,
+    origin: float = 0,
+) -> np.ndarray[Any, np.dtype[np.floating]]: ...
+@overload
+def get_periodic_hop_times[S: Any](
+    result: SimulationResult[S],
+    *,
+    delta_x: float,
+    origin: float = 0,
+) -> np.ndarray[Any, np.dtype[np.floating]]: ...
+
+
+@timed
+def get_periodic_hop_times[S: Any](
+    result: SingleSimulationResult[S] | SimulationResult[S],
+    *,
+    delta_x: float,
+    origin: float = 0,
+) -> np.ndarray[Any, np.dtype[np.floating]]:
+    """Get the intervals between hops in a trajectory."""
+    if isinstance(result, SingleSimulationResult):
+        return _get_periodic_hop_times_single_trajectory(
+            result, delta_x=delta_x, origin=origin
+        )
+
+    intervals = [
+        _get_periodic_hop_times_single_trajectory(r, delta_x=delta_x, origin=origin)
+        for r in result
+    ]
+    return np.concatenate(intervals) if intervals else np.array([], dtype=float)
+
+
+def plot_periodic_hop_time_distribution_histogram(
+    result: SingleSimulationResult | SimulationResult,
+    delta_x: float,
+    origin: float = 0,
+    *,
+    ax: Axes | None = None,
+    n_bins: int | None = None,
+) -> tuple[Figure, Axes, tuple[Line2D, BarContainer]]:
+    """Plot a histogram of sampled momentum."""
+    fig, ax = get_figure(ax)
+
+    hop_times = get_periodic_hop_times(result, delta_x=delta_x, origin=origin)
 
     n_bins = int(np.sqrt(hop_times.size) / 4) if n_bins is None else n_bins
     bins = np.quantile(hop_times, np.linspace(0, 1, n_bins + 1))

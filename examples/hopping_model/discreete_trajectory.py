@@ -8,8 +8,8 @@ from matplotlib import ticker
 from scipy.constants import Boltzmann
 
 from classical_diffusion.analysis import (
-    partition_trajectory,
-    plot_hop_time_distribution_histogram,
+    partition_trajectory_periodic,
+    plot_periodic_hop_time_distribution_histogram,
     plot_x_evolution_1d,
 )
 from classical_diffusion.hopping import KramersParameters, get_lifson_jackson_rate
@@ -52,15 +52,13 @@ def _plot_filtered_trajectory() -> None:
     )
 
     result = solve_ensemble_overdamped(
-        system, TimeSpan(t_start=0.0, t_end=100.0, n_steps=1000), n_samples=1
+        system, TimeSpan(t_start=0.0, t_end=100.0, n_steps=10000), n_samples=1
     )
 
     fig, ax = get_fancy_figure()
     _, _, line = plot_x_evolution_1d(result, ax=ax)
     line[0].set_label("Full Trajectory")
-    filtered_result = partition_trajectory(
-        result, process_points=ProcessPeriodicPoints(system.delta_x)
-    )
+    filtered_result = partition_trajectory_periodic(result, delta_x=system.delta_x)
 
     _, _, line = plot_x_evolution_1d(filtered_result, ax=ax)
     line[0].set_label("Filtered Trajectory")
@@ -99,9 +97,10 @@ def _plot_hop_intervals_histogram() -> None:
     line.set_label("Lifson Jackson Theory")
     line.set_linestyle("--")
 
-    plot_hop_time_distribution_histogram(
+    plot_periodic_hop_time_distribution_histogram(
         result,
-        process_points=ProcessPeriodicPoints(system.delta_x),
+        delta_x=system.delta_x,
+        origin=0.0,
         ax=ax,
     )
     ax.set_xlim(times[0], times[-1])
