@@ -171,7 +171,7 @@ def learn_varying_omega_well() -> None:
     """Generate training data, train a model and test it."""
     # Simulation parameters - adjust these and the system parameters to get quick, sensible data
     time_span = TimeSpan(t_end=100.0, n_steps=100)
-    num_training_trajectories = 9
+    num_training_trajectories = 10
     num_validation_trajectories = 1
 
     # Generate trajectory data

@@ -61,7 +61,7 @@ def generate_trajectories(
     system: System, time_span: TimeSpan, n_trajectories: int
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     """Generate trajectories for a given system and time span."""
-    solve_key = jax.random.PRNGKey(0)
+    solve_key = jax.random.PRNGKey(420)
     initial_conditions = (
         jnp.zeros((n_trajectories, system.n_dim)),
         jnp.zeros((n_trajectories, system.n_dim)),
@@ -100,7 +100,7 @@ def _plot_filtered_trajectory() -> None:
         )
     )
 
-    time_span = TimeSpan(t_start=0.0, t_end=100.0, n_steps=1000)
+    time_span = TimeSpan(t_start=0.0, t_end=100.0, n_steps=500)
 
     print("Generate 1 trajectory")
     times, positions = generate_trajectories(system, time_span, n_trajectories=1)

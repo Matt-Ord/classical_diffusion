@@ -413,7 +413,6 @@ def _get_overdamped_langevin_units(system: System) -> UnitSystem:
     # dx = (F(x) / gamma) dt + sqrt(2 kB T / gamma) dW
     # scale so the noise is of order 1, i.e. sqrt(2 kB T / gamma) * sqrt(dt) ~ 1
     # so we want gamma approx 1 in the new units
-    characteristic_length = np.sqrt(system.kbt * system.m) / system.gamma
     characteristic_length = np.sqrt(system.kbt / system.m) / system.gamma
     return UnitSystem(
         boltzmann=1 / system.temperature,
