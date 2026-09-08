@@ -11,10 +11,10 @@ from matplotlib import ticker
 from scipy.constants import Boltzmann
 
 from classical_diffusion.jax.langevin import KramersParameters, KramersSystem1D
-from classical_diffusion.jax.langevin import filter_trajectory as filter_trajectory_jax
 from classical_diffusion.jax.langevin import (
-    get_trajectory_breakpoints as get_trajectory_breakpoints_jax,
+    get_partition_breakpoints as get_partition_breakpoints_jax,
 )
+from classical_diffusion.jax.langevin import partition as partition_jax
 from classical_diffusion.jax.langevin import (
     solve_many_overdamped as solve_many_overdamped_jax,
 )
@@ -43,7 +43,7 @@ def _vary_omega_well(
     _key: jax.Array,
 ) -> tuple[jnp.ndarray, "CanonicalSystem"]:  # ruff: ignore[quoted-annotation]
 
-    min_value = 1.0
+    min_value = 0.2
     max_value = 2.0
 
     params = [
@@ -123,7 +123,7 @@ def run_langevin_trajectories_timed(
 @timed
 def get_sequence_lengths(x: jnp.ndarray, delta_x: float) -> np.ndarray:
     """Get the lengths of sequences between breakpoints in a trajectory."""
-    breakpoints = get_trajectory_breakpoints_jax(x, delta_x=delta_x)
+    breakpoints = get_partition_breakpoints_jax(x, delta_x=delta_x)
 
     true_indices = np.flatnonzero(breakpoints)
     # jnp.diff computes sequence lengths; [:-1] excludes the final sequence
@@ -176,7 +176,7 @@ def generate_training_data(
     n_trajectories: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Generate machine learning data set with parameter generator defined below."""
-    jax.config.update("jax_platforms", "cpu")
+    jax.config.update("jax_platforms", "cuda")
     generate_params = _vary_omega_well
 
     key = jax.random.PRNGKey(234)
@@ -218,7 +218,7 @@ def generate_training_data(
     _plot_data_checks(
         params,
         trajectory,
-        filter_trajectory_jax(trajectory, delta_x=params.delta_x),
+        partition_jax(trajectory, delta_x=params.delta_x),
         time_span=time_span,
     )
 

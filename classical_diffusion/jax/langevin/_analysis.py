@@ -16,12 +16,46 @@ def _process_points(x: jnp.ndarray, delta_x: float) -> jnp.ndarray:
     return jnp.round(x / delta_x) * delta_x
 
 
-def discretise_trajctory(
-    x: jnp.ndarray,
+@eqx.filter_jit
+def partition(
+    x_points: jnp.ndarray,
     *,
     delta_x: float,
+    origin: float = 0,
 ) -> jnp.ndarray:
-    pass
+
+    x = (x_points - origin) / delta_x
+
+    def step(n_prev: jnp.ndarray, x: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        # Boundaries: remain in n_prev until within 0.1 of neighboring integer
+        upper = n_prev + 0.8
+        lower = n_prev - 0.8
+
+        # Handle single or multi-grid jumps across boundaries
+        n_up = jnp.ceil(x - 0.8)
+        n_down = jnp.floor(x + 0.8)
+
+        n_next = jnp.where(x > upper, n_up, jnp.where(x < lower, n_down, n_prev))
+        return n_next, n_next
+
+    # Initialize at the closest integer grid index
+    n_0 = jnp.round(x[0])
+    _, partitioned_shifted = jax.lax.scan(step, n_0, x)
+    return (partitioned_shifted * delta_x) + origin
+
+
+@eqx.filter_jit
+def get_partition_breakpoints(
+    x_points: jnp.ndarray,
+    *,
+    delta_x: float,
+    origin: float = 0,
+) -> jnp.ndarray:
+
+    partitioned = partition(x_points, delta_x=delta_x)
+    is_change = partitioned[1:] != partitioned[:-1]
+
+    return jnp.pad(is_change, (1, 1), constant_values=True)
 
 
 @eqx.filter_jit

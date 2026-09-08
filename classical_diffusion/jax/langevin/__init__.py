@@ -2,7 +2,9 @@
 
 from classical_diffusion.jax.langevin._analysis import (
     filter_trajectory,
+    get_partition_breakpoints,
     get_trajectory_breakpoints,
+    partition,
 )
 from classical_diffusion.jax.langevin._langevin import (
     solve_many,
@@ -19,7 +21,10 @@ __all__ = [
     "KramersSystem1D",
     "filter_trajectory",
     "get_isf_offset",
+    "get_partition_breakpoints",
     "get_trajectory_breakpoints",
+    "partition",
+    "partition_jax",
     "solve_many",
     "solve_many_overdamped",
 ]

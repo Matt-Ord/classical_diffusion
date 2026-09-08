@@ -16,7 +16,7 @@ jax.config.update("jax_enable_x64", val=False)
 
 
 CHECK_EVERY = 100
-EARLY_STOP = 0.1  # Improvement to loss over CHECK_EVERY epochs deemed small enough to have reached training plateau
+EARLY_STOP = 0.5  # Improvement to loss over CHECK_EVERY epochs deemed small enough to have reached training plateau
 NUM_EPOCHS = 4000
 BATCH_SIZE = (
     500  # Number of trajectories to test on at a time (does this need to be limited?)
@@ -131,8 +131,9 @@ def train_model(
 
     # Define number batches per epoch
     num_trajectories = len(training_params)
-    num_batches = num_trajectories // BATCH_SIZE
-    usable_len = num_batches * BATCH_SIZE
+    actual_batch_size = min(BATCH_SIZE, num_trajectories)
+    num_batches = num_trajectories // actual_batch_size
+    usable_len = num_batches * actual_batch_size
 
     loss_and_grad_fn = eqx.filter_value_and_grad(loss_fn)
 
@@ -153,7 +154,6 @@ def train_model(
 
         return (model, opt_state), batch_loss
 
-    @eqx.filter_jit
     def run_epoch(
         model: eqx.Module,
         opt_state: optax.OptState,
@@ -163,13 +163,13 @@ def train_model(
     ) -> tuple[eqx.Module, optax.OptState, jnp.ndarray]:
         """Run one epoch of ML algorithm."""
         batched_params = params[:usable_len].reshape(
-            num_batches, BATCH_SIZE, *params.shape[1:]
+            num_batches, actual_batch_size, *params.shape[1:]
         )
         batched_hop_times = hop_times[:usable_len].reshape(
-            num_batches, BATCH_SIZE, *hop_times.shape[1:]
+            num_batches, actual_batch_size, *hop_times.shape[1:]
         )
         batched_num_hops = num_hops[:usable_len].reshape(
-            num_batches, BATCH_SIZE, *num_hops.shape[1:]
+            num_batches, actual_batch_size, *num_hops.shape[1:]
         )
 
         (model, opt_state), batch_losses = jax.lax.scan(

@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 from typing import Any, TypedDict
 
+from classical_diffusion.jax.langevin._analysis import partition
+
 os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = ".85"
@@ -14,11 +16,7 @@ from matplotlib import ticker
 from scipy.constants import Boltzmann
 
 from classical_diffusion.analysis import plot_isf
-from classical_diffusion.hopping import (
-    Lattice1D,
-    get_deterministic_isf,
-    get_deterministic_probabilities,
-)
+from classical_diffusion.hopping import Lattice1D
 from classical_diffusion.jax.langevin import (
     KramersParameters as KramersParametersJax,
 )
@@ -105,15 +103,17 @@ def _plot_filtered_trajectory() -> None:
     print("Generate 1 trajectory")
     times, positions = generate_trajectories(system, time_span, n_trajectories=1)
 
-    filtered_trajectory = filter_trajectory_jax(positions[0][0], delta_x=system.delta_x)
+    filter_trajectory_jax(positions[0][0], delta_x=system.delta_x)
+
+    partitioned_trajectory = partition(positions[0][0], delta_x=system.delta_x)
 
     fig, ax = get_fancy_figure()
     fig, ax = get_figure(ax)
     (line1,) = ax.plot(times, positions[0][0])
     line1.set_label("Langevin Trajectory")
 
-    (line1,) = ax.plot(times, filtered_trajectory)
-    line1.set_label("Filtered Trajectory")
+    (line2,) = ax.plot(times, partitioned_trajectory)
+    line2.set_label("Discretised Trajectory")
 
     # Apply tick intervals
     ax.yaxis.set_major_locator(ticker.MultipleLocator(system.delta_x))
@@ -227,7 +227,6 @@ def _get_rate_comparison() -> None:  # ruff: ignore[too-many-locals]
     all_sequence_lengths = []
     filtered_trajectories = []
     for trajectory in trajectories:
-        print("new traj")
         filtered_trajectory = filter_trajectory_jax(
             trajectory[0], delta_x=system.delta_x
         )

@@ -17,6 +17,7 @@ from classical_diffusion.hopping._system import (
     Lattice1D,
     get_kramers_parameters_cosine,
     get_kramers_rate,
+    get_lifson_jackson_rate,
     lattice_1d_from_kramers_parameters,
 )
 
@@ -31,6 +32,7 @@ __all__ = [
     "get_deterministic_probabilities",
     "get_kramers_parameters_cosine",
     "get_kramers_rate",
+    "get_lifson_jackson_rate",
     "lattice_1d_from_kramers_parameters",
     "plot_deterministic_isf",
     "solve_ensemble",

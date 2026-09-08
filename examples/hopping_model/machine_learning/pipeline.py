@@ -7,8 +7,8 @@ from model_training import ResNet, train_model
 
 from classical_diffusion.hopping import (
     Lattice1D,
+    get_lifson_jackson_rate,
 )
-from classical_diffusion.hopping._system import get_lifson_jackson_rate
 from classical_diffusion.jax.hopping import (
     get_deterministic_isf,
     get_deterministic_probabilities,
@@ -64,11 +64,33 @@ def _test_model(
     discretised_hop_times = test_data[1]
     discretised_hop_rates = 1.0 / discretised_hop_times
 
+    sort_idx = jnp.argsort(test_omega_wells)
+    sorted_params = test_params[sort_idx]
+    sorted_omega_wells = test_omega_wells[sort_idx]
+    sorted_disc_rates = discretised_hop_rates[sort_idx]
+    test_data[2][sort_idx]
+
+    bin_size = 30
+    num_bins = max(1, int(jnp.round(len(sorted_disc_rates) / bin_size)))
+    binned_rates = jnp.array_split(sorted_disc_rates, num_bins)
+    binned_omegas = jnp.array_split(sorted_omega_wells, num_bins)
+    # binned_num_hops = jnp.array_split(sorted_num_hops, num_bins)
+
+    binned_omegas_means = jnp.array([jnp.mean(b) for b in binned_omegas])
+    binned_rates_means = jnp.array([jnp.mean(b) for b in binned_rates])
+    # binned_num_hops_sums = jnp.array([jnp.sum(b) for b in binned_num_hops])
+    # jnp.array(
+    #     [
+    #         (1.0 / (jnp.sqrt(binned_rates_means[idx]) ** 3 * binned_num_hops_sums[idx]))
+    #         for idx in range(len(binned_rates_means))
+    #     ]
+    # )
+
     _fig, ax = get_fancy_figure()
     fig, ax = get_figure(ax)
 
     lifson_jackson_rates = []
-    for params in test_params:
+    for params in sorted_params:
         kramers_params = KramersParametersNotJax(
             omega_well=params[0],
             omega_barrier=params[1],
@@ -85,21 +107,16 @@ def _test_model(
 
     lifson_jackson_hop_rates = np.array(lifson_jackson_rates)
 
-    # Quick model's
-    model_hop_times = jax.vmap(model, (0))(test_data[0])
+    model_hop_times = jax.vmap(model, (0))(sorted_params)
     model_hop_rates = 1.0 / model_hop_times
 
-    line2 = ax.scatter(test_omega_wells, discretised_hop_rates)
+    line2 = ax.scatter(binned_omegas_means, binned_rates_means, marker="x")
     line2.set_label("discretised hop rates")
 
-    line3 = ax.scatter(test_omega_wells, model_hop_rates)
+    (line3,) = ax.plot(sorted_omega_wells, model_hop_rates, color="C1")
     line3.set_label("model hop rates")
 
-    sort_idx = np.argsort(test_omega_wells)
-    x_sorted = test_omega_wells[sort_idx]
-    y_sorted = lifson_jackson_hop_rates[sort_idx]
-
-    (line4,) = ax.plot(x_sorted, y_sorted)
+    (line4,) = ax.plot(sorted_omega_wells, lifson_jackson_hop_rates, color="C2")
     line4.set_label("lifson jackson hop rates")
 
     ax.set_xlabel("Omega well")
@@ -134,7 +151,7 @@ def _test_model(
         kramers_lattice = Lattice1D(
             kramers_params.delta_x, float(kramers_time)
         ).as_canonical()
-        kramers_isf = get_deterministic_isf(
+        get_deterministic_isf(
             kramers_lattice,
             get_deterministic_probabilities(kramers_lattice, time_span, (1000,))[0],
             (jnp.pi / kramers_params.delta_x,),
@@ -160,7 +177,7 @@ def _test_model(
         discretised_time_lattice = Lattice1D(
             kramers_params.delta_x, float(langevin_time)
         ).as_canonical()
-        _discretised_time_isf = get_deterministic_isf(
+        discretised_time_isf = get_deterministic_isf(
             discretised_time_lattice,
             get_deterministic_probabilities(
                 discretised_time_lattice, time_span, (1000,)
@@ -180,22 +197,19 @@ def _test_model(
             (jnp.pi / kramers_params.delta_x,),
         )
 
-        (line1,) = ax.plot(times, kramers_isf)
-        line1.set_label("Kramers ISF")
+        (line2,) = ax.plot(times, discretised_time_isf, color="C0")
+        line2.set_label("Langevin ISF")
 
-        (line1,) = ax.plot(times, lifson_isf)
+        (line1,) = ax.plot(times, model_isf, color="C1")
+        line1.set_label("Model ISF")
+
+        (line1,) = ax.plot(times, lifson_isf, color="C2")
         line1.set_label("Lifson Jackson ISF")
-
-        # (line2,) = ax.plot(times, discretised_time_isf)
-        # line2.set_label("Langevin ISF")
-
-        (line3,) = ax.plot(times, model_isf)
-        line3.set_label("Model ISF")
 
         ax.set_xlabel("Time")
         ax.set_ylabel("ISF")
 
-        ax.set_xlim(0, right=10)
+        ax.set_xlim(0, right=15)
         ax.set_ylim(0, 1)
         ax.legend()
         ax.set_title(f"Omega_well = {kramers_params.omega_well:.2f}")
@@ -210,7 +224,7 @@ def learn_varying_omega_well() -> None:
     # Simulation parameters - adjust these and the system parameters
     time_span = TimeSpan(t_end=100.0, n_steps=1000)
     num_training_trajectories = 1000
-    num_validation_trajectories = 100
+    num_validation_trajectories = 600
 
     # Generate trajectory data
     print("\nGenerate trajectory data")
