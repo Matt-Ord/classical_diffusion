@@ -16,6 +16,14 @@ def _process_points(x: jnp.ndarray, delta_x: float) -> jnp.ndarray:
     return jnp.round(x / delta_x) * delta_x
 
 
+def discretise_trajctory(
+    x: jnp.ndarray,
+    *,
+    delta_x: float,
+) -> jnp.ndarray:
+    pass
+
+
 @eqx.filter_jit
 def filter_trajectory(
     x: jnp.ndarray,

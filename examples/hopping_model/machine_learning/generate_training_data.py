@@ -31,7 +31,7 @@ from classical_diffusion.util import cached, timed
 default_params = KramersParameters(
     omega_well=1.0,
     omega_barrier=5.0,
-    barrier_energy=2.0,
+    barrier_energy=1.0,
     m=1.0,
     temperature=0.5 / Boltzmann,
     gamma=0.1,
@@ -43,8 +43,8 @@ def _vary_omega_well(
     _key: jax.Array,
 ) -> tuple[jnp.ndarray, "CanonicalSystem"]:  # ruff: ignore[quoted-annotation]
 
-    min_value = 0.2
-    max_value = 10.0
+    min_value = 1.0
+    max_value = 2.0
 
     params = [
         jax.random.uniform(_key, shape=(), minval=min_value, maxval=max_value).astype(
@@ -176,6 +176,7 @@ def generate_training_data(
     n_trajectories: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Generate machine learning data set with parameter generator defined below."""
+    jax.config.update("jax_platforms", "cpu")
     generate_params = _vary_omega_well
 
     key = jax.random.PRNGKey(234)
