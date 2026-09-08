@@ -3,7 +3,6 @@ from pathlib import Path
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 from matplotlib import ticker
 from scipy.constants import Boltzmann
 
@@ -91,19 +90,17 @@ def _plot_hop_intervals_histogram() -> None:
     fig, ax = get_fancy_figure()
 
     average = 1 / (2 * get_lifson_jackson_rate(system, delta_x=system.delta_x))
-    times = np.linspace(0, 2 * average, 100)
-    kramers_pdf = (1 / average) * np.exp(-times / average)
-    (line,) = ax.plot(times, kramers_pdf)
+    line = ax.axvline(average)
     line.set_label("Lifson Jackson Theory")
     line.set_linestyle("--")
+    line.set_color("C2")
 
-    plot_periodic_hop_time_distribution_histogram(
-        result,
-        delta_x=system.delta_x,
-        origin=0.0,
-        ax=ax,
+    _, _, (line, bars) = plot_periodic_hop_time_distribution_histogram(
+        result, delta_x=system.delta_x, ax=ax
     )
-    ax.set_xlim(times[0], times[-1])
+    for b in bars:
+        b.set_color("C1")
+    ax.set_xlim(0, 2 * average)
     ax.legend()
 
     ax.set_xlabel("Hop Time")

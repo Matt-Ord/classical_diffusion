@@ -312,17 +312,15 @@ def partition_trajectory[S: Any](
 
 
 @jax.jit
-def _partition_jax(
-    x_points: jnp.ndarray[Any, np.dtype[np.floating]],
-) -> jnp.ndarray[Any, np.dtype[np.floating]]:
+def _partition_jax(x_points: jnp.ndarray) -> jnp.ndarray:
     def step(n_prev: jnp.ndarray, x: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
         # Boundaries: remain in n_prev until within 0.1 of neighboring integer
-        upper = n_prev + 0.8
-        lower = n_prev - 0.8
+        upper = n_prev + 0.95
+        lower = n_prev - 0.95
 
         # Handle single or multi-grid jumps across boundaries
-        n_up = jnp.ceil(x - 0.8)
-        n_down = jnp.floor(x + 0.8)
+        n_up = jnp.ceil(x - 0.95)
+        n_down = jnp.floor(x + 0.95)
 
         n_next = jnp.where(x > upper, n_up, jnp.where(x < lower, n_down, n_prev))
         return n_next, n_next
@@ -525,6 +523,9 @@ def plot_periodic_hop_time_distribution_histogram(
 
     hop_times = get_periodic_hop_times(result, delta_x=delta_x, origin=origin)
 
+    line = ax.axvline(np.mean(hop_times).item())
+    line.set_label("Mean Hop Time")
+
     n_bins = int(np.sqrt(hop_times.size) / 4) if n_bins is None else n_bins
     bins = np.quantile(hop_times, np.linspace(0, 1, n_bins + 1))
     _bin_counts, _bin_edges, bars = ax.hist(hop_times, bins=bins, density=True)  # ty: ignore[invalid-argument-type]
@@ -532,7 +533,8 @@ def plot_periodic_hop_time_distribution_histogram(
     bars = cast("BarContainer", bars)
     for b in bars:
         b.set_edgecolor(b.get_facecolor())
+
     ax.set_xlabel("hop time")
     ax.set_ylabel("Probability Density")
 
-    return fig, ax, bars
+    return fig, ax, (line, bars)
