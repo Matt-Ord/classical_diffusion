@@ -26,14 +26,16 @@ def partition(
 
     x = (x_points - origin) / delta_x
 
+    threshold = 0.7
+
     def step(n_prev: jnp.ndarray, x: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
         # Boundaries: remain in n_prev until within 0.1 of neighboring integer
-        upper = n_prev + 0.8
-        lower = n_prev - 0.8
+        upper = n_prev + threshold
+        lower = n_prev - threshold
 
         # Handle single or multi-grid jumps across boundaries
-        n_up = jnp.ceil(x - 0.8)
-        n_down = jnp.floor(x + 0.8)
+        n_up = jnp.ceil(x - threshold)
+        n_down = jnp.floor(x + threshold)
 
         n_next = jnp.where(x > upper, n_up, jnp.where(x < lower, n_down, n_prev))
         return n_next, n_next

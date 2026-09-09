@@ -7,6 +7,7 @@ from model_training import ResNet, train_model
 
 from classical_diffusion.hopping import (
     Lattice1D,
+    get_kramers_rate,
     get_lifson_jackson_rate,
 )
 from classical_diffusion.jax.hopping import (
@@ -90,6 +91,7 @@ def _test_model(
     fig, ax = get_figure(ax)
 
     lifson_jackson_rates = []
+    kramers_rates = []
     for params in sorted_params:
         kramers_params = KramersParametersNotJax(
             omega_well=params[0],
@@ -104,8 +106,10 @@ def _test_model(
         lifson_jackson_rates.append(
             get_lifson_jackson_rate(system, delta_x=kramers_params.delta_x)
         )
+        kramers_rates.append(get_kramers_rate(kramers_params))
 
     lifson_jackson_hop_rates = np.array(lifson_jackson_rates)
+    _kramers_hop_rates = np.array(kramers_rates)
 
     model_hop_times = jax.vmap(model, (0))(sorted_params)
     model_hop_rates = 1.0 / model_hop_times
@@ -119,10 +123,16 @@ def _test_model(
     (line4,) = ax.plot(sorted_omega_wells, lifson_jackson_hop_rates, color="C2")
     line4.set_label("lifson jackson hop rates")
 
+    # (line4,) = ax.plot(sorted_omega_wells, kramers_hop_rates, color="C3")
+    # line4.set_label("kramers hop rates")
+
     ax.set_xlabel("Omega well")
     ax.set_ylabel("Rate")
 
     ax.legend()
+
+    ax.margins(x=0)
+    ax.set_ylim(bottom=0.0)
 
     fig.savefig("./examples/hopping_model/machine_learning/kramers_test.pdf")
 
