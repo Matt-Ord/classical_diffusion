@@ -16,7 +16,11 @@ from matplotlib import ticker
 from scipy.constants import Boltzmann
 
 from classical_diffusion.analysis import plot_isf
-from classical_diffusion.hopping import Lattice1D
+from classical_diffusion.hopping import (
+    Lattice1D,
+    get_deterministic_isf,
+    get_deterministic_probabilities,
+)
 from classical_diffusion.jax.langevin import (
     KramersParameters as KramersParametersJax,
 )
@@ -109,10 +113,10 @@ def _plot_filtered_trajectory() -> None:
 
     fig, ax = get_fancy_figure()
     fig, ax = get_figure(ax)
-    (line1,) = ax.plot(times, positions[0][0])
+    (line1,) = ax.plot(times[20 * 5 : 50 * 5], positions[0][0][20 * 5 : 50 * 5])
     line1.set_label("Langevin Trajectory")
 
-    (line2,) = ax.plot(times, partitioned_trajectory)
+    (line2,) = ax.plot(times[20 * 5 : 50 * 5], partitioned_trajectory[20 * 5 : 50 * 5])
     line2.set_label("Discretised Trajectory")
 
     # Apply tick intervals
@@ -124,6 +128,10 @@ def _plot_filtered_trajectory() -> None:
 
     ax.set_xlabel("Time")
     ax.set_ylabel("Position")
+
+    ax.margins(x=0)
+
+    ax.tick_params(labelleft=False, bottom=False, labelbottom=False)
 
     fig.savefig(
         "./examples/hopping_model/1d_filtered.trajectory.pdf",
@@ -214,7 +222,7 @@ def _get_rate_comparison() -> None:  # ruff: ignore[too-many-locals]
     hop_rate = _kramers_rate(params)
     hop_time = 1.0 / hop_rate
     print(f"Kramers hop time: {hop_time}")
-    kramers_lattice = Lattice1D(params.delta_x, float(hop_time))
+    Lattice1D(params.delta_x, float(hop_time))
 
     # Generate Langevin simulation data
     time_span = TimeSpan(t_start=0.0, t_end=100.0, n_steps=10000)
@@ -281,22 +289,20 @@ def _get_rate_comparison() -> None:  # ruff: ignore[too-many-locals]
     _, ax, line, _ = plot_isf(result, ax=ax, delta_k=(np.pi / params.delta_x,))
     line.set_label("Langevin")
 
-    kramers_isf = get_deterministic_isf(
-        get_deterministic_probabilities(kramers_lattice, (1000,), time_span),
-        (np.pi / params.delta_x,),
-    )
-    (line2,) = ax.plot(times, kramers_isf)
-    line2.set_label("Kramers ISF")
-
     mean_rate_lattice = Lattice1D(params.delta_x, derived_hop_time)
     mean_rate_isf = get_deterministic_isf(
         get_deterministic_probabilities(mean_rate_lattice, (1000,), time_span),
         (np.pi / params.delta_x,),
     )
-    (line3,) = ax.plot(times, mean_rate_isf)
+    (line3,) = ax.plot(times, mean_rate_isf, color="C2")
     line3.set_label("Mean Rate ISF")
 
     ax.legend()
+    ax.set_xlim(0, 30)
+    ax.set_ylim(bottom=-0.1)
+
+    ax.tick_params(bottom=False, labelbottom=False)
+
     fig.savefig(
         "./examples/hopping_model/1d_filtered.isfs.pdf", dpi=300, bbox_inches="tight"
     )

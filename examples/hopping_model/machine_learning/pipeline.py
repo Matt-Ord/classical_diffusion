@@ -4,6 +4,7 @@ import os
 import jax.numpy as jnp
 import numpy as np
 from model_training import ResNet, train_model
+from pysr import PySRRegressor
 
 from classical_diffusion.hopping import (
     Lattice1D,
@@ -121,7 +122,7 @@ def _test_model(
     line3.set_label("model hop rates")
 
     (line4,) = ax.plot(sorted_omega_wells, lifson_jackson_hop_rates, color="C2")
-    line4.set_label("lifson jackson hop rates")
+    line4.set_label("true hop rates")
 
     # (line4,) = ax.plot(sorted_omega_wells, kramers_hop_rates, color="C3")
     # line4.set_label("kramers hop rates")
@@ -137,6 +138,8 @@ def _test_model(
     fig.savefig("./examples/hopping_model/machine_learning/kramers_test.pdf")
 
     times = np.linspace(time_span.t_start, time_span.t_end, time_span.n_steps + 1)
+
+    print("isfs")
 
     for i in range(min(len(test_data[0]), 10)):
         _fig, ax = get_fancy_figure()
@@ -161,7 +164,7 @@ def _test_model(
         kramers_lattice = Lattice1D(
             kramers_params.delta_x, float(kramers_time)
         ).as_canonical()
-        get_deterministic_isf(
+        kramers_isf = get_deterministic_isf(
             kramers_lattice,
             get_deterministic_probabilities(kramers_lattice, time_span, (1000,))[0],
             (jnp.pi / kramers_params.delta_x,),
@@ -207,19 +210,25 @@ def _test_model(
             (jnp.pi / kramers_params.delta_x,),
         )
 
-        (line2,) = ax.plot(times, discretised_time_isf, color="C0")
-        line2.set_label("Langevin ISF")
+        (line1,) = ax.plot(times, discretised_time_isf, color="C0")
+        line1.set_label("Langevin ISF")
 
-        (line1,) = ax.plot(times, model_isf, color="C1")
-        line1.set_label("Model ISF")
+        (line2,) = ax.plot(times, model_isf, color="C1")
+        line2.set_label("Model ISF")
 
-        (line1,) = ax.plot(times, lifson_isf, color="C2")
-        line1.set_label("Lifson Jackson ISF")
+        (line3,) = ax.plot(times, lifson_isf, color="C2")
+        line3.set_label("True rate ISF")
+
+        (line4,) = ax.plot(times, kramers_isf, color="C3")
+        line4.set_label("Kramers ISF")
+
+        ax.set_xlim(0, right=10)
 
         ax.set_xlabel("Time")
         ax.set_ylabel("ISF")
 
-        ax.set_xlim(0, right=15)
+        ax.tick_params(bottom=False, labelbottom=False)
+
         ax.set_ylim(0, 1)
         ax.legend()
         ax.set_title(f"Omega_well = {kramers_params.omega_well:.2f}")
@@ -227,6 +236,48 @@ def _test_model(
         fig.savefig(
             f"./examples/hopping_model/machine_learning/training_isfs/kramers_test_{kramers_params.omega_well:.2f}.isf.pdf"
         )
+
+        ax.set_yscale("symlog", linthresh=1e-4)
+        ax.set_ylim(bottom=1e-4)
+        fig.savefig(
+            f"./examples/hopping_model/machine_learning/training_isfs/kramers_test_{kramers_params.omega_well:.2f}.log.isf.pdf"
+        )
+
+    print("regression")
+
+    # Discover rate
+    pysr_model = PySRRegressor(
+        niterations=40,
+        binary_operators=["+", "*", "-", "/"],
+        unary_operators=["exp"],
+    )
+    pysr_model.fit(sorted_params, model_hop_rates)
+
+    best_formula = pysr_model.sympy()
+    print("Form: ", best_formula)
+
+    derived_analytic_hop_rates = pysr_model.predict(sorted_params)
+
+    _, ax = get_fancy_figure()
+    fig, ax = get_figure(ax)
+
+    (line5,) = ax.plot(
+        sorted_omega_wells, derived_analytic_hop_rates, linestyle="-", color="blue"
+    )
+    line5.set_label("PySR analytic form hop rates")
+
+    (line3,) = ax.plot(sorted_omega_wells, model_hop_rates, color="C1")
+    line3.set_label("model hop rates")
+
+    ax.set_xlabel("Omega well")
+    ax.set_ylabel("Rate")
+
+    ax.legend()
+
+    ax.margins(x=0)
+    ax.set_ylim(bottom=0.0)
+
+    fig.savefig("./examples/hopping_model/machine_learning/pysr.pdf")
 
 
 def learn_varying_omega_well() -> None:
