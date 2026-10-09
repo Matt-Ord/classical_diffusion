@@ -412,27 +412,30 @@ def get_exact_elastic_isf(
     return (1 - free_probability) + free_probability * dynamic
 
 
-def _get_gamma_elastic_parameters(system: PeriodicSystem1D) -> tuple[float, float]:
-    """Return the shape and scale of the gamma model of |p_e|, in units of sqrt(m kT).
+def get_exact_elastic_mean_velocity(system: PeriodicSystem1D) -> float:
+    """Return the mean elastic speed <|p_e|> / m of the states above the barrier.
 
-    The parameters are matched to <|p_e|> and <p_e^2> of the states above the
-    barrier. Both moments follow from the integrals of T(E) exp(-E / kT) and
-    exp(-E / kT) / T(E): the second moment gives the effective mass, and the
-    first is fixed by transition state theory, A <|p_e|> = m delta_x Gamma_TST.
+    The mean is fixed by transition state theory, A <|p_e|> = m delta_x Gamma_TST,
+    so <|p_e|> = sqrt(2 m kT / pi) exp(-E_b / 2kT) / (A I_0(E_b / 2kT)).
     """
     barrier_energy = system.barrier_energy / system.kbt
-
     free_probability = get_exact_elastic_free_probability(system)
-    p_squared = system.m / get_exact_elastic_effective_mass(system)
-    # <|p_e|> = sqrt(2 / pi) exp(-E_b / 2) / (A I_0(E_b / 2))
-    p_mean = (
-        np.sqrt(2 / np.pi)
+    return (
+        np.sqrt(2 * system.kbt / (np.pi * system.m))
         * np.exp(-barrier_energy)
         / (free_probability * i0e(barrier_energy / 2))
     )
 
-    variance = p_squared - p_mean**2
-    return p_mean**2 / variance, variance / p_mean
+
+def get_exact_elastic_window_mass(system: PeriodicSystem1D) -> float:
+    """Return the window mass m_w = m^2 kT / Var(p_e) of the states above the barrier.
+
+    The window mass describes the spread of the elastic momentum, and is related
+    to the effective mass by kT / m_eff = kT / m_w + <|p_e| / m>^2.
+    """
+    mean_velocity = get_exact_elastic_mean_velocity(system)
+    effective_mass = get_exact_elastic_effective_mass(system)
+    return system.kbt / (system.kbt / effective_mass - mean_velocity**2)
 
 
 def get_exact_elastic_p_distribution(
@@ -461,10 +464,17 @@ def get_gamma_elastic_p_distribution(
     system: PeriodicSystem1D,
     momenta: np.ndarray[Any, np.dtype[np.floating[Any]]],
 ) -> np.ndarray:
-    """Return the gamma model of the probability density of |p_e|."""
-    shape, scale = _get_gamma_elastic_parameters(system)
-    sigma = np.sqrt(system.m * system.kbt)
-    return gamma.pdf(np.abs(momenta) / sigma, shape, scale=scale) / sigma
+    """Return the gamma model of the probability density of |p_e|.
+
+    The gamma distribution has shape k = m_w v^2 / kT and scale
+    theta = m kT / (m_w v), matching the mean elastic speed v and the
+    window mass m_w.
+    """
+    mean_velocity = get_exact_elastic_mean_velocity(system)
+    window_mass = get_exact_elastic_window_mass(system)
+    shape = window_mass * mean_velocity**2 / system.kbt
+    scale = system.m * system.kbt / (window_mass * mean_velocity)
+    return gamma.pdf(np.abs(momenta), shape, scale=scale)
 
 
 def get_gamma_elastic_isf(
@@ -475,18 +485,21 @@ def get_gamma_elastic_isf(
     """Return a two parameter approximation to the elastic ISF in a 1D cosine potential.
 
     The elastic momentum |p_e| of the states above the barrier is modelled by a
-    gamma distribution, with shape k and scale theta. The ISF is the Fourier
-    transform of this distribution,
-    (1 - A) + A (1 + (theta q)^2)^(-k / 2) cos(k arctan(theta q)), where
-    q = delta_k t / m.
+    gamma distribution, with mean speed v and window mass m_w. The ISF is
+    (1 - A) + A (1 + (v delta_k t / k)^2)^(-k / 2) cos(k arctan(v delta_k t / k)),
+    where k = m_w v^2 / kT. For large k this tends to a carrier
+    cos(v delta_k t) inside the free particle window exp(-kT delta_k^2 t^2 / 2 m_w).
     """
-    scaled_times = np.linalg.norm(delta_k) * times * np.sqrt(system.kbt / system.m)
+    phase = np.linalg.norm(delta_k) * times * get_exact_elastic_mean_velocity(system)
+    shape = (
+        get_exact_elastic_window_mass(system)
+        * get_exact_elastic_mean_velocity(system) ** 2
+        / system.kbt
+    )
 
     free_probability = get_exact_elastic_free_probability(system)
-    shape, scale = _get_gamma_elastic_parameters(system)
-
-    dynamic = (1 + (scale * scaled_times) ** 2) ** (-shape / 2) * np.cos(
-        shape * np.arctan(scale * scaled_times)
+    dynamic = (1 + (phase / shape) ** 2) ** (-shape / 2) * np.cos(
+        shape * np.arctan(phase / shape)
     )
     return (1 - free_probability) + free_probability * dynamic
 
