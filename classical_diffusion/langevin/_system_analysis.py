@@ -411,33 +411,39 @@ def get_exact_elastic_isf(
     return (1 - free_probability) + free_probability * dynamic
 
 
-def get_damped_cosine_elastic_isf(
+def get_gamma_elastic_isf(
     system: PeriodicSystem1D,
     delta_k: tuple[float, ...],
     times: np.ndarray[Any, np.dtype[np.floating[Any]]],
 ) -> np.ndarray:
-    """Return an analytic approximation to the elastic ISF in a 1D cosine potential.
+    """Return a two parameter approximation to the elastic ISF in a 1D cosine potential.
 
-    Close to the barrier K(E_b / E) ~ log(16 E_b / (E - E_b)) / 2, and the
-    elastic momentum is approximately pi sqrt(2 m E_b) / (log(16 E_b / kT) - log(u))
-    where u = (E - E_b) / kT. Averaging over u gives a mean momentum p_c and a
-    spread w = p_c pi / (sqrt(6) Lambda), and the ISF is approximated by
-    (1 - A) + A cos(delta_k t p_c / m) exp(-(delta_k t w / m)^2 / 2).
+    The elastic momentum |p_e| of the states above the barrier is modelled
+    by a gamma distribution, matched to <|p_e|> and <p_e^2>. Both moments follow
+    from the integrals of T(E) exp(-E / kT) and exp(-E / kT) / T(E): the second
+    moment gives the effective mass, and the first is fixed by transition state
+    theory, A <|p_e|> = m delta_x Gamma_TST. The ISF is then
+    (1 - A) + A (1 + (theta q)^2)^(-k / 2) cos(k arctan(theta q)), where
+    q = delta_k t / m.
     """
     barrier_energy = system.barrier_energy / system.kbt
     scaled_times = np.linalg.norm(delta_k) * times * np.sqrt(system.kbt / system.m)
 
-    log_ratio = np.log(16 * barrier_energy) + np.euler_gamma
-    momentum = np.pi * np.sqrt(2 * barrier_energy) / log_ratio
-    width = momentum * np.pi / (np.sqrt(6) * log_ratio)
-    free_probability = (
-        np.exp(-barrier_energy)
-        * log_ratio
-        / (np.pi**1.5 * np.sqrt(barrier_energy) * i0e(barrier_energy / 2))
+    free_probability = get_exact_elastic_free_probability(system)
+    p_squared = system.m / get_exact_elastic_effective_mass(system)
+    # <|p_e|> = sqrt(2 / pi) exp(-E_b / 2) / (A I_0(E_b / 2)), in units of sqrt(m kT)
+    p_mean = (
+        np.sqrt(2 / np.pi)
+        * np.exp(-barrier_energy)
+        / (free_probability * i0e(barrier_energy / 2))
     )
 
-    dynamic = np.cos(momentum * scaled_times) * np.exp(
-        -0.5 * (width * scaled_times) ** 2
+    variance = p_squared - p_mean**2
+    shape = p_mean**2 / variance
+    scale = variance / p_mean
+
+    dynamic = (1 + (scale * scaled_times) ** 2) ** (-shape / 2) * np.cos(
+        shape * np.arctan(scale * scaled_times)
     )
     return (1 - free_probability) + free_probability * dynamic
 
