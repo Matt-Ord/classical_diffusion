@@ -43,6 +43,10 @@ from classical_diffusion.langevin._system import (
 )
 from classical_diffusion.langevin._system_analysis import (
     get_characteristic_friction_time,
+    get_damped_cosine_elastic_isf,
+    get_exact_elastic_effective_mass,
+    get_exact_elastic_free_probability,
+    get_exact_elastic_isf,
     get_exact_flat_ballistic_isf,
     get_exact_flat_isf,
     get_exact_harmonic_isf,
@@ -72,8 +76,12 @@ __all__ = [
     "System",
     "breakdown_ballistic_trajectory",
     "get_characteristic_friction_time",
+    "get_damped_cosine_elastic_isf",
     "get_diffusion_time",
     "get_effective_mass",
+    "get_exact_elastic_effective_mass",
+    "get_exact_elastic_free_probability",
+    "get_exact_elastic_isf",
     "get_exact_flat_ballistic_isf",
     "get_exact_flat_isf",
     "get_exact_harmonic_isf",

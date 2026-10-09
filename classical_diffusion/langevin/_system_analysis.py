@@ -3,6 +3,8 @@ from typing import TYPE_CHECKING, Any
 import matplotlib as mpl
 import numpy as np
 import sympy as sp
+from scipy.integrate import quad, quad_vec
+from scipy.special import ellipk, i0e
 
 from classical_diffusion.langevin import (
     LangevinSimulationResult,
@@ -330,6 +332,114 @@ def plot_exact_flat_ballistic_isf(
     ax.legend()
 
     return fig, ax, line
+
+
+def _get_elastic_weight(
+    energy: float | np.ndarray, barrier_energy: float
+) -> float | np.ndarray:
+    """Return the phase-space weight T(E) exp(-(E - E_b)) of an orbit above the barrier.
+
+    Energies are given in units of kT, and the crossing time T(E) is
+    proportional to K(E_b / E) / sqrt(E) for the cosine potential.
+    """
+    return (
+        ellipk(barrier_energy / energy)
+        / np.sqrt(energy)
+        * np.exp(barrier_energy - energy)
+    )
+
+
+def _get_elastic_momentum(
+    energy: float | np.ndarray, barrier_energy: float
+) -> float | np.ndarray:
+    """Return the elastic momentum p_e(E) = m delta_x / T(E), in units of sqrt(m kT)."""
+    return np.pi * np.sqrt(2 * energy) / (2 * ellipk(barrier_energy / energy))
+
+
+def _get_elastic_partition(barrier_energy: float) -> float:
+    """Return the integral of the phase-space weight over states above the barrier."""
+    return quad(_get_elastic_weight, barrier_energy, np.inf, args=(barrier_energy,))[0]
+
+
+def get_exact_elastic_free_probability(system: PeriodicSystem1D) -> float:
+    """Return the probability that a particle in a 1D cosine potential is above the barrier."""
+    barrier_energy = system.barrier_energy / system.kbt
+    # Z = delta_x sqrt(2 pi m kT) exp(-E_b / 2) I_0(E_b / 2), where each direction
+    # above the barrier contributes delta_x sqrt(2 m kT) / pi * weight
+    normalization = np.pi**1.5 / 2 * i0e(barrier_energy / 2) * np.exp(barrier_energy)
+    return _get_elastic_partition(barrier_energy) / normalization
+
+
+def get_exact_elastic_effective_mass(system: PeriodicSystem1D) -> float:
+    """Return the effective mass m kT / <p_e^2> of the states above the barrier."""
+    barrier_energy = system.barrier_energy / system.kbt
+    p_squared = quad(
+        lambda e: (
+            _get_elastic_weight(e, barrier_energy)
+            * _get_elastic_momentum(e, barrier_energy) ** 2
+        ),
+        barrier_energy,
+        np.inf,
+    )[0] / _get_elastic_partition(barrier_energy)
+    return system.m / p_squared
+
+
+def get_exact_elastic_isf(
+    system: PeriodicSystem1D,
+    delta_k: tuple[float, ...],
+    times: np.ndarray[Any, np.dtype[np.floating[Any]]],
+) -> np.ndarray:
+    """Return the exact elastic ISF of a ballistic particle in a 1D cosine potential.
+
+    The dynamic contribution is the characteristic function of the elastic
+    momentum p_e(E), averaged over the orbits above the barrier.
+    """
+    barrier_energy = system.barrier_energy / system.kbt
+    scaled_times = np.linalg.norm(delta_k) * times * np.sqrt(system.kbt / system.m)
+
+    dynamic = quad_vec(
+        lambda e: (
+            _get_elastic_weight(e, barrier_energy)
+            * np.cos(scaled_times * _get_elastic_momentum(e, barrier_energy))
+        ),
+        barrier_energy,
+        # The weight is negligible beyond E_b + 60 kT
+        barrier_energy + 60,
+    )[0] / _get_elastic_partition(barrier_energy)
+
+    free_probability = get_exact_elastic_free_probability(system)
+    return (1 - free_probability) + free_probability * dynamic
+
+
+def get_damped_cosine_elastic_isf(
+    system: PeriodicSystem1D,
+    delta_k: tuple[float, ...],
+    times: np.ndarray[Any, np.dtype[np.floating[Any]]],
+) -> np.ndarray:
+    """Return an analytic approximation to the elastic ISF in a 1D cosine potential.
+
+    Close to the barrier K(E_b / E) ~ log(16 E_b / (E - E_b)) / 2, and the
+    elastic momentum is approximately pi sqrt(2 m E_b) / (log(16 E_b / kT) - log(u))
+    where u = (E - E_b) / kT. Averaging over u gives a mean momentum p_c and a
+    spread w = p_c pi / (sqrt(6) Lambda), and the ISF is approximated by
+    (1 - A) + A cos(delta_k t p_c / m) exp(-(delta_k t w / m)^2 / 2).
+    """
+    barrier_energy = system.barrier_energy / system.kbt
+    scaled_times = np.linalg.norm(delta_k) * times * np.sqrt(system.kbt / system.m)
+
+    log_ratio = np.log(16 * barrier_energy) + np.euler_gamma
+    momentum = np.pi * np.sqrt(2 * barrier_energy) / log_ratio
+    width = momentum * np.pi / (np.sqrt(6) * log_ratio)
+    free_probability = (
+        np.exp(-barrier_energy)
+        * log_ratio
+        / (np.pi**1.5 * np.sqrt(barrier_energy) * i0e(barrier_energy / 2))
+    )
+
+    dynamic = np.cos(momentum * scaled_times) * np.exp(
+        -0.5 * (width * scaled_times) ** 2
+    )
+    return (1 - free_probability) + free_probability * dynamic
 
 
 def get_characteristic_friction_time(system: System) -> float:
