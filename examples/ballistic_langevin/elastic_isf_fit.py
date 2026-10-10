@@ -13,7 +13,7 @@ from classical_diffusion.langevin import (
     breakdown_ballistic_trajectory,
     get_effective_mass,
     get_exact_elastic_isf,
-    get_gamma_elastic_isf,
+    get_gig_elastic_isf,
     get_under_barrier_occupation,
     plot_exact_flat_ballistic_isf,
     solve_ensemble_ballistic,
@@ -91,8 +91,8 @@ def _plot_elastic_isf_fit_1d() -> None:
     line_2.set_linestyle(":")
     line_2.set_color(CAM_CHERRY.dark)
 
-    (line_3,) = ax.plot(times, get_gamma_elastic_isf(system, delta_k, times))
-    line_3.set_label("gamma")
+    (line_3,) = ax.plot(times, get_gig_elastic_isf(system, delta_k, times))
+    line_3.set_label("GIG")
     line_3.set_linestyle("-.")
     line_3.set_color(CAM_BLUE.warm)
 

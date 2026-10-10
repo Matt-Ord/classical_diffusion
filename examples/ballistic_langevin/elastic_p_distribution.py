@@ -7,7 +7,7 @@ from classical_diffusion.langevin import (
     SODIUM_COPPER_SYSTEM_1D,
     breakdown_ballistic_trajectory,
     get_exact_elastic_p_distribution,
-    get_gamma_elastic_p_distribution,
+    get_gig_elastic_p_distribution,
     solve_ensemble_ballistic,
 )
 from classical_diffusion.plot import CAM_BLUE, CAM_CHERRY, get_fancy_figure
@@ -62,12 +62,10 @@ def _plot_elastic_p_distribution_1d() -> None:
     exact_line.set_color(CAM_BLUE.dark)
 
     p = np.linspace(0, 5, 500)
-    (gamma_line,) = ax.plot(
-        p, get_gamma_elastic_p_distribution(system, p * sigma) * sigma
-    )
-    gamma_line.set_label("gamma")
-    gamma_line.set_linestyle("--")
-    gamma_line.set_color(CAM_BLUE.warm)
+    (gig_line,) = ax.plot(p, get_gig_elastic_p_distribution(system, p * sigma) * sigma)
+    gig_line.set_label("GIG")
+    gig_line.set_linestyle("--")
+    gig_line.set_color(CAM_BLUE.warm)
 
     (free_line,) = ax.plot(p, np.sqrt(2 / np.pi) * np.exp(-(p**2) / 2))
     free_line.set_label("free particle")
@@ -78,7 +76,7 @@ def _plot_elastic_p_distribution_1d() -> None:
     ax.set_ylabel("Probability Density")
     ax.set_xlim(0, 4)
     ax.set_ylim(0, None)
-    ax.legend(handles=[bars, exact_line, gamma_line, free_line])
+    ax.legend(handles=[bars, exact_line, gig_line, free_line])
     fig.savefig("examples/ballistic_langevin/elastic_p_distribution.1d.pdf")
 
 

@@ -4,8 +4,8 @@ import matplotlib as mpl
 import numpy as np
 import sympy as sp
 from scipy.integrate import quad, quad_vec
-from scipy.special import ellipk, i0e
-from scipy.stats import gamma
+from scipy.optimize import least_squares
+from scipy.special import ellipk, i0e, kve
 
 from classical_diffusion.langevin import (
     LangevinSimulationResult,
@@ -427,15 +427,9 @@ def get_exact_elastic_mean_velocity(system: PeriodicSystem1D) -> float:
     )
 
 
-def get_exact_elastic_window_mass(system: PeriodicSystem1D) -> float:
-    """Return the window mass m_w = m^2 kT / Var(p_e) of the states above the barrier.
-
-    The window mass describes the spread of the elastic momentum, and is related
-    to the effective mass by kT / m_eff = kT / m_w + <|p_e| / m>^2.
-    """
-    mean_velocity = get_exact_elastic_mean_velocity(system)
-    effective_mass = get_exact_elastic_effective_mass(system)
-    return system.kbt / (system.kbt / effective_mass - mean_velocity**2)
+def get_barrier_frequency(system: PeriodicSystem1D) -> float:
+    """Return the frequency omega_b of the inverted harmonic oscillator at the barrier top."""
+    return np.pi / system.delta_x * np.sqrt(2 * system.barrier_energy / system.m)
 
 
 def get_exact_elastic_p_distribution(
@@ -460,47 +454,82 @@ def get_exact_elastic_p_distribution(
     return momenta * sigma, density / sigma
 
 
-def get_gamma_elastic_p_distribution(
+def _get_gig_moment(n: int, lam: float, a: float, b: float) -> float:
+    """Return <p^n> of the GIG distribution p^(lam - 1) exp(-(a p + b / p) / 2)."""
+    z = np.sqrt(a * b)
+    return (b / a) ** (n / 2) * kve(lam + n, z) / kve(lam, z)
+
+
+def _get_gig_parameters(system: PeriodicSystem1D) -> tuple[float, float, float]:
+    """Return the GIG parameters (lam, a, b) of |p_e|, in units of sqrt(m kT).
+
+    The parameters are set by physical quantities of the system. The slowest
+    crossings of the barrier top are exponentially rare, at a rate set by the
+    barrier frequency, which fixes b = 2 m delta_x omega_b. The parameters lam
+    and a are chosen to reproduce the mean speed, fixed by transition state
+    theory, and the effective mass.
+    """
+    sigma = np.sqrt(system.m * system.kbt)
+    mean = system.m * get_exact_elastic_mean_velocity(system) / sigma
+    p_squared = system.m / get_exact_elastic_effective_mass(system)
+    b = 2 * system.m * system.delta_x * get_barrier_frequency(system) / sigma
+
+    # For large sqrt(ab), sqrt(ab) = <p>^2 / Var(p)
+    z0 = mean**2 / (p_squared - mean**2)
+    lam0 = z0 * (mean * z0 / b - 1) - 0.5
+
+    def _residual(x: np.ndarray) -> list[float]:
+        a = np.exp(2 * x[1]) / b
+        return [
+            np.log(_get_gig_moment(1, x[0], a, b) / mean),
+            np.log(_get_gig_moment(2, x[0], a, b) / p_squared),
+        ]
+
+    solution = least_squares(_residual, [lam0, np.log(z0)], xtol=1e-14, ftol=1e-14)
+    return solution.x[0], np.exp(2 * solution.x[1]) / b, b
+
+
+def get_gig_elastic_p_distribution(
     system: PeriodicSystem1D,
     momenta: np.ndarray[Any, np.dtype[np.floating[Any]]],
 ) -> np.ndarray:
-    """Return the gamma model of the probability density of |p_e|.
+    """Return the GIG model of the probability density of |p_e| for escaping states."""
+    lam, a, b = _get_gig_parameters(system)
+    sigma = np.sqrt(system.m * system.kbt)
+    # The density vanishes at p = 0, where the slowest crossings are suppressed
+    p = np.maximum(np.abs(momenta) / sigma, np.finfo(float).tiny)
+    with np.errstate(over="ignore"):
+        log_density = (lam - 1) * np.log(p) - (a * p + b / p) / 2
+    log_norm = (
+        np.log(2 * kve(lam, np.sqrt(a * b))) - np.sqrt(a * b) - lam / 2 * np.log(a / b)
+    )
+    return np.exp(log_density - log_norm) / sigma
 
-    The gamma distribution has shape k = m_w v^2 / kT and scale
-    theta = m kT / (m_w v), matching the mean elastic speed v and the
-    window mass m_w.
-    """
-    mean_velocity = get_exact_elastic_mean_velocity(system)
-    window_mass = get_exact_elastic_window_mass(system)
-    shape = window_mass * mean_velocity**2 / system.kbt
-    scale = system.m * system.kbt / (window_mass * mean_velocity)
-    return gamma.pdf(np.abs(momenta), shape, scale=scale)
 
-
-def get_gamma_elastic_isf(
+def get_gig_elastic_isf(
     system: PeriodicSystem1D,
     delta_k: tuple[float, ...],
     times: np.ndarray[Any, np.dtype[np.floating[Any]]],
 ) -> np.ndarray:
-    """Return a two parameter approximation to the elastic ISF in a 1D cosine potential.
+    """Return the GIG closed form of the elastic ISF in a 1D cosine potential.
 
-    The elastic momentum |p_e| of the states above the barrier is modelled by a
-    gamma distribution, with mean speed v and window mass m_w. The ISF is
-    (1 - A) + A (1 + (v delta_k t / k)^2)^(-k / 2) cos(k arctan(v delta_k t / k)),
-    where k = m_w v^2 / kT. For large k this tends to a carrier
-    cos(v delta_k t) inside the free particle window exp(-kT delta_k^2 t^2 / 2 m_w).
+    The distribution of |p_e| of the escaping states is modelled by a
+    generalised inverse Gaussian p^(lam - 1) exp(-(a p + b / p) / 2), whose
+    parameters are set by four physical quantities: the fraction A of escaping
+    states, the transition state theory jump rate, the effective mass and the
+    barrier frequency. The ISF is
+    (1 - A) + A Re[(a / (a - 2iq))^(lam / 2) K_lam(sqrt(b (a - 2iq))) / K_lam(sqrt(ab))],
+    where q = delta_k t / m.
     """
-    phase = np.linalg.norm(delta_k) * times * get_exact_elastic_mean_velocity(system)
-    shape = (
-        get_exact_elastic_window_mass(system)
-        * get_exact_elastic_mean_velocity(system) ** 2
-        / system.kbt
-    )
+    lam, a, b = _get_gig_parameters(system)
+    q = np.linalg.norm(delta_k) * times * np.sqrt(system.kbt / system.m)
+
+    z0 = np.sqrt(a * b)
+    z1 = np.sqrt(b * (a - 2j * q))
+    ratio = kve(lam, z1) / kve(lam, z0) * np.exp(-(z1 - z0))
+    dynamic = np.real((a / (a - 2j * q)) ** (lam / 2) * ratio)
 
     free_probability = get_exact_elastic_free_probability(system)
-    dynamic = (1 + (phase / shape) ** 2) ** (-shape / 2) * np.cos(
-        shape * np.arctan(phase / shape)
-    )
     return (1 - free_probability) + free_probability * dynamic
 
 
