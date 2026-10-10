@@ -167,7 +167,7 @@ def get_deterministic_probabilities[L: CanonicalLattice](
 
     times = jnp.linspace(time_span.t_start, time_span.t_end, time_span.n_steps + 1)
 
-    initial_p = jnp.full(shape[0], 0.0, dtype=jnp.float32)
+    initial_p = jnp.full(shape[0], 0.0)
     initial_p = initial_p.at[initial_position].set(1)
 
     hop_sites, hop_rates = system.get_rates(jnp.arange(shape[0]))
