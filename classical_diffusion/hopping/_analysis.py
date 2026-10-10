@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 def get_deterministic_isf[L: Lattice](
     result: DeterministicSolverResult[L],
     delta_k: tuple[float, ...],
-) -> np.ndarray[tuple[int], np.dtype[np.float32]]:
+) -> np.ndarray[tuple[int], np.dtype[np.floating]]:
     return np.array(
         get_deterministic_isf_jax(
             result.system.as_canonical(), jnp.array(result.probabilities), delta_k
