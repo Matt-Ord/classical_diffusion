@@ -5,12 +5,14 @@ from classical_diffusion.jax.langevin._analysis import (
     partition_trajectory,
 )
 from classical_diffusion.jax.langevin._langevin import (
-    DEFAULT_STEP_SIZE,
-    Adaptive,
-    FixedStep,
-    StepSize,
     solve_many,
     solve_many_overdamped,
+)
+from classical_diffusion.jax.langevin._step_config import (
+    DEFAULT_STEP_CONFIG,
+    Adaptive,
+    FixedStep,
+    StepConfig,
 )
 from classical_diffusion.jax.langevin._system import (
     KramersParametersJax as KramersParameters,
@@ -18,12 +20,12 @@ from classical_diffusion.jax.langevin._system import (
 from classical_diffusion.jax.langevin._system import KramersSystem1D
 
 __all__ = [
-    "DEFAULT_STEP_SIZE",
+    "DEFAULT_STEP_CONFIG",
     "Adaptive",
     "FixedStep",
     "KramersParameters",
     "KramersSystem1D",
-    "StepSize",
+    "StepConfig",
     "get_trajectory_breakpoints",
     "partition_trajectory",
     "solve_many",
