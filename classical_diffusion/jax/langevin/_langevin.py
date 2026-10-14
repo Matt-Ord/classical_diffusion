@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import diffrax as dfx
@@ -7,6 +6,11 @@ import jax.numpy as jnp
 import numpy as np
 import sympy as sp
 
+from classical_diffusion.jax.langevin._step_config import (
+    DEFAULT_STEP_CONFIG,
+    StepConfig,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -14,67 +18,6 @@ if TYPE_CHECKING:
     from classical_diffusion.simulation import (
         TimeSpan,
     )
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class Adaptive:
-    """Adaptive time steps, chosen by a PID controller.
-
-    This is the default, and works for any system. The noise is sampled from
-    a virtual Brownian tree, so that it is consistent when a step is rejected.
-    """
-
-    rtol: float = 1e-2
-    atol: float = 1e-3
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class FixedStep:
-    """Fixed time steps of step_size, in the natural units of the simulation.
-
-    The natural unit of time is 1 / nu_0, where nu_0 is the larger of the
-    friction and the force rate F_max / sqrt(m k_B T). The step is reduced so
-    that it divides the spacing of the output times. Since no step is rejected,
-    the noise is sampled independently for each step, which is much faster
-    than the Brownian tree needed for adaptive steps. The step must be small
-    enough to resolve the fastest motion of the system.
-    """
-
-    step_size: float
-
-
-type StepSize = Adaptive | FixedStep
-
-DEFAULT_STEP_SIZE = Adaptive()
-"""The default step size, which works for any system."""
-
-
-def _get_step_size_config(
-    step_size: StepSize,
-    times: jnp.ndarray,
-    *,
-    shape: tuple[int, ...],
-    key: jax.Array,
-    levy_area: type[
-        dfx.BrownianIncrement | dfx.SpaceTimeLevyArea | dfx.SpaceTimeTimeLevyArea
-    ],
-) -> tuple[dfx.AbstractBrownianPath, dfx.AbstractStepSizeController, Any, Any]:
-    """Get the Brownian path, step size controller, adjoint and initial step."""
-    spacing = times[1] - times[0]
-    if isinstance(step_size, FixedStep):
-        dt0 = spacing / jnp.ceil(spacing / step_size.step_size)
-        # Steps are never rejected, so the increments need not be consistent
-        bm = dfx.UnsafeBrownianPath(shape=shape, key=key, levy_area=levy_area)
-        return bm, dfx.ConstantStepSize(), dfx.ForwardMode(), dt0
-    bm = dfx.VirtualBrownianTree(
-        t0=0, t1=times[-1], tol=1e-4, shape=shape, key=key, levy_area=levy_area
-    )
-    controller = dfx.ClipStepSizeController(
-        dfx.PIDController(rtol=step_size.rtol, atol=step_size.atol), step_ts=times
-    )
-    return bm, controller, dfx.RecursiveCheckpointAdjoint(), spacing
 
 
 def _get_force_fn(
@@ -191,7 +134,7 @@ def _run_langevin_ensemble_jit(  # ruff: ignore[too-many-arguments]
     keys: jax.Array,
     times: jnp.ndarray,
     *,
-    step_size: StepSize,
+    step_config: StepConfig,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     gamma = jnp.broadcast_to(system.gamma / system.m, (system.n_dim,))
     u = jnp.broadcast_to(system.kbt / system.m, (system.n_dim,))
@@ -203,12 +146,8 @@ def _run_langevin_ensemble_jit(  # ruff: ignore[too-many-arguments]
     def solve_one(
         x0: jnp.ndarray, p0: jnp.ndarray, key: jax.Array
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        bm, controller, adjoint, dt0 = _get_step_size_config(
-            step_size,
-            times,
-            shape=(system.n_dim,),
-            key=key,
-            levy_area=dfx.SpaceTimeTimeLevyArea,
+        bm = step_config.get_brownian_path(
+            times, shape=(system.n_dim,), key=key, levy_area=dfx.SpaceTimeTimeLevyArea
         )
 
         drift_term = dfx.UnderdampedLangevinDriftTerm(gamma, u, grad_f)
@@ -220,13 +159,13 @@ def _run_langevin_ensemble_jit(  # ruff: ignore[too-many-arguments]
             solver=dfx.ALIGN(),
             t0=0,
             t1=times[-1],
-            dt0=dt0,
+            dt0=step_config.get_initial_step(times),
             y0=(x0, p0),
             args=None,
-            stepsize_controller=controller,
+            stepsize_controller=step_config.get_controller(times),
             saveat=dfx.SaveAt(ts=times),
             max_steps=100_000_000,
-            adjoint=adjoint,
+            adjoint=step_config.adjoint,
         )
         return sol.ys
 
@@ -239,12 +178,12 @@ def solve_many[S: CanonicalSystem](
     time_span: TimeSpan,
     initial_conditions: tuple[jnp.ndarray, jnp.ndarray],
     *,
-    step_size: StepSize = DEFAULT_STEP_SIZE,
+    step_config: StepConfig = DEFAULT_STEP_CONFIG,
     _key: jax.Array,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """Solve an ensemble of ULD Langevin trajectories in parallel via jax.vmap.
 
-    The step size is only used when the friction is non-zero.
+    The step configuration is only used when the friction is non-zero.
     """
     times = jnp.linspace(
         time_span.t_start, time_span.t_end, time_span.n_steps + 1, endpoint=True
@@ -270,7 +209,7 @@ def solve_many[S: CanonicalSystem](
             initial_conditions[1],
             keys,
             times,
-            step_size=step_size,
+            step_config=step_config,
         )
 
     # Diffrax + vmap naturally outputs: (n_run, n_time, n_dim)
@@ -286,19 +225,15 @@ def _run_many_overdamped_jit(
     xs0: jnp.ndarray,
     keys: jax.Array,
     times: jnp.ndarray,
-    step_size: StepSize,
+    step_config: StepConfig,
 ) -> jnp.ndarray:
     gamma = jnp.broadcast_to(system.gamma, (system.n_dim,))
     force_fn = _get_force_fn(system)
     diffusion_matrix = jnp.diag(jnp.sqrt(2.0 * system.kbt / gamma))
 
     def solve_one(x0: jnp.ndarray, key: jax.Array) -> jnp.ndarray:
-        bm, controller, adjoint, dt0 = _get_step_size_config(
-            step_size,
-            times,
-            shape=(system.n_dim,),
-            key=key,
-            levy_area=dfx.SpaceTimeLevyArea,
+        bm = step_config.get_brownian_path(
+            times, shape=(system.n_dim,), key=key, levy_area=dfx.SpaceTimeLevyArea
         )
 
         # dx = (F(x) / gamma) dt + sqrt(2 kB T / gamma) dW
@@ -313,13 +248,13 @@ def _run_many_overdamped_jit(
             solver=dfx.ShARK(),
             t0=0,
             t1=times[-1],
-            dt0=dt0,
+            dt0=step_config.get_initial_step(times),
             y0=x0,
             args=None,
-            stepsize_controller=controller,
+            stepsize_controller=step_config.get_controller(times),
             saveat=dfx.SaveAt(ts=times),
             max_steps=None,
-            adjoint=adjoint,
+            adjoint=step_config.adjoint,
         )
         return sol.ys
 
@@ -331,7 +266,7 @@ def solve_many_overdamped[S: CanonicalSystem](
     time_span: TimeSpan,
     initial_conditions: tuple[jnp.ndarray, jnp.ndarray],
     *,
-    step_size: StepSize = DEFAULT_STEP_SIZE,
+    step_config: StepConfig = DEFAULT_STEP_CONFIG,
     _key: jax.Array,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """Solve an ensemble of overdamped Langevin trajectories in parallel via jax.vmap."""
@@ -343,7 +278,7 @@ def solve_many_overdamped[S: CanonicalSystem](
 
     keys = jax.random.split(_key, n_run)
     xs_batch = _run_many_overdamped_jit(
-        system.as_canonical(), initial_conditions[0], keys, times, step_size
+        system.as_canonical(), initial_conditions[0], keys, times, step_config
     )
 
     xs_batch = jnp.transpose(xs_batch, (0, 2, 1))

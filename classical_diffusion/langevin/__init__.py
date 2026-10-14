@@ -1,6 +1,6 @@
 """Langevin Simulations of a Physical System."""
 
-from classical_diffusion.jax.langevin import Adaptive, FixedStep, StepSize
+from classical_diffusion.jax.langevin import Adaptive, FixedStep, StepConfig
 from classical_diffusion.langevin._analysis import (
     breakdown_ballistic_trajectory,
     get_effective_mass,
@@ -72,7 +72,7 @@ __all__ = [
     "PeriodicSystem1D",
     "PeriodicSystemFCC",
     "SingleLangevinSimulationResult",
-    "StepSize",
+    "StepConfig",
     "System",
     "breakdown_ballistic_trajectory",
     "get_characteristic_friction_time",

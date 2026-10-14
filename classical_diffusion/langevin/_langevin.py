@@ -10,8 +10,8 @@ import scipy
 import sympy as sp
 
 from classical_diffusion.jax.langevin import (
-    DEFAULT_STEP_SIZE,
-    StepSize,
+    DEFAULT_STEP_CONFIG,
+    StepConfig,
 )
 from classical_diffusion.jax.langevin import (
     solve_many as solve_many_jax,
@@ -105,13 +105,6 @@ class LangevinSimulationResult[S: System](SimulationResult[S]):
             ),
             system=results_list[0].system,
         )
-
-
-def _step_size_suffix(step_size: StepSize) -> str:
-    """Get the suffix of a cache path, which is empty for the default step size."""
-    if step_size == DEFAULT_STEP_SIZE:
-        return ""
-    return f"_{type(step_size).__name__}_{hash(step_size)}"
 
 
 def _convert_time_span(
@@ -234,11 +227,11 @@ def _solve_many_path[S: System](
     time_span: TimeSpan,
     initial_conditions: tuple[np.ndarray, np.ndarray],
     *,
-    step_size: StepSize = DEFAULT_STEP_SIZE,
+    step_config: StepConfig = DEFAULT_STEP_CONFIG,
     _key: jax.Array | None = None,
 ) -> Path:
     return Path(
-        f"{hash(system)}_{hash(time_span)}_{hash_array(initial_conditions)}{_step_size_suffix(step_size)}.npz"
+        f"{hash(system)}_{hash(time_span)}_{hash_array(initial_conditions)}_{hash(step_config)}.npz"
     )
 
 
@@ -251,7 +244,7 @@ def solve_many[S: System](
         np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
     ],
     *,
-    step_size: StepSize = DEFAULT_STEP_SIZE,
+    step_config: StepConfig = DEFAULT_STEP_CONFIG,
     _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of ULD Langevin trajectories in parallel via jax.vmap."""
@@ -267,7 +260,7 @@ def solve_many[S: System](
         normalized_system,
         _convert_time_span(time_span, system.units, normalized_system.units),
         (xs0_jax, ps0_jax),
-        step_size=step_size,
+        step_config=step_config,
         _key=_get_key(_key),
     )
 
@@ -286,11 +279,11 @@ def _solve_single_path[S: System](
     time_span: TimeSpan,
     initial_condition: tuple[np.ndarray, np.ndarray],
     *,
-    step_size: StepSize = DEFAULT_STEP_SIZE,
+    step_config: StepConfig = DEFAULT_STEP_CONFIG,
     _key: jax.Array | None = None,
 ) -> Path:
     return Path(
-        f"{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{hash_array(initial_condition)}{_step_size_suffix(step_size)}.npz"
+        f"{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{hash_array(initial_condition)}_{hash(step_config)}.npz"
     )
 
 
@@ -303,7 +296,7 @@ def solve_single[S: System](
         np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
     ],
     *,
-    step_size: StepSize = DEFAULT_STEP_SIZE,
+    step_config: StepConfig = DEFAULT_STEP_CONFIG,
     _key: jax.Array | None = None,
 ) -> SingleLangevinSimulationResult[S]:
     """Solve the ULD Langevin equation for a single trajectory via vmap."""
@@ -314,7 +307,7 @@ def solve_single[S: System](
             np.array([initial_condition[0]]),
             np.array([initial_condition[1]]),
         ),
-        step_size=step_size,
+        step_config=step_config,
         _key=_key,
     )[0]
 
@@ -324,12 +317,12 @@ def _solve_ensemble_path[S: System](
     time_span: TimeSpan,
     n_samples: int,
     *,
-    step_size: StepSize = DEFAULT_STEP_SIZE,
+    step_config: StepConfig = DEFAULT_STEP_CONFIG,
     energy_range: tuple[float, float] = (-np.inf, np.inf),
     _key: jax.Array | None = None,
 ) -> Path:
     return Path(
-        f"solve_ensemble_{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}_{energy_range[0]}_{energy_range[1]}{_step_size_suffix(step_size)}.npz"
+        f"solve_ensemble_{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}_{energy_range[0]}_{energy_range[1]}_{hash(step_config)}.npz"
     )
 
 
@@ -340,7 +333,7 @@ def solve_ensemble[S: System](
     time_span: TimeSpan,
     n_samples: int,
     *,
-    step_size: StepSize = DEFAULT_STEP_SIZE,
+    step_config: StepConfig = DEFAULT_STEP_CONFIG,
     energy_range: tuple[float, float] = (-np.inf, np.inf),
     _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
@@ -359,7 +352,7 @@ def solve_ensemble[S: System](
             ),
             _key=_key,
         ),
-        step_size=step_size,
+        step_config=step_config,
         _key=_key,
     ).with_units(system.units)
     return LangevinSimulationResult[S](
@@ -498,11 +491,11 @@ def _solve_many_overdamped_path[S: System](
         np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
     ],
     *,
-    step_size: StepSize = DEFAULT_STEP_SIZE,
+    step_config: StepConfig = DEFAULT_STEP_CONFIG,
     _key: jax.Array | None = None,
 ) -> Path:
     return Path(
-        f"overdamped_{hash(system)}_{hash(time_span)}_{hash_array(initial_conditions)}{_step_size_suffix(step_size)}.npz"
+        f"overdamped_{hash(system)}_{hash(time_span)}_{hash_array(initial_conditions)}_{hash(step_config)}.npz"
     )
 
 
@@ -515,7 +508,7 @@ def solve_many_overdamped[S: System](
         np.ndarray[Any, np.dtype[np.floating]], np.ndarray[Any, np.dtype[np.floating]]
     ],
     *,
-    step_size: StepSize = DEFAULT_STEP_SIZE,
+    step_config: StepConfig = DEFAULT_STEP_CONFIG,
     _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of overdamped Langevin trajectories in parallel via jax.vmap."""
@@ -535,7 +528,7 @@ def solve_many_overdamped[S: System](
                 )
             ),
         ),
-        step_size=step_size,
+        step_config=step_config,
         _key=_get_key(_key),
     )
 
@@ -554,12 +547,12 @@ def _solve_ensemble_overdamped_path[S: System](
     time_span: TimeSpan,
     n_samples: int,
     *,
-    step_size: StepSize = DEFAULT_STEP_SIZE,
+    step_config: StepConfig = DEFAULT_STEP_CONFIG,
     energy_range: tuple[float, float] = (-np.inf, np.inf),
     _key: jax.Array | None = None,
 ) -> Path:
     return Path(
-        f"overdamped_ensemble_{hash(system)}_{hash(time_span)}_{n_samples}_{energy_range[0]}_{energy_range[1]}{_step_size_suffix(step_size)}.npz"
+        f"overdamped_ensemble_{hash(system)}_{hash(time_span)}_{n_samples}_{energy_range[0]}_{energy_range[1]}_{hash(step_config)}.npz"
     )
 
 
@@ -570,7 +563,7 @@ def solve_ensemble_overdamped[S: System](
     time_span: TimeSpan,
     n_samples: int,
     *,
-    step_size: StepSize = DEFAULT_STEP_SIZE,
+    step_config: StepConfig = DEFAULT_STEP_CONFIG,
     energy_range: tuple[float, float] = (-np.inf, np.inf),
     _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
@@ -590,7 +583,7 @@ def solve_ensemble_overdamped[S: System](
             ),
             _key=_key,
         ),
-        step_size=step_size,
+        step_config=step_config,
         _key=_key,
     ).with_units(system.units)
 
