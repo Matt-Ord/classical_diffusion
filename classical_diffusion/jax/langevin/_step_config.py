@@ -22,7 +22,7 @@ class StepConfig(ABC):
         """The adjoint of the solve."""
 
     @abstractmethod
-    def get_brownian_path(
+    def brownian_path(
         self,
         times: jnp.ndarray,
         *,
@@ -33,11 +33,11 @@ class StepConfig(ABC):
         """Get the Brownian path driving a solve, up to the last of the output times."""
 
     @abstractmethod
-    def get_controller(self, times: jnp.ndarray) -> dfx.AbstractStepSizeController:
+    def controller(self, times: jnp.ndarray) -> dfx.AbstractStepSizeController:
         """Get the step size controller, for the output times."""
 
     @abstractmethod
-    def get_initial_step(self, times: jnp.ndarray) -> Any:  # ruff: ignore[any-type]
+    def initial_step(self, times: jnp.ndarray) -> Any:  # ruff: ignore[any-type]
         """Get the initial step size, for the output times."""
 
     @override
@@ -70,7 +70,7 @@ class Adaptive(StepConfig):
         return dfx.RecursiveCheckpointAdjoint()
 
     @override
-    def get_brownian_path(
+    def brownian_path(
         self,
         times: jnp.ndarray,
         *,
@@ -83,13 +83,13 @@ class Adaptive(StepConfig):
         )
 
     @override
-    def get_controller(self, times: jnp.ndarray) -> dfx.AbstractStepSizeController:
+    def controller(self, times: jnp.ndarray) -> dfx.AbstractStepSizeController:
         return dfx.ClipStepSizeController(
             dfx.PIDController(rtol=self.rtol, atol=self.atol), step_ts=times
         )
 
     @override
-    def get_initial_step(self, times: jnp.ndarray) -> Any:
+    def initial_step(self, times: jnp.ndarray) -> Any:
         return times[1] - times[0]
 
 
@@ -115,7 +115,7 @@ class FixedStep(StepConfig):
         return dfx.ForwardMode()
 
     @override
-    def get_brownian_path(
+    def brownian_path(
         self,
         times: jnp.ndarray,
         *,
@@ -127,11 +127,11 @@ class FixedStep(StepConfig):
         return dfx.UnsafeBrownianPath(shape=shape, key=key, levy_area=levy_area)
 
     @override
-    def get_controller(self, times: jnp.ndarray) -> dfx.AbstractStepSizeController:
+    def controller(self, times: jnp.ndarray) -> dfx.AbstractStepSizeController:
         return dfx.ConstantStepSize()
 
     @override
-    def get_initial_step(self, times: jnp.ndarray) -> Any:
+    def initial_step(self, times: jnp.ndarray) -> Any:
         spacing = times[1] - times[0]
         return spacing / jnp.ceil(spacing / self.step_size)
 
