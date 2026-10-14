@@ -146,7 +146,7 @@ def _run_langevin_ensemble_jit(  # ruff: ignore[too-many-arguments]
     def solve_one(
         x0: jnp.ndarray, p0: jnp.ndarray, key: jax.Array
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        bm = step_config.get_brownian_path(
+        bm = step_config.brownian_path(
             times, shape=(system.n_dim,), key=key, levy_area=dfx.SpaceTimeTimeLevyArea
         )
 
@@ -159,10 +159,10 @@ def _run_langevin_ensemble_jit(  # ruff: ignore[too-many-arguments]
             solver=dfx.ALIGN(),
             t0=0,
             t1=times[-1],
-            dt0=step_config.get_initial_step(times),
+            dt0=step_config.initial_step(times),
             y0=(x0, p0),
             args=None,
-            stepsize_controller=step_config.get_controller(times),
+            stepsize_controller=step_config.controller(times),
             saveat=dfx.SaveAt(ts=times),
             max_steps=100_000_000,
             adjoint=step_config.adjoint,
@@ -232,7 +232,7 @@ def _run_many_overdamped_jit(
     diffusion_matrix = jnp.diag(jnp.sqrt(2.0 * system.kbt / gamma))
 
     def solve_one(x0: jnp.ndarray, key: jax.Array) -> jnp.ndarray:
-        bm = step_config.get_brownian_path(
+        bm = step_config.brownian_path(
             times, shape=(system.n_dim,), key=key, levy_area=dfx.SpaceTimeLevyArea
         )
 
@@ -248,10 +248,10 @@ def _run_many_overdamped_jit(
             solver=dfx.ShARK(),
             t0=0,
             t1=times[-1],
-            dt0=step_config.get_initial_step(times),
+            dt0=step_config.initial_step(times),
             y0=x0,
             args=None,
-            stepsize_controller=step_config.get_controller(times),
+            stepsize_controller=step_config.controller(times),
             saveat=dfx.SaveAt(ts=times),
             max_steps=None,
             adjoint=step_config.adjoint,
