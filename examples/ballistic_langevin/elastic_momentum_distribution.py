@@ -173,7 +173,7 @@ def _plot_elastic_isf_corrugated() -> None:
     )
     (gamma_line,) = ax.plot(times, gamma_isf, color=CAM_BLUE.dark)
     gamma_line.set_linestyle("--")
-    gamma_line.set_label("gamma")
+    gamma_line.set_label("approximate")
 
     ax.set_xlim(0, 2 / system.gamma)
     ax.set_ylim(0.6, 1)
