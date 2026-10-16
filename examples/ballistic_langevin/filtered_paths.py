@@ -35,7 +35,6 @@ from classical_diffusion.util import cache_base_path
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
-    from matplotlib.lines import Line2D
 
 
 def _annotate_bridge_site_energy(
@@ -209,17 +208,17 @@ def _plot_filtered_ballistic_trajectory_1d() -> None:
     fig.savefig("examples/ballistic_langevin/filtered_paths.1d_p.pdf")
 
 
-def _add_direction_arrows(
+def _add_direction_arrows(  # ruff:ignore[too-many-arguments]
     ax: Axes,
-    line: Line2D,
+    path: tuple[np.ndarray, np.ndarray],
     x_targets: list[float],
     *,
+    color: str,
     n_crossings: int = 1,
     reverse: bool = False,
 ) -> None:
-    """Add arrows along a phase space line, pointing in the direction of travel."""
-    x_data = np.asarray(line.get_xdata())
-    p_data = np.asarray(line.get_ydata())
+    """Add arrows along a phase space path, pointing in the direction of travel."""
+    x_data, p_data = path
     if reverse:
         x_data, p_data = x_data[::-1], p_data[::-1]
     step = max(len(x_data) // 400, 1)
@@ -236,7 +235,7 @@ def _add_direction_arrows(
                 xytext=(x_data[i], p_data[i]),
                 arrowprops={
                     "arrowstyle": "-|>",
-                    "color": line.get_color(),
+                    "color": color,
                     "lw": 0,
                     "mutation_scale": 12,
                 },
@@ -296,18 +295,22 @@ def _plot_phase_space_trajectories_1d() -> None:
     escaped_targets = [-0.25 * system.delta_x, 0.25 * system.delta_x]
     left, right, trapped = result
     for res in (left, right):
-        (line,) = ax.plot(
-            *_wrap_into_cell(res.x_points[0], res.p_points[0], system.delta_x),
-            color=CAM_BLUE.warm,
-        )
-        _add_direction_arrows(ax, line, escaped_targets)
+        path = _wrap_into_cell(res.x_points[0], res.p_points[0], system.delta_x)
+        ax.plot(*path, color=CAM_BLUE.warm)
+        _add_direction_arrows(ax, path, escaped_targets, color=CAM_BLUE.warm)
 
     # The trapped trajectory is drawn with arrows in both directions (cw and ccw)
-    (line,) = ax.plot(trapped.x_points[0], trapped.p_points[0], color=CAM_CHERRY.base)
-    _add_direction_arrows(ax, line, [0.05 * system.delta_x], n_crossings=2)
-    _add_direction_arrows(
-        ax, line, [-0.05 * system.delta_x], n_crossings=2, reverse=True
-    )
+    path = (trapped.x_points[0], trapped.p_points[0])
+    ax.plot(*path, color=CAM_CHERRY.base)
+    for x_target, reverse in ((0.05, False), (-0.05, True)):
+        _add_direction_arrows(
+            ax,
+            path,
+            [x_target * system.delta_x],
+            color=CAM_CHERRY.base,
+            n_crossings=2,
+            reverse=reverse,
+        )
 
     ax.set_xlim(-system.delta_x / 2, system.delta_x / 2)
     ax.set_xticks(np.linspace(-0.5, 0.5, 5) * system.delta_x)
