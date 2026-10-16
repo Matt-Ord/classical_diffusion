@@ -11,6 +11,7 @@ from classical_diffusion.langevin import (
     PeriodicSystem1D,
     System,
     breakdown_ballistic_trajectory,
+    get_under_barrier_probability,
     solve_ensemble_ballistic,
 )
 from classical_diffusion.plot import CAM_BLUE, get_fancy_figure
@@ -61,7 +62,7 @@ def _truncate_results[S: System](
 
 
 def _simulate_elastic_trajectories[S: PeriodicSystem1D](
-    system: S, *, n_samples: int
+    system: S, *, n_samples: int, escaping_only: bool = True
 ) -> LangevinSimulationResult[S]:
     # Only trajectories above the barrier escape, and contribute a
     # non-zero elastic momentum
@@ -69,7 +70,7 @@ def _simulate_elastic_trajectories[S: PeriodicSystem1D](
         system,
         TimeSpan(t_start=-4 / system.gamma, t_end=4 / system.gamma, n_steps=2000),
         n_samples=n_samples,
-        energy_range=(system.barrier_energy, np.inf),
+        energy_range=(system.barrier_energy if escaping_only else -np.inf, np.inf),
     )
     elastic, _ = breakdown_ballistic_trajectory(
         result, filter_timescale=1 / system.gamma
@@ -142,11 +143,16 @@ def _plot_elastic_momentum_distribution_corrugated() -> None:
 
 
 def _plot_elastic_isf_corrugated() -> None:
-    # The ISF of the elastic trajectories is the cosine transform of the
-    # distribution of elastic momentum. The gamma distribution which matches
-    # <p_e> and <p_e^2> has the analytic transform Re[(1 - i dk t theta / m)^-k]
+    # Trapped trajectories have no elastic momentum, and contribute a constant
+    # 1 - A to the ISF. The ISF of the escaping trajectories is the cosine
+    # transform of the distribution of elastic momentum. The gamma distribution
+    # which matches <p_e> and <p_e^2> has the analytic transform
+    # Re[(1 - i dk t theta / m)^-k], so the ISF is approximately
+    # (1 - A) + A Re[(1 - i dk t theta / m)^-k]
     system = _with_trajectory_units(SODIUM_COPPER_SYSTEM_1D)
-    elastic = _simulate_elastic_trajectories(system, n_samples=30000)
+    elastic = _simulate_elastic_trajectories(
+        system, n_samples=30000, escaping_only=False
+    )
     # 0.43 A^-1, measured in units of 1 / delta_x
     delta_k = 0.43e10 * SODIUM_COPPER_SYSTEM_1D.delta_x
 
@@ -158,16 +164,20 @@ def _plot_elastic_isf_corrugated() -> None:
     fill.set_color(CAM_BLUE.warm)
     line.set_label("simulation")
 
-    shape, scale = _get_gamma_parameters(_get_elastic_momentum(elastic))
+    escaping = _simulate_elastic_trajectories(system, n_samples=30000)
+    shape, scale = _get_gamma_parameters(_get_elastic_momentum(escaping))
+    escaping_fraction = 1 - get_under_barrier_probability(system, system.barrier_energy)
     times = np.linspace(0, 2 / system.gamma, 400)
-    gamma_isf = np.real((1 - 1j * delta_k * times * scale / system.m) ** (-shape))
+    gamma_isf = (1 - escaping_fraction) + escaping_fraction * np.real(
+        (1 - 1j * delta_k * times * scale / system.m) ** (-shape)
+    )
     (gamma_line,) = ax.plot(times, gamma_isf, color=CAM_BLUE.dark)
     gamma_line.set_linestyle("--")
     gamma_line.set_label("gamma")
 
     ax.set_xlim(0, 2 / system.gamma)
     ax.set_xlabel(r"$t \gamma$")
-    ax.set_ylabel(r"$I_e(\Delta k, t)$")
+    ax.set_ylabel(r"$I(\Delta k, t)$")
     ax.legend(handles=[line, gamma_line])
     fig.savefig("examples/ballistic_langevin/elastic_momentum_distribution.isf.pdf")
 
@@ -179,8 +189,9 @@ if __name__ == "__main__":
     # filter with timescale 1 / gamma to ballistic trajectories (see filtered_paths).
     #
     # The corrugated distribution is compared to a gamma distribution, with
-    # parameters chosen to match <p_e> and <p_e^2>, and the elastic ISF is
-    # compared to the cosine transform of the gamma distribution.
+    # parameters chosen to match <p_e> and <p_e^2>, and the ISF of the elastic
+    # trajectories is compared to (1 - A) + A times the cosine transform of
+    # the gamma distribution, where A is the fraction of escaping trajectories.
     with cache_base_path(Path("examples/data")):
         _plot_elastic_momentum_distribution_flat()
         _plot_elastic_momentum_distribution_corrugated()
