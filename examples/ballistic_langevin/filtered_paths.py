@@ -13,20 +13,29 @@ from classical_diffusion.langevin import (
     SODIUM_COPPER_SYSTEM_1D,
     SODIUM_COPPER_SYSTEM_2D,
     LangevinSimulationResult,
+    PeriodicSystem1D,
     PeriodicSystemFCC,
     System,
     breakdown_ballistic_trajectory,
     plot_periodic_potential_1d,
     plot_periodic_potential_fcc,
     solve_ensemble_ballistic,
+    solve_many_ballistic,
 )
-from classical_diffusion.plot import get_fancy_figure, get_figure, get_two_panel_figure
+from classical_diffusion.plot import (
+    CAM_BLUE,
+    CAM_CHERRY,
+    get_fancy_figure,
+    get_figure,
+    get_two_panel_figure,
+)
 from classical_diffusion.simulation import TimeSpan
 from classical_diffusion.system import unit_with_trajectory_scale
 from classical_diffusion.util import cache_base_path
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
+    from matplotlib.lines import Line2D
 
 
 def _annotate_bridge_site_energy(
@@ -200,6 +209,111 @@ def _plot_filtered_ballistic_trajectory_1d() -> None:
     fig.savefig("examples/ballistic_langevin/filtered_paths.1d_p.pdf")
 
 
+def _add_direction_arrows(
+    line: Line2D,
+    x_targets: list[float],
+    *,
+    n_crossings: int = 1,
+    reverse: bool = False,
+) -> None:
+    """Add arrows along a phase space line, pointing in the direction of travel."""
+    x_data = np.asarray(line.get_xdata())
+    p_data = np.asarray(line.get_ydata())
+    if reverse:
+        x_data, p_data = x_data[::-1], p_data[::-1]
+    step = max(len(x_data) // 400, 1)
+    for x_target in x_targets:
+        side = np.sign(x_data - x_target)
+        # Ignore the breaks in the line, where x_data is nan
+        crossings = np.flatnonzero((side[1:] * side[:-1]) < 0)
+        # Skip the initial point, where every trajectory starts
+        crossings = crossings[(crossings > step) & (crossings < len(x_data) - step)]
+        for i in crossings[:n_crossings]:
+            line.axes.annotate(
+                "",
+                xy=(x_data[i + step], p_data[i + step]),
+                xytext=(x_data[i], p_data[i]),
+                arrowprops={
+                    "arrowstyle": "-|>",
+                    "color": line.get_color(),
+                    "lw": 0,
+                    "mutation_scale": 12,
+                },
+            )
+
+
+def _wrap_into_cell(
+    x_points: np.ndarray,
+    p_points: np.ndarray,
+    delta_x: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Wrap x into [-delta_x / 2, delta_x / 2), breaking the line at each wrap."""
+    x_wrapped = np.mod(x_points + delta_x / 2, delta_x) - delta_x / 2
+    breaks = np.flatnonzero(np.abs(np.diff(x_wrapped)) > delta_x / 2) + 1
+    return (
+        np.insert(x_wrapped, breaks, np.nan),
+        np.insert(p_points, breaks, np.nan),
+    )
+
+
+def _plot_separatrix_1d(system: PeriodicSystem1D, ax: Axes) -> None:
+    """Plot the separatrix E = E_b over a single period of the potential."""
+    x = np.linspace(-system.delta_x / 2, system.delta_x / 2, 1000)
+    potential = (
+        0.5 * system.barrier_energy * (1 - np.cos(2 * np.pi * x / system.delta_x))
+    )
+    separatrix = np.sqrt(2 * system.m * (system.barrier_energy - potential))
+    for sign in (1, -1):
+        ax.plot(x, sign * separatrix, color=CAM_BLUE.dark, linestyle="--", lw=1)
+
+
+def _plot_phase_space_trajectories_1d() -> None:
+    """Plot a left escaped, right escaped and oscillating trajectory in (x, p)."""
+    system = SODIUM_COPPER_SYSTEM_1D
+    system = system.with_units(
+        unit_with_trajectory_scale(
+            system.units,
+            length=system.delta_x,
+            time=1 / system.gamma,
+            momentum=np.sqrt(system.m * system.kbt),
+        )
+    )
+    # All trajectories start in the hollow site at x = 0, where V(x) = 0.
+    # Escaped trajectories have energy above the barrier, the oscillating
+    # trajectory is trapped below it.
+    escaped_p = np.sqrt(2 * system.m * system.barrier_energy * 1.4)
+    trapped_p = np.sqrt(2 * system.m * system.barrier_energy * 0.6)
+    result = solve_many_ballistic(
+        system,
+        TimeSpan(t_end=1 / system.gamma, n_steps=4000),
+        (np.zeros((3, 1)), np.array([[-escaped_p], [escaped_p], [trapped_p]])),
+    )
+
+    fig, ax = get_fancy_figure()
+    _plot_separatrix_1d(system, ax)
+
+    escaped_targets = [-0.25 * system.delta_x, 0.25 * system.delta_x]
+    left, right, trapped = result
+    for res in (left, right):
+        (line,) = ax.plot(
+            *_wrap_into_cell(res.x_points[0], res.p_points[0], system.delta_x),
+            color=CAM_BLUE.warm,
+        )
+        _add_direction_arrows(line, escaped_targets)
+
+    # The trapped trajectory is drawn with arrows in both directions (cw and ccw)
+    (line,) = ax.plot(trapped.x_points[0], trapped.p_points[0], color=CAM_CHERRY.base)
+    _add_direction_arrows(line, [0.05 * system.delta_x], n_crossings=2)
+    _add_direction_arrows(line, [-0.05 * system.delta_x], n_crossings=2, reverse=True)
+
+    ax.set_xlim(-system.delta_x / 2, system.delta_x / 2)
+    ax.set_xticks(np.linspace(-0.5, 0.5, 5) * system.delta_x)
+    ax.set_xlabel(r"$x / \Delta x$")
+    ax.set_ylabel(r"$p / \sqrt{m k_B T}$")
+
+    fig.savefig("examples/ballistic_langevin/filtered_paths.1d_phase_space.pdf")
+
+
 def _plot_filtered_ballistic_trajectory_2d() -> None:
 
     system = SODIUM_COPPER_SYSTEM_2D
@@ -262,4 +376,5 @@ if __name__ == "__main__":
     # at t = 0.
     with cache_base_path(Path("examples/data")):
         _plot_filtered_ballistic_trajectory_1d()
+        _plot_phase_space_trajectories_1d()
         _plot_filtered_ballistic_trajectory_2d()
