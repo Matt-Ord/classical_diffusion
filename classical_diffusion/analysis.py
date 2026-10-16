@@ -385,3 +385,29 @@ def plot_hop_time_distribution_histogram(
     ax.set_ylabel("Probability Density")
 
     return fig, ax, histogram
+
+
+def plot_momentum_histogram(
+    p: np.ndarray[Any, np.dtype[np.floating]],
+    *,
+    ax: Axes | None = None,
+    n_bins: int | None = None,
+    p_range: tuple[float, float] | None = None,
+) -> tuple[Figure, Axes, Polygon]:
+    """Plot a histogram of sampled momenta, in the units of the system."""
+    fig, ax = get_figure(ax)
+
+    p_range = p_range or (float(np.min(p)), float(np.max(p)))
+    _bin_counts, _bin_edges, bars = ax.hist(
+        p.ravel(),
+        bins=n_bins if n_bins is not None else int(np.sqrt(p.size)),
+        density=True,
+        range=p_range,
+        histtype="stepfilled",
+    )
+    (histogram,) = cast("list[Polygon]", bars)
+    ax.set_xlabel("p")
+    ax.set_ylabel("Probability Density")
+    ax.set_xlim(*p_range)
+
+    return fig, ax, histogram
