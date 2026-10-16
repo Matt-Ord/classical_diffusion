@@ -21,9 +21,9 @@ if TYPE_CHECKING:
 
     from matplotlib.axes import Axes
     from matplotlib.collections import PolyCollection
-    from matplotlib.container import BarContainer
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
+    from matplotlib.patches import Polygon
 
     from classical_diffusion.langevin import SingleLangevinSimulationResult
     from classical_diffusion.plot import Measure
@@ -366,20 +366,22 @@ def plot_hop_time_distribution_histogram(
     *,
     ax: Axes | None = None,
     n_bins: int | None = None,
-) -> tuple[Figure, Axes, tuple[Line2D, BarContainer]]:
-    """Plot a histogram of sampled momentum."""
+) -> tuple[Figure, Axes, Polygon]:
+    """Plot a histogram of the hop times."""
     fig, ax = get_figure(ax)
 
     hop_times = get_hop_times(result, process_points=process_points)
 
     n_bins = int(np.sqrt(hop_times.size) / 4) if n_bins is None else n_bins
     bins = np.quantile(hop_times, np.linspace(0, 1, n_bins + 1))
-    _bin_counts, _bin_edges, bars = ax.hist(hop_times, bins=bins, density=True)  # ty: ignore[invalid-argument-type]
-
-    bars = cast("BarContainer", bars)
-    for b in bars:
-        b.set_edgecolor(b.get_facecolor())
+    _bin_counts, _bin_edges, bars = ax.hist(
+        hop_times,
+        bins=bins,  # ty: ignore[invalid-argument-type]
+        density=True,
+        histtype="stepfilled",
+    )
+    (histogram,) = cast("list[Polygon]", bars)
     ax.set_xlabel("hop time")
     ax.set_ylabel("Probability Density")
 
-    return fig, ax, bars
+    return fig, ax, histogram
