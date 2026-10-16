@@ -210,6 +210,7 @@ def _plot_filtered_ballistic_trajectory_1d() -> None:
 
 
 def _add_direction_arrows(
+    ax: Axes,
     line: Line2D,
     x_targets: list[float],
     *,
@@ -229,7 +230,7 @@ def _add_direction_arrows(
         # Skip the initial point, where every trajectory starts
         crossings = crossings[(crossings > step) & (crossings < len(x_data) - step)]
         for i in crossings[:n_crossings]:
-            line.axes.annotate(
+            ax.annotate(
                 "",
                 xy=(x_data[i + step], p_data[i + step]),
                 xytext=(x_data[i], p_data[i]),
@@ -299,12 +300,14 @@ def _plot_phase_space_trajectories_1d() -> None:
             *_wrap_into_cell(res.x_points[0], res.p_points[0], system.delta_x),
             color=CAM_BLUE.warm,
         )
-        _add_direction_arrows(line, escaped_targets)
+        _add_direction_arrows(ax, line, escaped_targets)
 
     # The trapped trajectory is drawn with arrows in both directions (cw and ccw)
     (line,) = ax.plot(trapped.x_points[0], trapped.p_points[0], color=CAM_CHERRY.base)
-    _add_direction_arrows(line, [0.05 * system.delta_x], n_crossings=2)
-    _add_direction_arrows(line, [-0.05 * system.delta_x], n_crossings=2, reverse=True)
+    _add_direction_arrows(ax, line, [0.05 * system.delta_x], n_crossings=2)
+    _add_direction_arrows(
+        ax, line, [-0.05 * system.delta_x], n_crossings=2, reverse=True
+    )
 
     ax.set_xlim(-system.delta_x / 2, system.delta_x / 2)
     ax.set_xticks(np.linspace(-0.5, 0.5, 5) * system.delta_x)
