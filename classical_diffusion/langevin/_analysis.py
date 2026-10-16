@@ -21,9 +21,9 @@ if TYPE_CHECKING:
 
     from matplotlib.axes import Axes
     from matplotlib.collections import QuadMesh
-    from matplotlib.container import BarContainer
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
+    from matplotlib.patches import Polygon
 
 
 def _get_sampled_kinetic_energies[T: LangevinSimulationResult](
@@ -51,7 +51,7 @@ def plot_kinetic_probability[T: LangevinSimulationResult](
     ax: Axes | None = None,
     bins: int = 100,
     max_energy: float = 4.0,
-) -> tuple[Figure, Axes, tuple[Line2D, BarContainer]]:
+) -> tuple[Figure, Axes, tuple[Line2D, Polygon]]:
     """Plot the kinetic probabilities for the sample."""
     fig, ax = get_figure(ax)
 
@@ -66,6 +66,7 @@ def plot_kinetic_probability[T: LangevinSimulationResult](
         color="C0",
         label="Simulation Data",
         range=energy_range,
+        histtype="stepfilled",
     )
     (bin_edges[:-1] + bin_edges[1:]) / 2
 
@@ -91,7 +92,8 @@ def plot_kinetic_probability[T: LangevinSimulationResult](
     ax.legend()
     ax.set_yscale("log")
 
-    return fig, ax, (line0, cast("BarContainer", bars))
+    (histogram,) = cast("list[Polygon]", bars)
+    return fig, ax, (line0, histogram)
 
 
 def _get_energy(
@@ -177,7 +179,7 @@ def plot_x_distribution_histogram(
     *,
     ax: Axes | None = None,
     n_bins: int | None = None,
-) -> tuple[Figure, Axes, tuple[Line2D, BarContainer]]:
+) -> tuple[Figure, Axes, Polygon]:
     """Plot a histogram of sampled positions."""
     fig, ax = get_figure(ax)
 
@@ -189,14 +191,13 @@ def plot_x_distribution_histogram(
         bins=n_bins or int(np.sqrt(result.x_points.size)),
         density=True,
         alpha=1.0,
+        histtype="stepfilled",
     )
-    bars = cast("BarContainer", bars)
-    for b in bars:
-        b.set_edgecolor(b.get_facecolor())
+    (histogram,) = cast("list[Polygon]", bars)
     ax.set_xlabel("x")
     ax.set_ylabel("Probability Density")
 
-    return fig, ax, bars
+    return fig, ax, histogram
 
 
 def plot_x_distribution_kde(
@@ -258,7 +259,7 @@ def plot_p_distribution_histogram(
     *,
     ax: Axes | None = None,
     n_bins: int | None = None,
-) -> tuple[Figure, Axes, tuple[Line2D, BarContainer]]:
+) -> tuple[Figure, Axes, Polygon]:
     """Plot a histogram of sampled momentum."""
     fig, ax = get_figure(ax)
 
@@ -270,14 +271,13 @@ def plot_p_distribution_histogram(
         bins=n_bins or int(np.sqrt(result.p_points.size)),
         density=True,
         alpha=1.0,
+        histtype="stepfilled",
     )
-    bars = cast("BarContainer", bars)
-    for b in bars:
-        b.set_edgecolor(b.get_facecolor())
+    (histogram,) = cast("list[Polygon]", bars)
     ax.set_xlabel("p")
     ax.set_ylabel("Probability Density")
 
-    return fig, ax, bars
+    return fig, ax, histogram
 
 
 def _get_force_fn(
@@ -315,7 +315,7 @@ def plot_force_distribution_histogram[S: System](
     ax: Axes | None = None,
     idx: int = 0,
     n_bins: int | None = None,
-) -> tuple[Figure, Axes, tuple[Line2D, BarContainer]]:
+) -> tuple[Figure, Axes, tuple[Line2D, Polygon]]:
     """Plot a histogram of the stochastic force distribution."""
     fig, ax = get_figure(ax)
 
@@ -340,10 +340,9 @@ def plot_force_distribution_histogram[S: System](
         density=True,
         alpha=1,
         range=(x[0], x[-1]),
+        histtype="stepfilled",
     )
-    bars = cast("BarContainer", b)
-    for bar in bars:
-        bar.set_edgecolor(bar.get_facecolor())
+    (histogram,) = cast("list[Polygon]", b)
 
     ax.set_title("Force Distribution")
     ax.set_xlabel("Force / N")
@@ -352,7 +351,7 @@ def plot_force_distribution_histogram[S: System](
     ax.legend()
     ax.set_xlim(x[0], x[-1])
 
-    return fig, ax, (line, bars)
+    return fig, ax, (line, histogram)
 
 
 def plot_phase_space_density(

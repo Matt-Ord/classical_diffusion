@@ -145,9 +145,10 @@ def _plot_xp_distributions_harmonic() -> None:
     fig.savefig("examples/distribution.1d_harmonic.p.pdf")
 
     fig, ax = get_fancy_figure()
-    _, _, (line0, bars) = plot_kinetic_probability(result=result, max_energy=6, ax=ax)
-    for patch in bars.patches:
-        patch.set_alpha(1)
+    _, _, (line0, histogram) = plot_kinetic_probability(
+        result=result, max_energy=6, ax=ax
+    )
+    histogram.set_alpha(1)
     ax.legend(
         loc="upper right",
         handles=[line0],
