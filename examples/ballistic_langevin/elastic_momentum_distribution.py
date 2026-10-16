@@ -176,6 +176,7 @@ def _plot_elastic_isf_corrugated() -> None:
     gamma_line.set_label("gamma")
 
     ax.set_xlim(0, 2 / system.gamma)
+    ax.set_ylim(0.6, 1)
     ax.set_xlabel(r"$t \gamma$")
     ax.set_ylabel(r"$I(\Delta k, t)$")
     ax.legend(handles=[line, gamma_line])
