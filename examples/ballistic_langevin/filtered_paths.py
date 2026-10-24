@@ -208,19 +208,16 @@ def _plot_filtered_ballistic_trajectory_1d() -> None:
     fig.savefig("examples/ballistic_langevin/filtered_paths.1d_p.pdf")
 
 
-def _add_direction_arrows(  # ruff:ignore[too-many-arguments]
+def _add_direction_arrows(
     ax: Axes,
     path: tuple[np.ndarray, np.ndarray],
     x_targets: list[float],
     *,
     color: str,
     n_crossings: int = 1,
-    reverse: bool = False,
 ) -> None:
     """Add arrows along a phase space path, pointing in the direction of travel."""
     x_data, p_data = path
-    if reverse:
-        x_data, p_data = x_data[::-1], p_data[::-1]
     step = max(len(x_data) // 400, 1)
     for x_target in x_targets:
         side = np.sign(x_data - x_target)
@@ -299,18 +296,17 @@ def _plot_phase_space_trajectories_1d() -> None:
         ax.plot(*path, color=CAM_BLUE.warm)
         _add_direction_arrows(ax, path, escaped_targets, color=CAM_BLUE.warm)
 
-    # The trapped trajectory is drawn with arrows in both directions (cw and ccw)
+    # The trapped trajectory circulates clockwise, moving right in the upper
+    # half (p > 0) and left in the lower half (p < 0)
     path = (trapped.x_points[0], trapped.p_points[0])
     ax.plot(*path, color=CAM_CHERRY.base)
-    for x_target, reverse in ((0.05, False), (-0.05, True)):
-        _add_direction_arrows(
-            ax,
-            path,
-            [x_target * system.delta_x],
-            color=CAM_CHERRY.base,
-            n_crossings=2,
-            reverse=reverse,
-        )
+    _add_direction_arrows(
+        ax,
+        path,
+        [-0.05 * system.delta_x, 0.05 * system.delta_x],
+        color=CAM_CHERRY.base,
+        n_crossings=2,
+    )
 
     ax.set_xlim(-system.delta_x / 2, system.delta_x / 2)
     ax.set_xticks(np.linspace(-0.5, 0.5, 5) * system.delta_x)
