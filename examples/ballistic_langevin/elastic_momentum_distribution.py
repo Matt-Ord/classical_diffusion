@@ -1,6 +1,8 @@
 from pathlib import Path
 
 import numpy as np
+from scipy.integrate import quad
+from scipy.special import ellipk
 from scipy.stats import gamma as gamma_distribution
 from scipy.stats import halfnorm
 
@@ -11,7 +13,6 @@ from classical_diffusion.langevin import (
     PeriodicSystem1D,
     System,
     breakdown_ballistic_trajectory,
-    get_under_barrier_probability,
     solve_ensemble_ballistic,
 )
 from classical_diffusion.plot import CAM_BLUE, get_fancy_figure
@@ -39,13 +40,57 @@ def _get_elastic_momentum(
     return np.abs(np.average(elastic.p_points[:, 0, :], axis=-1))
 
 
-def _get_gamma_parameters(
-    p: np.ndarray[tuple[int], np.dtype[np.floating]],
-) -> tuple[float, float]:
-    """Return the gamma (shape, scale) which match <p> and <p^2>."""
-    mean = float(np.average(p))
-    variance = float(np.average(p**2)) - mean**2
-    return mean**2 / variance, variance / mean
+def _get_exact_parameters(system: PeriodicSystem1D) -> tuple[float, float, float]:
+    """Return the exact dynamic fraction A, TST rate Gamma_TST and effective mass.
+
+    Each energy E = epsilon E_b is weighted by e^(-beta E) tau(E), where tau(E)
+    is the crossing time of a unit cell above the barrier and the half period
+    below it. In units of (Delta x / pi) sqrt(m / 2 E_b), the crossing time is
+    2 K(1 / epsilon) / sqrt(epsilon) and the half period is 2 K(epsilon).
+    """
+    u0 = system.barrier_energy / system.kbt
+    time_scale = (
+        system.delta_x / np.pi * np.sqrt(system.m / (2 * system.barrier_energy))
+    )
+
+    def crossing_time(epsilon: float) -> float:
+        return 2 * ellipk(1 / epsilon) / np.sqrt(epsilon)
+
+    def trapped(epsilon: float) -> float:
+        return np.exp(u0 * (1 - epsilon)) * 2 * ellipk(epsilon)
+
+    def escaping(x: float, power: int) -> float:
+        return np.exp(-u0 * x) * crossing_time(1 + x) ** power
+
+    # Each integral is scaled by E_b e^(-beta E_b), which cancels in every ratio
+    trapped_integral, _ = quad(trapped, 0, 1, limit=500)
+    escaping_integral, _ = quad(escaping, 0, np.inf, args=(1,), limit=500)
+    inverse_integral, _ = quad(escaping, 0, np.inf, args=(-1,), limit=500)
+    partition = escaping_integral + trapped_integral
+
+    dynamic_fraction = escaping_integral / partition
+    # Gamma_TST = k_B T e^(-beta E_b) / 2 Z_E
+    rate = system.kbt / (2 * system.barrier_energy * time_scale * partition)
+    # k_B T / m_eff = Delta x^2 / Z_E integral_(E_b)^infinity e^(-beta E) / tau(E)
+    effective_mass = (
+        system.kbt * time_scale**2 * partition / (system.delta_x**2 * inverse_integral)
+    )
+    return dynamic_fraction, rate, effective_mass
+
+
+def _get_gamma_parameters(system: PeriodicSystem1D) -> tuple[float, float, float]:
+    """Return A and the gamma (shape, scale) of the escaping trajectories.
+
+    The mean p_bar = 2 m Gamma_TST Delta x / A and the shape kappa are fixed by
+    the exact parameters, such that <p_e> = 2 m Gamma_TST Delta x and
+    <p_e^2> = m^2 k_B T / m_eff over every trajectory.
+    """
+    dynamic_fraction, rate, effective_mass = _get_exact_parameters(system)
+    mean = 2 * system.m * rate * system.delta_x / dynamic_fraction
+    shape = 1 / (
+        system.m**2 * system.kbt / (dynamic_fraction * effective_mass * mean**2) - 1
+    )
+    return dynamic_fraction, shape, mean / shape
 
 
 def _truncate_results[S: System](
@@ -114,8 +159,8 @@ def _plot_elastic_momentum_distribution_flat() -> None:
 
 def _plot_elastic_momentum_distribution_corrugated() -> None:
     # On a corrugated surface, slow crossings are exponentially rare, so the
-    # distribution is peaked away from zero. The gamma distribution is chosen
-    # to match the first two moments, <p_e> and <p_e^2>
+    # distribution is peaked away from zero. The gamma distribution is
+    # calculated from the exact A, Gamma_TST and m_eff
     system = _with_trajectory_units(SODIUM_COPPER_SYSTEM_1D)
     p_elastic = _get_elastic_momentum(
         _simulate_elastic_trajectories(system, n_samples=30000)
@@ -126,7 +171,7 @@ def _plot_elastic_momentum_distribution_corrugated() -> None:
     histogram.set_color(CAM_BLUE.warm)
     histogram.set_label("simulation")
 
-    shape, scale = _get_gamma_parameters(p_elastic)
+    _, shape, scale = _get_gamma_parameters(system)
     p = np.linspace(0, 4, 400)
     (line,) = ax.plot(
         p, gamma_distribution.pdf(p, shape, scale=scale), color=CAM_BLUE.dark
@@ -146,7 +191,7 @@ def _plot_elastic_isf_corrugated() -> None:
     # Trapped trajectories have no elastic momentum, and contribute a constant
     # 1 - A to the ISF. The ISF of the escaping trajectories is the cosine
     # transform of the distribution of elastic momentum. The gamma distribution
-    # which matches <p_e> and <p_e^2> has the analytic transform
+    # calculated from the exact A, Gamma_TST and m_eff has the analytic transform
     # Re[(1 - i dk t theta / m)^-k], so the ISF is approximately
     # (1 - A) + A Re[(1 - i dk t theta / m)^-k]
     system = _with_trajectory_units(SODIUM_COPPER_SYSTEM_1D)
@@ -164,9 +209,7 @@ def _plot_elastic_isf_corrugated() -> None:
     fill.set_color(CAM_BLUE.warm)
     line.set_label("simulation")
 
-    escaping = _simulate_elastic_trajectories(system, n_samples=30000)
-    shape, scale = _get_gamma_parameters(_get_elastic_momentum(escaping))
-    escaping_fraction = 1 - get_under_barrier_probability(system, system.barrier_energy)
+    escaping_fraction, shape, scale = _get_gamma_parameters(system)
     times = np.linspace(0, 2 / system.gamma, 400)
     gamma_isf = (1 - escaping_fraction) + escaping_fraction * np.real(
         (1 - 1j * delta_k * times * scale / system.m) ** (-shape)
@@ -190,7 +233,8 @@ if __name__ == "__main__":
     # filter with timescale 1 / gamma to ballistic trajectories (see filtered_paths).
     #
     # The corrugated distribution is compared to a gamma distribution, with
-    # parameters chosen to match <p_e> and <p_e^2>, and the ISF of the elastic
+    # parameters calculated from the exact dynamic fraction A, TST rate
+    # Gamma_TST and effective mass m_eff, and the ISF of the elastic
     # trajectories is compared to (1 - A) + A times the cosine transform of
     # the gamma distribution, where A is the fraction of escaping trajectories.
     with cache_base_path(Path("examples/data")):
