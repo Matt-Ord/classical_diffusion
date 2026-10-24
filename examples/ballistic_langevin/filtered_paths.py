@@ -303,7 +303,7 @@ def _plot_phase_space_trajectories_1d() -> None:
     _add_direction_arrows(
         ax,
         path,
-        [-0.05 * system.delta_x, 0.05 * system.delta_x],
+        [0.0],
         color=CAM_CHERRY.base,
         n_crossings=2,
     )
