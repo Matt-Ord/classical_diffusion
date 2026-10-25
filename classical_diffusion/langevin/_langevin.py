@@ -253,10 +253,7 @@ def solve_many[S: System](
     works for any system, but samples the noise from a virtual Brownian tree,
     which is slow. When performance matters, consider
     ``FixedStep(step_size=...)``, which samples the noise independently for
-    each step and is much faster. The step size is given in the natural units
-    of the simulation (see ``FixedStep``), and must be small enough to resolve
-    the fastest motion of the system, so check that the results do not change
-    when it is halved.
+    each step and is much faster.
     """
     normalized_system = system.with_units(_get_langevin_units(system)).as_canonical()
     xs0_jax = jnp.asarray(
@@ -315,10 +312,7 @@ def solve_single[S: System](
     works for any system, but samples the noise from a virtual Brownian tree,
     which is slow. When performance matters, consider
     ``FixedStep(step_size=...)``, which samples the noise independently for
-    each step and is much faster. The step size is given in the natural units
-    of the simulation (see ``FixedStep``), and must be small enough to resolve
-    the fastest motion of the system, so check that the results do not change
-    when it is halved.
+    each step and is much faster.
     """
     return solve_many.call_uncached(
         system,
@@ -363,10 +357,7 @@ def solve_ensemble[S: System](
     works for any system, but samples the noise from a virtual Brownian tree,
     which is slow. When performance matters, consider
     ``FixedStep(step_size=...)``, which samples the noise independently for
-    each step and is much faster. The step size is given in the natural units
-    of the simulation (see ``FixedStep``), and must be small enough to resolve
-    the fastest motion of the system, so check that the results do not change
-    when it is halved.
+    each step and is much faster.
     """
     _key = _get_key(_key)
 
@@ -574,10 +565,7 @@ def solve_many_overdamped[S: System](
     works for any system, but samples the noise from a virtual Brownian tree,
     which is slow. When performance matters, consider
     ``FixedStep(step_size=...)``, which samples the noise independently for
-    each step and is much faster. The step size is given in the natural units
-    of the simulation (see ``FixedStep``), and must be small enough to resolve
-    the fastest motion of the system, so check that the results do not change
-    when it is halved.
+    each step and is much faster.
     """
     simulated_system = system.with_units(
         _get_overdamped_langevin_units(system)
@@ -640,10 +628,7 @@ def solve_ensemble_overdamped[S: System](
     works for any system, but samples the noise from a virtual Brownian tree,
     which is slow. When performance matters, consider
     ``FixedStep(step_size=...)``, which samples the noise independently for
-    each step and is much faster. The step size is given in the natural units
-    of the simulation (see ``FixedStep``), and must be small enough to resolve
-    the fastest motion of the system, so check that the results do not change
-    when it is halved.
+    each step and is much faster.
     """
     _key = _get_key(_key)
     simulated_system = system.with_units(

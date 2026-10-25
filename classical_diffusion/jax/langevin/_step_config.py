@@ -103,7 +103,8 @@ class FixedStep(StepConfig):
     that it divides the spacing of the output times. Since no step is rejected,
     the noise is sampled independently for each step, which is much faster
     than the Brownian tree needed for adaptive steps. The step must be small
-    enough to resolve the fastest motion of the system.
+    enough to resolve the fastest motion of the system, so check that the
+    results do not change when it is halved.
     """
 
     step_size: float
