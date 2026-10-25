@@ -247,7 +247,17 @@ def solve_many[S: System](
     step_config: StepConfig = DEFAULT_STEP_CONFIG,
     _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
-    """Solve an ensemble of ULD Langevin trajectories in parallel via jax.vmap."""
+    """Solve an ensemble of ULD Langevin trajectories in parallel via jax.vmap.
+
+    The time steps are set by ``step_config``. The default, ``Adaptive()``,
+    works for any system, but samples the noise from a virtual Brownian tree,
+    which is slow. When performance matters, consider
+    ``FixedStep(step_size=...)``, which samples the noise independently for
+    each step and is much faster. The step size is given in the natural units
+    of the simulation (see ``FixedStep``), and must be small enough to resolve
+    the fastest motion of the system, so check that the results do not change
+    when it is halved.
+    """
     normalized_system = system.with_units(_get_langevin_units(system)).as_canonical()
     xs0_jax = jnp.asarray(
         system.units.length_into(initial_conditions[0], normalized_system.units)
@@ -299,7 +309,17 @@ def solve_single[S: System](
     step_config: StepConfig = DEFAULT_STEP_CONFIG,
     _key: jax.Array | None = None,
 ) -> SingleLangevinSimulationResult[S]:
-    """Solve the ULD Langevin equation for a single trajectory via vmap."""
+    """Solve the ULD Langevin equation for a single trajectory via vmap.
+
+    The time steps are set by ``step_config``. The default, ``Adaptive()``,
+    works for any system, but samples the noise from a virtual Brownian tree,
+    which is slow. When performance matters, consider
+    ``FixedStep(step_size=...)``, which samples the noise independently for
+    each step and is much faster. The step size is given in the natural units
+    of the simulation (see ``FixedStep``), and must be small enough to resolve
+    the fastest motion of the system, so check that the results do not change
+    when it is halved.
+    """
     return solve_many.call_uncached(
         system,
         time_span,
@@ -337,7 +357,17 @@ def solve_ensemble[S: System](
     energy_range: tuple[float, float] = (-np.inf, np.inf),
     _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
-    """Solve an ensemble of trajectories."""
+    """Solve an ensemble of trajectories.
+
+    The time steps are set by ``step_config``. The default, ``Adaptive()``,
+    works for any system, but samples the noise from a virtual Brownian tree,
+    which is slow. When performance matters, consider
+    ``FixedStep(step_size=...)``, which samples the noise independently for
+    each step and is much faster. The step size is given in the natural units
+    of the simulation (see ``FixedStep``), and must be small enough to resolve
+    the fastest motion of the system, so check that the results do not change
+    when it is halved.
+    """
     _key = _get_key(_key)
 
     simulated_system = system.with_units(_get_langevin_units(system)).as_canonical()
@@ -370,7 +400,16 @@ def solve_single_ballistic[S: System](
     *,
     _key: jax.Array | None = None,
 ) -> SingleLangevinSimulationResult[S]:
-    """Solve the ULD Langevin equation for a single trajectory via vmap."""
+    """Solve a single ballistic trajectory.
+
+    The trajectories are solved with the default step configuration of the
+    stochastic solver, ``Adaptive()``, with the friction set to zero. Even
+    without noise, the adaptive solve samples a virtual Brownian tree, so it
+    is slow for long or large ensembles. A fixed step cannot yet be chosen
+    here. When performance matters, ``solve_many`` or ``solve_ensemble`` with
+    ``gamma = 0`` and ``step_config=FixedStep(step_size=...)`` solves the same
+    dynamics.
+    """
     out = solve_single.call_uncached(
         dataclasses.replace(system.as_canonical(), gamma=0.0),
         time_span,
@@ -411,7 +450,16 @@ def solve_many_ballistic[S: System](
     *,
     _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
-    """Solve the ULD Langevin equation for a single trajectory via vmap."""
+    """Solve many ballistic trajectories in parallel via jax.vmap.
+
+    The trajectories are solved with the default step configuration of the
+    stochastic solver, ``Adaptive()``, with the friction set to zero. Even
+    without noise, the adaptive solve samples a virtual Brownian tree, so it
+    is slow for long or large ensembles. A fixed step cannot yet be chosen
+    here. When performance matters, ``solve_many`` or ``solve_ensemble`` with
+    ``gamma = 0`` and ``step_config=FixedStep(step_size=...)`` solves the same
+    dynamics.
+    """
     simulated_system = system.as_canonical()
     out = solve_many.call_uncached(
         dataclasses.replace(simulated_system, gamma=0.0),
@@ -451,7 +499,16 @@ def solve_ensemble_ballistic[S: System](
     energy_range: tuple[float, float] = (-np.inf, np.inf),
     _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
-    """Solve an ensemble of ballistic trajectories in parallel via jax.vmap."""
+    """Solve an ensemble of ballistic trajectories in parallel via jax.vmap.
+
+    The trajectories are solved with the default step configuration of the
+    stochastic solver, ``Adaptive()``, with the friction set to zero. Even
+    without noise, the adaptive solve samples a virtual Brownian tree, so it
+    is slow for long or large ensembles. A fixed step cannot yet be chosen
+    here. When performance matters, ``solve_many`` or ``solve_ensemble`` with
+    ``gamma = 0`` and ``step_config=FixedStep(step_size=...)`` solves the same
+    dynamics.
+    """
     _key = _get_key(_key)
 
     simulated_system = system.with_units(_get_langevin_units(system)).as_canonical()
@@ -511,7 +568,17 @@ def solve_many_overdamped[S: System](
     step_config: StepConfig = DEFAULT_STEP_CONFIG,
     _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
-    """Solve an ensemble of overdamped Langevin trajectories in parallel via jax.vmap."""
+    """Solve an ensemble of overdamped Langevin trajectories in parallel via jax.vmap.
+
+    The time steps are set by ``step_config``. The default, ``Adaptive()``,
+    works for any system, but samples the noise from a virtual Brownian tree,
+    which is slow. When performance matters, consider
+    ``FixedStep(step_size=...)``, which samples the noise independently for
+    each step and is much faster. The step size is given in the natural units
+    of the simulation (see ``FixedStep``), and must be small enough to resolve
+    the fastest motion of the system, so check that the results do not change
+    when it is halved.
+    """
     simulated_system = system.with_units(
         _get_overdamped_langevin_units(system)
     ).as_canonical()
@@ -567,7 +634,17 @@ def solve_ensemble_overdamped[S: System](
     energy_range: tuple[float, float] = (-np.inf, np.inf),
     _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
-    """Solve an ensemble of overdamped Langevin trajectories in parallel via jax.vmap."""
+    """Solve an ensemble of overdamped Langevin trajectories in parallel via jax.vmap.
+
+    The time steps are set by ``step_config``. The default, ``Adaptive()``,
+    works for any system, but samples the noise from a virtual Brownian tree,
+    which is slow. When performance matters, consider
+    ``FixedStep(step_size=...)``, which samples the noise independently for
+    each step and is much faster. The step size is given in the natural units
+    of the simulation (see ``FixedStep``), and must be small enough to resolve
+    the fastest motion of the system, so check that the results do not change
+    when it is halved.
+    """
     _key = _get_key(_key)
     simulated_system = system.with_units(
         _get_overdamped_langevin_units(system)
