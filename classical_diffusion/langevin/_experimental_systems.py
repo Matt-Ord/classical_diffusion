@@ -28,8 +28,7 @@ SODIUM_COPPER_SYSTEM_1D = PeriodicSystem1D(
 XENON_PLATINUM_BRIDGE_ENERGY = 31.3e-3 * electron_volt
 """The top to bridge barrier of xenon on Pt(111).
 
-The cosine form is that of Ward (2013), with the barrier set to his measured
-activation energy for diffusion, 32 +- 8 meV.
+The barrier matches the measured activation energy for diffusion, 32 +- 8 meV.
 """
 
 XENON_PLATINUM_SYSTEM_2D = PeriodicSystemTriangular(
