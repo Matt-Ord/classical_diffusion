@@ -306,7 +306,7 @@ class PeriodicSystemFCC(System):
 
 
 def _get_potential_expr_triangular() -> sp.Expr:
-    """Return the potential of a triangular lattice with a minimum at each top site.
+    """Return the potential of a triangular lattice of minima.
 
     The minima are at the lattice points, the bridge sites have energy s1 and
     the hollow sites have energy 9 s1 / 8.
@@ -323,12 +323,15 @@ def _get_potential_expr_triangular() -> sp.Expr:
     return s1 / sp.Integer(4) * (sp.Integer(3) - cos_sum)
 
 
-class PeriodicSystemTriangular(PeriodicSystemFCC):
-    """A hexagonal surface with a single minimum at each top site.
+class PeriodicSystemTriangular(System):
+    """Parameters for a periodic system with minima on a triangular lattice.
 
-    The lattice vectors are those of the FCC(111) system, with nearest-neighbour
-    spacing delta_x. Along a close-packed row the potential reduces to the 1D
-    cosine of PeriodicSystem1D, with the same barrier and period delta_x.
+    The potential is V = (E_b / 4) (3 - sum_j cos(G_j . r)), where G_j are the
+    three shortest reciprocal lattice vectors, so there is a single minimum in
+    each unit cell. The minima are at the lattice points, the bridge sites are
+    saddle points at E_b and the hollow sites are maxima at 9 E_b / 8. Along a
+    close-packed row the potential reduces to the cosine of PeriodicSystem1D,
+    with the same barrier and period delta_x.
     """
 
     def __init__(  # ruff:ignore[too-many-arguments]
@@ -341,8 +344,7 @@ class PeriodicSystemTriangular(PeriodicSystemFCC):
         barrier_energy: float,
         units: UnitSystem | None = None,
     ) -> None:
-        System.__init__(
-            self,
+        super().__init__(
             gamma=gamma,
             temperature=temperature,
             m=m,
@@ -350,6 +352,23 @@ class PeriodicSystemTriangular(PeriodicSystemFCC):
             params=(delta_x, barrier_energy),
             units=units or UnitSystem(),
         )
+
+    @property
+    def delta_x(self) -> float:
+        """The nearest-neighbour spacing of the minima."""
+        return self.params[0]
+
+    @property
+    def barrier_energy(self) -> float:
+        """The barrier energy of the system."""
+        return self.params[1]
+
+    @property
+    def lattice_vectors(self) -> np.ndarray:
+        """Primitive lattice vectors (as rows) for the hexagonal unit cell."""
+        a1 = np.array([0.0, self.delta_x])
+        a2 = np.array([np.sqrt(3.0) / 2.0 * self.delta_x, 0.5 * self.delta_x])
+        return np.stack([a1, a2], axis=0)
 
     @override
     def with_units(self, units: UnitSystem) -> PeriodicSystemTriangular:
