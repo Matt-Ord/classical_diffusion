@@ -1,4 +1,3 @@
-# cspell: ignore neighbour
 import zlib
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -356,7 +355,7 @@ class PeriodicSystemTriangular(System):
 
     @property
     def delta_x(self) -> float:
-        """The nearest-neighbour spacing of the minima."""
+        """The nearest-neighbor spacing of the minima."""
         return self.params[0]
 
     @property
