@@ -17,6 +17,9 @@ from classical_diffusion.langevin._analysis import (
 from classical_diffusion.langevin._experimental_systems import (
     SODIUM_COPPER_SYSTEM_1D,
     SODIUM_COPPER_SYSTEM_2D,
+    XENON_PLATINUM_BRIDGE_ENERGY,
+    XENON_PLATINUM_SYSTEM_1D,
+    XENON_PLATINUM_SYSTEM_2D,
 )
 from classical_diffusion.langevin._langevin import (
     LangevinSimulationResult,
@@ -39,6 +42,7 @@ from classical_diffusion.langevin._system import (
     KramersSystem1D,
     PeriodicSystem1D,
     PeriodicSystemFCC,
+    PeriodicSystemTriangular,
     System,
     get_diffusion_time,
 )
@@ -63,6 +67,9 @@ from classical_diffusion.langevin._system_analysis import (
 __all__ = [
     "SODIUM_COPPER_SYSTEM_1D",
     "SODIUM_COPPER_SYSTEM_2D",
+    "XENON_PLATINUM_BRIDGE_ENERGY",
+    "XENON_PLATINUM_SYSTEM_1D",
+    "XENON_PLATINUM_SYSTEM_2D",
     "Adaptive",
     "CanonicalSystem",
     "FixedStep",
@@ -71,6 +78,7 @@ __all__ = [
     "LangevinSimulationResult",
     "PeriodicSystem1D",
     "PeriodicSystemFCC",
+    "PeriodicSystemTriangular",
     "SingleLangevinSimulationResult",
     "StepConfig",
     "System",
