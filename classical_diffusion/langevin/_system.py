@@ -305,6 +305,65 @@ class PeriodicSystemFCC(System):
         )
 
 
+def _get_potential_expr_triangular() -> sp.Expr:
+    """Return the potential of a triangular lattice with a minimum at each top site.
+
+    The minima are at the lattice points, the bridge sites have energy s1 and
+    the hollow sites have energy 9 s1 / 8.
+    """
+    x0, x1 = sp.symbols("x0 x1")
+    s0, s1 = sp.symbols("s0 s1")
+    c = sp.Integer(2) * sp.pi / s0
+
+    arg1 = x0 * c * (sp.Integer(-1) / sp.sqrt(3.0)) + x1 * c
+    arg2 = x0 * c * (sp.Integer(2) / sp.sqrt(3.0))
+    arg3 = arg1 + arg2
+
+    cos_sum = sp.cos(arg1) + sp.cos(arg2) + sp.cos(arg3)
+    return s1 / sp.Integer(4) * (sp.Integer(3) - cos_sum)
+
+
+class PeriodicSystemTriangular(PeriodicSystemFCC):
+    """A hexagonal surface with a single minimum at each top site.
+
+    The lattice vectors are those of the FCC(111) system, with nearest-neighbour
+    spacing delta_x. Along a close-packed row the potential reduces to the 1D
+    cosine of PeriodicSystem1D, with the same barrier and period delta_x.
+    """
+
+    def __init__(  # ruff:ignore[too-many-arguments]
+        self,
+        *,
+        gamma: float,
+        temperature: float,
+        m: float,
+        delta_x: float,
+        barrier_energy: float,
+        units: UnitSystem | None = None,
+    ) -> None:
+        System.__init__(
+            self,
+            gamma=gamma,
+            temperature=temperature,
+            m=m,
+            potential=(2, _get_potential_expr_triangular()),
+            params=(delta_x, barrier_energy),
+            units=units or UnitSystem(),
+        )
+
+    @override
+    def with_units(self, units: UnitSystem) -> PeriodicSystemTriangular:
+        """Return the parameters of the system in the specified units."""
+        return PeriodicSystemTriangular(
+            gamma=self.units.frequency_into(self.gamma, units),
+            temperature=self.temperature,
+            m=self.units.mass_into(self.m, units),
+            delta_x=self.units.length_into(self.delta_x, units),
+            barrier_energy=self.units.energy_into(self.barrier_energy, units),
+            units=units,
+        )
+
+
 class DerivativeSafeMod(sp.Mod):
     """A subclass of sympy.Mod that is safe for differentiation.
 
