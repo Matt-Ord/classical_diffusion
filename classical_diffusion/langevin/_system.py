@@ -1,3 +1,4 @@
+# cspell: ignore neighbour
 import zlib
 from dataclasses import dataclass, field
 from functools import cached_property
