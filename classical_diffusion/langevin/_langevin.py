@@ -472,11 +472,14 @@ def _solve_ensemble_ballistic_path[S: System](
     time_span: TimeSpan,
     n_samples: int,
     *,
+    step_config: StepConfig = DEFAULT_STEP_CONFIG,
     energy_range: tuple[float, float] = (-np.inf, np.inf),
     _key: jax.Array | None = None,
 ) -> Path:
+    # The default step is left out, so that existing caches remain valid
+    step = "" if step_config == DEFAULT_STEP_CONFIG else f"_{hash(step_config)}"
     return Path(
-        f"solve_ensemble_ballistic_{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}_{energy_range[0]}_{energy_range[1]}{hash_key(_key)}.npz"
+        f"solve_ensemble_ballistic_{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}_{energy_range[0]}_{energy_range[1]}{step}{hash_key(_key)}.npz"
     )
 
 
@@ -487,18 +490,17 @@ def solve_ensemble_ballistic[S: System](
     time_span: TimeSpan,
     n_samples: int,
     *,
+    step_config: StepConfig = DEFAULT_STEP_CONFIG,
     energy_range: tuple[float, float] = (-np.inf, np.inf),
     _key: jax.Array | None = None,
 ) -> LangevinSimulationResult[S]:
     """Solve an ensemble of ballistic trajectories in parallel via jax.vmap.
 
-    The trajectories are solved with the default step configuration of the
-    stochastic solver, ``Adaptive()``, with the friction set to zero. Even
-    without noise, the adaptive solve samples a virtual Brownian tree, so it
-    is slow for long or large ensembles. A fixed step cannot yet be chosen
-    here. When performance matters, ``solve_many`` or ``solve_ensemble`` with
-    ``gamma = 0`` and ``step_config=FixedStep(step_size=...)`` solves the same
-    dynamics.
+    The trajectories are solved with the stochastic solver, with the friction
+    set to zero. The time steps are set by ``step_config``. Even without
+    noise, the default, ``Adaptive()``, samples a virtual Brownian tree, so it
+    is slow for long or large ensembles. When performance matters, consider
+    ``FixedStep(step_size=...)``, which is much faster.
     """
     _key = _get_key(_key)
 
@@ -507,6 +509,7 @@ def solve_ensemble_ballistic[S: System](
         dataclasses.replace(simulated_system, gamma=0.0),
         _convert_time_span(time_span, system.units, simulated_system.units),
         n_samples=n_samples,
+        step_config=step_config,
         energy_range=_convert_energy_range(
             energy_range, system.units, simulated_system.units
         ),
