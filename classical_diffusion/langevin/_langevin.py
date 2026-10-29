@@ -28,7 +28,7 @@ from classical_diffusion.simulation import (
     TimeSpan,
 )
 from classical_diffusion.system import UnitSystem
-from classical_diffusion.util import _get_key, cached, hash_array, timed
+from classical_diffusion.util import _get_key, cached, hash_array, hash_key, timed
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
@@ -231,7 +231,7 @@ def _solve_many_path[S: System](
     _key: jax.Array | None = None,
 ) -> Path:
     return Path(
-        f"{hash(system)}_{hash(time_span)}_{hash_array(initial_conditions)}_{hash(step_config)}.npz"
+        f"{hash(system)}_{hash(time_span)}_{hash_array(initial_conditions)}_{hash(step_config)}{hash_key(_key)}.npz"
     )
 
 
@@ -290,7 +290,7 @@ def _solve_single_path[S: System](
     _key: jax.Array | None = None,
 ) -> Path:
     return Path(
-        f"{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{hash_array(initial_condition)}_{hash(step_config)}.npz"
+        f"{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{hash_array(initial_condition)}_{hash(step_config)}{hash_key(_key)}.npz"
     )
 
 
@@ -336,7 +336,7 @@ def _solve_ensemble_path[S: System](
     _key: jax.Array | None = None,
 ) -> Path:
     return Path(
-        f"solve_ensemble_{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}_{energy_range[0]}_{energy_range[1]}_{hash(step_config)}.npz"
+        f"solve_ensemble_{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}_{energy_range[0]}_{energy_range[1]}_{hash(step_config)}{hash_key(_key)}.npz"
     )
 
 
@@ -426,7 +426,7 @@ def _solve_many_ballistic_path[S: System](
     _key: jax.Array | None = None,
 ) -> Path:
     return Path(
-        f"many_ballistic_{hash(system)}_{hash(time_span)}_{hash_array(initial_conditions)}.npz"
+        f"many_ballistic_{hash(system)}_{hash(time_span)}_{hash_array(initial_conditions)}{hash_key(_key)}.npz"
     )
 
 
@@ -476,7 +476,7 @@ def _solve_ensemble_ballistic_path[S: System](
     _key: jax.Array | None = None,
 ) -> Path:
     return Path(
-        f"solve_ensemble_ballistic_{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}_{energy_range[0]}_{energy_range[1]}.npz"
+        f"solve_ensemble_ballistic_{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}_{energy_range[0]}_{energy_range[1]}{hash_key(_key)}.npz"
     )
 
 
@@ -543,7 +543,7 @@ def _solve_many_overdamped_path[S: System](
     _key: jax.Array | None = None,
 ) -> Path:
     return Path(
-        f"overdamped_{hash(system)}_{hash(time_span)}_{hash_array(initial_conditions)}_{hash(step_config)}.npz"
+        f"overdamped_{hash(system)}_{hash(time_span)}_{hash_array(initial_conditions)}_{hash(step_config)}{hash_key(_key)}.npz"
     )
 
 
@@ -607,7 +607,7 @@ def _solve_ensemble_overdamped_path[S: System](
     _key: jax.Array | None = None,
 ) -> Path:
     return Path(
-        f"overdamped_ensemble_{hash(system)}_{hash(time_span)}_{n_samples}_{energy_range[0]}_{energy_range[1]}_{hash(step_config)}.npz"
+        f"overdamped_ensemble_{hash(system)}_{hash(time_span)}_{n_samples}_{energy_range[0]}_{energy_range[1]}_{hash(step_config)}{hash_key(_key)}.npz"
     )
 
 
