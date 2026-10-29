@@ -248,5 +248,12 @@ def hash_array(arrays: tuple[np.ndarray, ...]) -> int:
     return chk
 
 
+def hash_key(key: jax.Array | None) -> str:
+    """Get a cache path suffix for a random key, empty if no key is given."""
+    if key is None:
+        return ""
+    return f"_{hash_array((np.asarray(jax.random.key_data(key)),))}"
+
+
 def _get_key(key: jax.Array | None) -> jax.Array:
     return key if key is not None else jax.random.PRNGKey(random.randint(0, 2**32 - 1))  # ruff: ignore[suspicious-non-cryptographic-random-usage]
