@@ -2,13 +2,17 @@
 import jax
 import jax.numpy as jnp
 
+_BATCH_SIZE = 256
+"""The number of trajectories correlated at once, which bounds the memory used."""
 
-def _calculate_total_offset_multiplications(scatter: jnp.ndarray) -> jnp.ndarray:
-    """Get sum_i^N-j s_i+j conj(s_i) for every offset j, along the last axis.
+
+def _get_pairwise_sum(positions: jnp.ndarray, delta_k: jnp.ndarray) -> jnp.ndarray:
+    """Get sum_i^N-j e^(ik.x_i+j) e^(-ik.x_i) for every offset j, along the last axis.
 
     The autocorrelation is calculated with an FFT, zero padded to at least twice
     the length so that the circular correlation does not wrap around.
     """
+    scatter = jnp.exp(1j * jnp.einsum("i,...ij->...j", delta_k, positions))
     size = scatter.shape[-1]
     n_fft = 1 << (2 * size - 1).bit_length()
     transformed = jnp.fft.fft(scatter, n_fft, axis=-1)
@@ -25,9 +29,11 @@ def _time_average(
 
 @jax.jit
 def get_pairwise_isf(positions: jnp.ndarray, delta_k: jnp.ndarray) -> jnp.ndarray:
-    """Get the ISF, calculated from the pairwise correlation of the positions."""
-    scatter = jnp.exp(-1j * jnp.einsum("i,...ij->...j", delta_k, positions))
-
-    # convolution_j = \sum_i^N-j e^(ik.x_i+j) e^(-ik.x_i)
-    convolution = _calculate_total_offset_multiplications(jnp.conj(scatter))
-    return _time_average(convolution)
+    """Get the ISF of each trajectory, from the pairwise correlation of the positions."""
+    samples = positions.reshape(-1, *positions.shape[-2:])
+    isf = jax.lax.map(
+        lambda x: _time_average(_get_pairwise_sum(x, delta_k)),
+        samples,
+        batch_size=_BATCH_SIZE,
+    )
+    return isf.reshape(*positions.shape[:-2], positions.shape[-1])
