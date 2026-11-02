@@ -147,7 +147,7 @@ def _get_max_force(system: System) -> float:
         [0.0, 0.125, 0.375, 0.625, 0.875] if hasattr(system, "delta_x") else [0.0]
     )
     starts = np.stack(np.meshgrid(*[fractions] * n_dim), axis=-1).reshape(-1, n_dim)
-    # Normalise the objective, so that the default tolerances of the search apply
+    # Normalize the objective, so that the default tolerances of the search apply
     force_scale = max(get_force(x0) for x0 in starts) or 1.0
 
     def objective(coords: np.ndarray) -> float:
