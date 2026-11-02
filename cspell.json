@@ -24,6 +24,7 @@
         "pcolormesh",
         "pickler",
         "PRNG",
+        "Rittmeyer",
         "rtol",
         "saveat",
         "savez",
