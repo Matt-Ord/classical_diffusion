@@ -118,7 +118,13 @@ def _convert_time_span(
 
 
 def _get_max_force(system: System) -> float:
-    """Find max ||F|| numerically using SciPy minimization starting at the origin."""
+    """Find max ||F|| numerically, by SciPy minimization from several starting points.
+
+    The origin of the built-in potentials is a stationary point, where ||F|| has
+    a local minimum, so a single search from the origin finds no force. For a
+    periodic system the search starts from a grid of points in a cell of side
+    delta_x, and works in units of delta_x so that it is well scaled.
+    """
     if not system.force_expr or system.potential_expr == 0:
         return 0.0
 
@@ -131,16 +137,26 @@ def _get_max_force(system: System) -> float:
         force,
         modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
     )
+    scale = float(getattr(system, "delta_x", 1.0))
+
+    def get_force(coords: np.ndarray) -> float:
+        return float(np.linalg.norm(np.array(force_fn(*(coords * scale)), dtype=float)))
+
+    n_dim = len(system.coordinate_symbols)
+    fractions = (
+        [0.0, 0.125, 0.375, 0.625, 0.875] if hasattr(system, "delta_x") else [0.0]
+    )
+    starts = np.stack(np.meshgrid(*[fractions] * n_dim), axis=-1).reshape(-1, n_dim)
+    # Normalize the objective, so that the default tolerances of the search apply
+    force_scale = max(get_force(x0) for x0 in starts) or 1.0
 
     def objective(coords: np.ndarray) -> float:
-        # Evaluate force vector and return negative magnitude for minimization
-        f_vec = np.array(force_fn(*coords), dtype=float)
-        return -float(np.linalg.norm(f_vec))
+        # Return negative magnitude for minimization
+        return -get_force(coords) / force_scale
 
-    x0 = np.zeros(len(system.coordinate_symbols))
-    res = scipy.optimize.minimize(objective, x0)
-
-    return float(-res.fun) if res.success else 0.0
+    results = [scipy.optimize.minimize(objective, x0) for x0 in starts]
+    forces = [-float(res.fun) * force_scale for res in results if res.success]
+    return max(forces, default=0.0)
 
 
 def _get_langevin_units(system: System) -> UnitSystem:
