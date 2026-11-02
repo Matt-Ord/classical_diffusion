@@ -231,9 +231,15 @@ class PeriodicSystem1D(System):
 
 
 def _get_potential_expr_fcc() -> sp.Expr:
-    """Return the potential energy expression for a 2D FCC lattice."""
+    """Return the potential energy expression for a 2D FCC lattice.
+
+    The potential is A_1 sum_j cos(G_j . r) + A_2 sum_j cos(2 G_j . r) + C,
+    where G_j are the three shortest reciprocal lattice vectors at 120 degrees.
+    The hollow sites are at zero, the bridge sites at s1 and the top sites at
+    s2, which fixes A_1 = (s2 - s1) / 4, A_2 = (9 s1 - s2) / 36 and C = s2 / 3.
+    """
     x0, x1 = sp.symbols("x0 x1")
-    s0, s1 = sp.symbols("s0 s1")
+    s0, s1, s2 = sp.symbols("s0 s1 s2")
     c = sp.Integer(2) * sp.pi / s0
 
     kx0 = c * (sp.Integer(-1) / sp.sqrt(3.0))
@@ -247,12 +253,23 @@ def _get_potential_expr_fcc() -> sp.Expr:
     arg3 = arg1 + arg2
 
     cos_sum = sp.cos(arg1) + sp.cos(arg2) + sp.cos(arg3)
+    cos_sum_2 = sp.cos(2 * arg1) + sp.cos(2 * arg2) + sp.cos(2 * arg3)
 
-    return sp.Integer(2) * s1 * cos_sum + sp.Integer(3) * s1
+    return (
+        (s2 - s1) / sp.Integer(4) * cos_sum
+        + (sp.Integer(9) * s1 - s2) / sp.Integer(36) * cos_sum_2
+        + s2 / sp.Integer(3)
+    )
 
 
 class PeriodicSystemFCC(System):
-    """Parameters for the face-centered cubic periodic system."""
+    """Parameters for the face-centered cubic periodic system.
+
+    The hollow sites are degenerate minima at zero, the bridge sites are saddle
+    points at barrier_energy and the top sites are maxima at top_energy. The
+    top_energy defaults to 9 barrier_energy, for which the potential has a
+    single Fourier component.
+    """
 
     def __init__(  # ruff:ignore[too-many-arguments]
         self,
@@ -262,16 +279,18 @@ class PeriodicSystemFCC(System):
         m: float,
         delta_x: float,
         barrier_energy: float,
+        top_energy: float | None = None,
         units: UnitSystem | None = None,
     ) -> None:
         potential = _get_potential_expr_fcc()
+        top_energy = 9 * barrier_energy if top_energy is None else top_energy
 
         super().__init__(
             gamma=gamma,
             temperature=temperature,
             m=m,
             potential=(2, potential),
-            params=(delta_x, barrier_energy),
+            params=(delta_x, barrier_energy, top_energy),
             units=units or UnitSystem(),
         )
 
@@ -284,6 +303,11 @@ class PeriodicSystemFCC(System):
     def barrier_energy(self) -> float:
         """The barrier energy of the system."""
         return self.params[1]
+
+    @property
+    def top_energy(self) -> float:
+        """The energy of the top sites, relative to the hollow sites."""
+        return self.params[2]
 
     @property
     def lattice_vectors(self) -> np.ndarray:
@@ -301,6 +325,7 @@ class PeriodicSystemFCC(System):
             m=self.units.mass_into(self.m, units),
             delta_x=self.units.length_into(self.delta_x, units),
             barrier_energy=self.units.energy_into(self.barrier_energy, units),
+            top_energy=self.units.energy_into(self.top_energy, units),
             units=units,
         )
 
