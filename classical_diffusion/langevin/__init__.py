@@ -15,6 +15,10 @@ from classical_diffusion.langevin._analysis import (
     plot_x_distribution_kde,
 )
 from classical_diffusion.langevin._experimental_systems import (
+    HYDROGEN_COPPER_SYSTEM_1D,
+    HYDROGEN_COPPER_SYSTEM_2D,
+    LITHIUM_COPPER_SYSTEM_1D,
+    LITHIUM_COPPER_SYSTEM_2D,
     SODIUM_COPPER_SYSTEM_1D,
     SODIUM_COPPER_SYSTEM_2D,
     XENON_PLATINUM_BRIDGE_ENERGY,
@@ -65,6 +69,10 @@ from classical_diffusion.langevin._system_analysis import (
 )
 
 __all__ = [
+    "HYDROGEN_COPPER_SYSTEM_1D",
+    "HYDROGEN_COPPER_SYSTEM_2D",
+    "LITHIUM_COPPER_SYSTEM_1D",
+    "LITHIUM_COPPER_SYSTEM_2D",
     "SODIUM_COPPER_SYSTEM_1D",
     "SODIUM_COPPER_SYSTEM_2D",
     "XENON_PLATINUM_BRIDGE_ENERGY",
