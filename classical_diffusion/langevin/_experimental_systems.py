@@ -46,6 +46,81 @@ SODIUM_COPPER_SYSTEM_1D = PeriodicSystem1D(
 )
 """The 1D analogue of SODIUM_COPPER_SYSTEM_2D, with the same hollow to bridge barrier."""
 
+LITHIUM_MASS = 6.94 * atomic_mass
+
+LITHIUM_COPPER_BRIDGE_ENERGY = 8e-3 * electron_volt
+"""The hollow to bridge barrier of lithium on Cu(111).
+
+The DFT (PBE) climbing image nudged elastic band barrier of G. Lai et al.,
+arXiv:2208.04089 (2022), Fig. S10a, read from the figure to about +- 2 meV.
+The two hollow sites are degenerate within this precision.
+"""
+
+LITHIUM_COPPER_TOP_ENERGY = 200e-3 * electron_volt
+"""The hollow to top energy of lithium on Cu(111).
+
+Read from the neural network potential energy map of Lai et al., Fig. 3c, to
+about +- 20 meV. With the bridge barrier it gives a potential whose variance,
+3.5e-3 eV^2, is close to the 3.0e-3 eV^2 Lai et al. quote for the map.
+"""
+
+LITHIUM_COPPER_GAMMA = 1.2e12
+"""The friction of lithium on Cu(111)."""
+
+LITHIUM_COPPER_SYSTEM_2D = PeriodicSystemFCC(
+    gamma=LITHIUM_COPPER_GAMMA,
+    temperature=140,
+    barrier_energy=LITHIUM_COPPER_BRIDGE_ENERGY,
+    top_energy=LITHIUM_COPPER_TOP_ENERGY,
+    delta_x=2.556e-10,
+    m=LITHIUM_MASS,
+)
+"""Lithium on Cu(111), with the Cu-Cu distance of the slab of Lai et al."""
+
+LITHIUM_COPPER_SYSTEM_1D = PeriodicSystem1D(
+    gamma=LITHIUM_COPPER_GAMMA,
+    temperature=140,
+    barrier_energy=LITHIUM_COPPER_BRIDGE_ENERGY,
+    delta_x=(1 / np.sqrt(3)) * LITHIUM_COPPER_SYSTEM_2D.delta_x,
+    m=LITHIUM_MASS,
+)
+"""The 1D analogue of LITHIUM_COPPER_SYSTEM_2D, with the same hollow to bridge barrier."""
+
+HYDROGEN_MASS = 1.008 * atomic_mass
+
+HYDROGEN_COPPER_BRIDGE_ENERGY = 135e-3 * electron_volt
+"""The fcc to hcp hollow barrier of hydrogen on Cu(111).
+
+The DFT (PBE) nudged elastic band barrier of W. Fang et al., Phys. Rev. Lett.
+119, 126001 (2017), Fig. 1a, read from the figure to about +- 5 meV. The hcp
+site lies 14 meV above the fcc site (Table S3), which is neglected here.
+"""
+
+HYDROGEN_COPPER_GAMMA = 1.5e13
+"""The friction of hydrogen on Cu(111), about 15 ps^-1.
+
+An upper bound from the HREELS linewidth of the parallel vibration, P. S. M.
+Townsend, PhD thesis, University of Cambridge (2017), Section 6.5.6.
+"""
+
+HYDROGEN_COPPER_SYSTEM_2D = PeriodicSystemFCC(
+    gamma=HYDROGEN_COPPER_GAMMA,
+    temperature=150,
+    barrier_energy=HYDROGEN_COPPER_BRIDGE_ENERGY,
+    delta_x=2.558e-10,
+    m=HYDROGEN_MASS,
+)
+"""Hydrogen on Cu(111). Fang et al. give no top site energy, so it is 9 times the bridge."""
+
+HYDROGEN_COPPER_SYSTEM_1D = PeriodicSystem1D(
+    gamma=HYDROGEN_COPPER_GAMMA,
+    temperature=150,
+    barrier_energy=HYDROGEN_COPPER_BRIDGE_ENERGY,
+    delta_x=(1 / np.sqrt(3)) * HYDROGEN_COPPER_SYSTEM_2D.delta_x,
+    m=HYDROGEN_MASS,
+)
+"""The 1D analogue of HYDROGEN_COPPER_SYSTEM_2D, with the same hollow to hollow barrier."""
+
 XENON_PLATINUM_BRIDGE_ENERGY = 32e-3 * electron_volt
 """The top to bridge barrier of xenon on Pt(111).
 
