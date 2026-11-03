@@ -88,12 +88,13 @@ LITHIUM_COPPER_SYSTEM_1D = PeriodicSystem1D(
 
 HYDROGEN_MASS = 1.008 * atomic_mass
 
-HYDROGEN_COPPER_BRIDGE_ENERGY = 135e-3 * electron_volt
+HYDROGEN_COPPER_BRIDGE_ENERGY = 136e-3 * electron_volt
 """The fcc to hcp hollow barrier of hydrogen on Cu(111).
 
-The DFT (PBE) nudged elastic band barrier of W. Fang et al., Phys. Rev. Lett.
-119, 126001 (2017), Fig. 1a, read from the figure to about +- 5 meV. The hcp
-site lies 14 meV above the fcc site (Table S3), which is neglected here.
+The highest image of the DFT (PBE) nudged elastic band path of W. Fang et al.,
+Phys. Rev. Lett. 119, 126001 (2017), Fig. 1a, read from the vector graphics of
+the figure. The hcp site lies 14 meV above the fcc site (Table S3), which is
+neglected here.
 """
 
 HYDROGEN_COPPER_GAMMA = 1.5e13
