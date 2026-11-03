@@ -118,3 +118,27 @@ def _get_simulated_effective_mass(
           _plot_periodic_isf_1d()
           _plot_periodic_isf_2d()
   ```
+
+## Parameters and structure
+
+- Don't put configuration in module-level constants (`N_SEEDS = 120`,
+  `BAND_ENERGY = {...}`). Declare each value inside the function that chooses
+  it. Figure parameters (temperatures, |dK|, cells, seeds) are locals of the
+  `_plot_<figure>()` function. A setting of one helper (a fit window, a
+  convergence cutoff) is a local of that helper, with its justification in the
+  helper's docstring.
+- If several functions take the same group of parameters, bundle them into
+  one frozen dataclass that carries the load (e.g. the system and basis of a
+  simulation), and build its cache path from its fields. Reuse the package's
+  own types (`System`, `TimeSpan`) rather than redefining them. Don't add a
+  dataclass for a group used in only one place; plain arguments are fine
+  there.
+- Don't allow invalid combinations of arguments. An `n_dim` beside an
+  `azimuth` lets you ask for a 1D simulation along a 2D direction; pass the
+  scattering vector itself instead. Don't let `None` defaults be resolved
+  later (`temperature = temperature or system.temperature`); make the value
+  required.
+- Treat a `too-many-arguments` lint as a sign that an abstraction is missing,
+  not as something to suppress.
+- Name functions after what they return: `_get_quantum_diffusion_coefficient`,
+  not `_get_quantum_diffusion`.
