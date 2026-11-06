@@ -12,6 +12,7 @@
         "cmap",
         "diffeqsolve",
         "diffrax",
+        "eigvalsh",
         "ellipk",
         "ellipkinc",
         "frameon",
