@@ -239,7 +239,7 @@ def _get_periodic_potential_functions(
 ) -> tuple[Callable[..., float], Callable[..., list[float]], Callable[..., np.ndarray]]:
     """Return the value, gradient and Hessian of the periodic potential.
 
-    Each is lambdified from the shared expression of _get_periodic_potential_expr,
+    Each is built with sp.lambdify from _get_periodic_potential_expr,
     and takes the coordinates followed by the parameters.
     """
     expr = _get_periodic_potential_expr(n_dim, n_terms)
