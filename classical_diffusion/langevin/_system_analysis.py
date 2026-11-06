@@ -21,8 +21,7 @@ if TYPE_CHECKING:
 
     from classical_diffusion.langevin._system import (
         HarmonicSystem,
-        PeriodicSystem1D,
-        PeriodicSystem2D,
+        PeriodicSystem,
         System,
     )
 
@@ -106,7 +105,7 @@ def plot_force_1d(
 
 
 def plot_periodic_potential_1d(
-    system: PeriodicSystem1D, *, n_points: int = 1000, ax: Axes | None = None
+    system: PeriodicSystem, *, n_points: int = 1000, ax: Axes | None = None
 ) -> tuple[Figure, Axes, Line2D]:
     """Plot the periodic potential in 1D."""
     return plot_potential_1d(
@@ -175,7 +174,7 @@ def plot_potential_2d(
 
 def _plot_unit_cell(
     ax: Axes,
-    system: PeriodicSystem2D,
+    system: PeriodicSystem,
 ) -> Line2D:
     a1, a2 = system.lattice_vectors
 
@@ -188,7 +187,7 @@ def _plot_unit_cell(
 
 
 def plot_periodic_potential_fcc(
-    system: PeriodicSystem2D,
+    system: PeriodicSystem,
     *,
     n_points: tuple[int, int] = (1000, 1000),
     ax: Axes | None = None,
@@ -355,7 +354,7 @@ def get_under_barrier_probability(
     return np.mean(energies < barrier_energy)
 
 
-def shift_origin_to_unit_cell_1d[S: PeriodicSystem1D](
+def shift_origin_to_unit_cell_1d[S: PeriodicSystem](
     result: LangevinSimulationResult[S], *, origin_idx: int | None = None
 ) -> LangevinSimulationResult[S]:
     origin_idx = (
@@ -373,7 +372,7 @@ def shift_origin_to_unit_cell_1d[S: PeriodicSystem1D](
     )
 
 
-def shift_origin_to_unit_cell_fcc[S: PeriodicSystem2D](
+def shift_origin_to_unit_cell_fcc[S: PeriodicSystem](
     result: LangevinSimulationResult[S], *, origin_idx: int | None = None
 ) -> LangevinSimulationResult[S]:
     lattice_vectors = result.system.lattice_vectors

@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
 
-    from classical_diffusion.langevin import PeriodicSystem1D
+    from classical_diffusion.langevin import PeriodicSystem
 from typing import TYPE_CHECKING
 
 import scipy
@@ -27,24 +27,24 @@ from scipy.constants import atomic_mass, hbar
 
 from classical_diffusion.langevin import (
     SODIUM_COPPER_SYSTEM_1D,
-    PeriodicSystem1D,
+    PeriodicSystem,
+    build_1d_cosine,
 )
 
 
-def _with_mass(system: PeriodicSystem1D, m: float) -> PeriodicSystem1D:
+def _with_mass(system: PeriodicSystem, m: float) -> PeriodicSystem:
     """Return a copy of the system with a new barrier energy."""
-    return PeriodicSystem1D(
+    return build_1d_cosine(
         gamma=system.gamma,
         temperature=system.temperature,
         m=m,
         delta_x=system.delta_x,
         barrier_energy=system.barrier_energy,
         units=system.units,
-        n_dim=system.n_dim,
     )
 
 
-def _calculate_action(system: PeriodicSystem1D, energy: float) -> float:
+def _calculate_action(system: PeriodicSystem, energy: float) -> float:
     """Calculate the quantum action, integrating in real space if energy is."""
     """lower than the barrierand imaginary space if the energy is above the barrier."""
     epsilon = energy / system.barrier_energy
@@ -75,7 +75,7 @@ def _calculate_action(system: PeriodicSystem1D, energy: float) -> float:
     )
 
 
-def _calculate_tunneling_time(system: PeriodicSystem1D, energy: float) -> float:
+def _calculate_tunneling_time(system: PeriodicSystem, energy: float) -> float:
     """Exact closed-form -d(action)/dE, via the elliptic-integral derivative identity."""
     epsilon = energy / system.barrier_energy
     if epsilon > 1:
@@ -88,14 +88,14 @@ def _calculate_tunneling_time(system: PeriodicSystem1D, energy: float) -> float:
     )
 
 
-def _calculate_tunneling_probability(system: PeriodicSystem1D, energy: float) -> float:
+def _calculate_tunneling_probability(system: PeriodicSystem, energy: float) -> float:
     """Calculate the probability of tunneling using Kemble's formula."""
     s = _calculate_action(system, energy)
     exponent = 2 * s / hbar
     return 1 / (1 + np.exp(exponent))
 
 
-def _calculate_time_between_hits(system: PeriodicSystem1D, energy: float) -> float:
+def _calculate_time_between_hits(system: PeriodicSystem, energy: float) -> float:
     """Calculate the time for a particle to move between its classical turning points if below the barrier energy, or to traverse the unit cell if above."""
     epsilon = energy / system.barrier_energy
 
@@ -114,7 +114,7 @@ def _calculate_time_between_hits(system: PeriodicSystem1D, energy: float) -> flo
     )
 
 
-def _calculate_quantum_traversal_time(system: PeriodicSystem1D, energy: float) -> float:
+def _calculate_quantum_traversal_time(system: PeriodicSystem, energy: float) -> float:
     """Combine the probability of tunneling with time between attempts to get average traversal time."""
     prob = _calculate_tunneling_probability(system, energy)
     return _calculate_time_between_hits(
@@ -122,7 +122,7 @@ def _calculate_quantum_traversal_time(system: PeriodicSystem1D, energy: float) -
     ) / prob + _calculate_tunneling_time(system, energy)
 
 
-def _calculate_quantum_p_elastic(system: PeriodicSystem1D, energy: float) -> float:
+def _calculate_quantum_p_elastic(system: PeriodicSystem, energy: float) -> float:
     return system.m * system.delta_x / _calculate_quantum_traversal_time(system, energy)
 
 
@@ -272,7 +272,7 @@ def _plot_p_elastic_squared_over_m_against_energy_color_map(
     return fig, ax
 
 
-def _calculate_partition_function(system: PeriodicSystem1D) -> float:
+def _calculate_partition_function(system: PeriodicSystem) -> float:
     """Full partition function integrated over all energy states, epsilon in [0, inf)."""
     u0 = system.barrier_energy / (system.kbt)
 
@@ -290,7 +290,7 @@ def _calculate_partition_function(system: PeriodicSystem1D) -> float:
 
 def _plot_boltzmann_distribution(
     normalized_energy: np.ndarray[Any, np.dtype[np.floating[Any]]],
-    system: PeriodicSystem1D,
+    system: PeriodicSystem,
     ax: Axes,
 ) -> tuple[Figure, Axes, FillBetweenPolyCollection]:
     fig, ax = get_figure(ax)
@@ -419,7 +419,7 @@ def _plot_quantum_time_period() -> None:
 
 
 def _calculate_classical_elastic_p_squared_over_m(
-    system: PeriodicSystem1D, epsilon: float
+    system: PeriodicSystem, epsilon: float
 ) -> float:
     """p_e^2(epsilon) = E_b * epsilon / (2 * pi^2 * K(1/epsilon)^2), valid for epsilon >= 1."""
     if epsilon > 1:
@@ -535,7 +535,7 @@ def _p_elastic_squared_against_mass() -> None:
 
 
 def _calculate_dynamic_energy_cutoff_interp(  # cspell: disable-line
-    system: PeriodicSystem1D,
+    system: PeriodicSystem,
     observation_time: float,
     *,
     epsilon_grid: np.ndarray[Any, np.dtype[np.floating[Any]]] | None = None,
@@ -562,7 +562,7 @@ def _calculate_dynamic_energy_cutoff_interp(  # cspell: disable-line
 
 
 def _plot_dynamic_energy_cutoff(
-    system: PeriodicSystem1D,
+    system: PeriodicSystem,
     observation_time: float,
     *,
     ax: Axes,
@@ -614,7 +614,7 @@ def _classify_dynamic_states() -> None:
 
 
 def _calculate_restricted_partition_function(
-    system: PeriodicSystem1D, epsilon_min: float
+    system: PeriodicSystem, epsilon_min: float
 ) -> float:
     """Partition function integrated only over dynamic states, epsilon in [epsilon_min, inf)."""
     u0 = system.barrier_energy / system.kbt
@@ -635,7 +635,7 @@ def _calculate_restricted_partition_function(
 
 
 def _calculate_mean_p_elastic_squared_dynamic(
-    system: PeriodicSystem1D, observation_time: float
+    system: PeriodicSystem, observation_time: float
 ) -> float:
     epsilon_min = (
         _calculate_dynamic_energy_cutoff_interp(  # cspell: disable-line
@@ -668,7 +668,7 @@ def _calculate_mean_p_elastic_squared_dynamic(
     return weighted_integral / z_restricted
 
 
-def _quantum_effective_mass(system: PeriodicSystem1D, observation_time: float) -> float:
+def _quantum_effective_mass(system: PeriodicSystem, observation_time: float) -> float:
     return (
         system.kbt
         * system.m**2

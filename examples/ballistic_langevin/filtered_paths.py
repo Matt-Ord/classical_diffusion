@@ -13,8 +13,7 @@ from classical_diffusion.langevin import (
     SODIUM_COPPER_SYSTEM_1D,
     SODIUM_COPPER_SYSTEM_2D,
     LangevinSimulationResult,
-    PeriodicSystem1D,
-    PeriodicSystemFCC,
+    PeriodicSystem,
     System,
     breakdown_ballistic_trajectory,
     plot_periodic_potential_1d,
@@ -39,7 +38,7 @@ if TYPE_CHECKING:
 
 def _annotate_bridge_site_energy(
     ax: Axes,
-    system: PeriodicSystemFCC,
+    system: PeriodicSystem,
 ) -> None:
     a1, a2 = system.lattice_vectors
     origin = a1 + a2
@@ -75,7 +74,7 @@ def _annotate_bridge_site_energy(
 
 def _annotate_top_site_energy(
     ax: Axes,
-    system: PeriodicSystemFCC,
+    system: PeriodicSystem,
     origin_site: tuple[int, int] = (0, 0),
 ) -> None:
     a1, a2 = system.lattice_vectors
@@ -108,7 +107,7 @@ def _annotate_top_site_energy(
 
 
 def _annotate_hollow_site_distance(
-    system: PeriodicSystemFCC,
+    system: PeriodicSystem,
     *,
     label_offset: tuple[float, float] = (12.0, 0.0),
     ax: Axes | None = None,
@@ -253,7 +252,7 @@ def _wrap_into_cell(
     )
 
 
-def _plot_separatrix_1d(system: PeriodicSystem1D, ax: Axes) -> None:
+def _plot_separatrix_1d(system: PeriodicSystem, ax: Axes) -> None:
     """Plot the separatrix E = E_b over a single period of the potential."""
     x = np.linspace(-system.delta_x / 2, system.delta_x / 2, 1000)
     potential = (
