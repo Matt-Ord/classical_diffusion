@@ -89,15 +89,23 @@ def _plot_periodic_isf_1d() -> None:
 def _plot_periodic_isf_2d() -> None:
 
     system = SODIUM_COPPER_SYSTEM_2D
+    # Both hexagonal lattice vectors have the nearest-neighbor spacing as length
     system = system.with_units(
         unit_with_trajectory_scale(
-            system.units, length=system.delta_x, time=1 / system.gamma
+            system.units,
+            length=float(np.linalg.norm(system.lattice_vectors[0])),
+            time=1 / system.gamma,
         )
     )
 
     direction = np.array([0, 1])
     delta_k = tuple(
-        2 * np.pi / system.delta_x * 0.5 * direction / np.linalg.norm(direction)
+        2
+        * np.pi
+        / float(np.linalg.norm(system.lattice_vectors[0]))
+        * 0.5
+        * direction
+        / np.linalg.norm(direction)
     )
 
     fig, ax = get_fancy_figure()

@@ -30,12 +30,15 @@ Fitted by Rittmeyer et al. to the helium spin-echo dephasing rates, with
 Langevin dynamics m r'' = -grad V - m gamma r' + noise on the DFT potential.
 """
 
+SODIUM_COPPER_SPACING = 2.558e-10
+"""The nearest-neighbor Cu-Cu spacing of Cu(111) used for sodium."""
+
 SODIUM_COPPER_SYSTEM_2D = build_2d_fcc(
     gamma=SODIUM_COPPER_GAMMA,
     temperature=155,
     barrier_energy=SODIUM_COPPER_BRIDGE_ENERGY,
     top_energy=SODIUM_COPPER_TOP_ENERGY,
-    delta_x=2.558e-10,
+    delta_x=SODIUM_COPPER_SPACING,
     m=SODIUM_MASS,
 )
 
@@ -43,7 +46,7 @@ SODIUM_COPPER_SYSTEM_1D = CosineSystem1D(
     gamma=SODIUM_COPPER_GAMMA,
     temperature=155,
     barrier_energy=SODIUM_COPPER_BRIDGE_ENERGY,
-    delta_x=(1 / np.sqrt(3)) * SODIUM_COPPER_SYSTEM_2D.delta_x,
+    delta_x=(1 / np.sqrt(3)) * SODIUM_COPPER_SPACING,
     m=SODIUM_MASS,
 )
 """The 1D analogue of SODIUM_COPPER_SYSTEM_2D, with the same hollow to bridge barrier."""
@@ -71,12 +74,15 @@ about +- 20 meV. With the bridge barrier it gives a potential whose variance,
 LITHIUM_COPPER_GAMMA = 1.2e12
 """The friction of lithium on Cu(111)."""
 
+LITHIUM_COPPER_SPACING = 2.556e-10
+"""The nearest-neighbor Cu-Cu spacing of the slab of Lai et al."""
+
 LITHIUM_COPPER_SYSTEM_2D = build_2d_fcc(
     gamma=LITHIUM_COPPER_GAMMA,
     temperature=140,
     barrier_energy=LITHIUM_COPPER_BRIDGE_ENERGY,
     top_energy=LITHIUM_COPPER_TOP_ENERGY,
-    delta_x=2.556e-10,
+    delta_x=LITHIUM_COPPER_SPACING,
     m=LITHIUM_MASS,
 )
 """Lithium on Cu(111), with the Cu-Cu distance of the slab of Lai et al."""
@@ -85,7 +91,7 @@ LITHIUM_COPPER_SYSTEM_1D = CosineSystem1D(
     gamma=LITHIUM_COPPER_GAMMA,
     temperature=140,
     barrier_energy=LITHIUM_COPPER_BRIDGE_ENERGY,
-    delta_x=(1 / np.sqrt(3)) * LITHIUM_COPPER_SYSTEM_2D.delta_x,
+    delta_x=(1 / np.sqrt(3)) * LITHIUM_COPPER_SPACING,
     m=LITHIUM_MASS,
 )
 """The 1D analogue of LITHIUM_COPPER_SYSTEM_2D, with the same hollow to bridge barrier."""
@@ -100,7 +106,7 @@ LITHIUM_COPPER_100_SYSTEM_2D = build_2d_square(
     gamma=LITHIUM_COPPER_GAMMA,
     temperature=140,
     barrier_energy=LITHIUM_COPPER_100_BRIDGE_ENERGY,
-    delta_x=2.556e-10,
+    delta_x=LITHIUM_COPPER_SPACING,
     m=LITHIUM_MASS,
 )
 """Lithium on Cu(100), with a single Fourier component.
@@ -116,7 +122,7 @@ LITHIUM_COPPER_100_SYSTEM_1D = CosineSystem1D(
     gamma=LITHIUM_COPPER_GAMMA,
     temperature=140,
     barrier_energy=LITHIUM_COPPER_100_BRIDGE_ENERGY,
-    delta_x=LITHIUM_COPPER_100_SYSTEM_2D.delta_x,
+    delta_x=LITHIUM_COPPER_SPACING,
     m=LITHIUM_MASS,
 )
 """The cut through LITHIUM_COPPER_100_SYSTEM_2D from hollow to hollow over a bridge."""
@@ -141,7 +147,7 @@ LITHIUM_COPPER_110_SYSTEM_2D = build_2d_rectangular(
     temperature=140,
     barrier_energy_x=LITHIUM_COPPER_110_TROUGH_ENERGY,
     barrier_energy_y=LITHIUM_COPPER_110_ACROSS_ENERGY,
-    delta_x=2.556e-10,
+    delta_x=LITHIUM_COPPER_SPACING,
     delta_y=LITHIUM_COPPER_110_ROW_SPACING,
     m=LITHIUM_MASS,
 )
@@ -160,7 +166,7 @@ LITHIUM_COPPER_110_SYSTEM_1D = CosineSystem1D(
     gamma=LITHIUM_COPPER_GAMMA,
     temperature=140,
     barrier_energy=LITHIUM_COPPER_110_TROUGH_ENERGY,
-    delta_x=LITHIUM_COPPER_110_SYSTEM_2D.delta_x,
+    delta_x=LITHIUM_COPPER_SPACING,
     m=LITHIUM_MASS,
 )
 """The cut through LITHIUM_COPPER_110_SYSTEM_2D along a trough, the easy direction."""
@@ -192,11 +198,14 @@ An upper bound from the HREELS linewidth of the parallel vibration, P. S. M.
 Townsend, PhD thesis, University of Cambridge (2017), Section 6.5.6.
 """
 
+HYDROGEN_COPPER_SPACING = 2.558e-10
+"""The nearest-neighbor Cu-Cu spacing of Cu(111) used for hydrogen."""
+
 HYDROGEN_COPPER_SYSTEM_2D = build_2d_fcc(
     gamma=HYDROGEN_COPPER_GAMMA,
     temperature=150,
     barrier_energy=HYDROGEN_COPPER_BRIDGE_ENERGY,
-    delta_x=2.558e-10,
+    delta_x=HYDROGEN_COPPER_SPACING,
     m=HYDROGEN_MASS,
 )
 """Hydrogen on Cu(111). Fang et al. give no top site energy, so it is 9 times the bridge."""
@@ -205,7 +214,7 @@ HYDROGEN_COPPER_SYSTEM_1D = CosineSystem1D(
     gamma=HYDROGEN_COPPER_GAMMA,
     temperature=150,
     barrier_energy=HYDROGEN_COPPER_BRIDGE_ENERGY,
-    delta_x=(1 / np.sqrt(3)) * HYDROGEN_COPPER_SYSTEM_2D.delta_x,
+    delta_x=(1 / np.sqrt(3)) * HYDROGEN_COPPER_SPACING,
     m=HYDROGEN_MASS,
 )
 """The 1D analogue of HYDROGEN_COPPER_SYSTEM_2D, with the same hollow to hollow barrier."""
@@ -219,11 +228,14 @@ lineshapes in helium atom scattering from adsorbates", PhD thesis, University
 of Cambridge (2013).
 """
 
+XENON_PLATINUM_SPACING = 2.775e-10
+"""The nearest-neighbor Pt-Pt spacing of Pt(111)."""
+
 XENON_PLATINUM_SYSTEM_2D = build_2d_triangular(
     gamma=5e10,
     temperature=121,
     barrier_energy=XENON_PLATINUM_BRIDGE_ENERGY,
-    delta_x=2.775e-10,
+    delta_x=XENON_PLATINUM_SPACING,
     m=131.293 * atomic_mass,
 )
 
@@ -231,7 +243,7 @@ XENON_PLATINUM_SYSTEM_1D = CosineSystem1D(
     gamma=XENON_PLATINUM_SYSTEM_2D.gamma,
     temperature=XENON_PLATINUM_SYSTEM_2D.temperature,
     barrier_energy=XENON_PLATINUM_BRIDGE_ENERGY,
-    delta_x=XENON_PLATINUM_SYSTEM_2D.delta_x,
+    delta_x=XENON_PLATINUM_SPACING,
     m=XENON_PLATINUM_SYSTEM_2D.m,
 )
 """The cut through XENON_PLATINUM_SYSTEM_2D along a close-packed row."""

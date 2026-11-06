@@ -107,10 +107,9 @@ def plot_force_1d(
 def plot_periodic_potential_1d(
     system: PeriodicSystem, *, n_points: int = 1000, ax: Axes | None = None
 ) -> tuple[Figure, Axes, Line2D]:
-    """Plot the periodic potential in 1D."""
-    return plot_potential_1d(
-        system, 0, 3 * system.delta_x * 2, n_points=n_points, ax=ax
-    )
+    """Plot a 1D periodic potential over six periods."""
+    period = float(abs(system.lattice_vectors[0, 0]))
+    return plot_potential_1d(system, 0, 6 * period, n_points=n_points, ax=ax)
 
 
 def plot_potential_2d(
@@ -194,13 +193,11 @@ def plot_periodic_potential_2d(
     shape: tuple[int, int] = (3, 3),
 ) -> tuple[Figure, Axes, QuadMesh, Line2D]:
     """Plot a 2D periodic potential over a few unit cells, with one unit cell outlined."""
+    cell_size = float(np.max(np.linalg.norm(system.lattice_vectors, axis=1)))
     fig, ax, mesh = plot_potential_2d(
         system,
-        (-shape[0] / 2 * system.delta_x, -shape[1] / 2 * system.delta_x),
-        (
-            shape[0] / 2 * system.delta_x,
-            shape[1] / 2 * system.delta_x,
-        ),
+        (-shape[0] / 2 * cell_size, -shape[1] / 2 * cell_size),
+        (shape[0] / 2 * cell_size, shape[1] / 2 * cell_size),
         n_points=n_points,
         ax=ax,
     )

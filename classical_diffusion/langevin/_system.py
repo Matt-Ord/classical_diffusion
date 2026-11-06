@@ -229,21 +229,59 @@ def _get_periodic_potential_expr(n_dim: int, n_terms: int) -> sp.Expr:
     return symbols[offset_index] + sp.Add(*terms)
 
 
-class PeriodicSystem(System):
-    """A system whose potential is periodic on a lattice.
+def _get_fourier_series_minimum(millers: np.ndarray, amplitudes: np.ndarray) -> float:
+    """Return the minimum over u of sum_k a_k cos(2 pi n_k . u).
 
-    The potential is a Fourier series, offset + sum_k a_k cos(2 pi n_k . u),
-    in the fractional coordinates u of the lattice: the position measured along
-    each lattice vector. It is given by the lattice vectors and the Miller
-    indices n_k, and stored as the wavevectors g_k = 2 pi n_k . B, with B the
-    reciprocal basis, so the potential in x is offset + sum_k a_k cos(g_k . x). Build the common surfaces
-    with CosineSystem1D, build_2d_fcc, build_2d_triangular, build_2d_square and
+    The minimum does not depend on the lattice. It is found on a grid of
+    fractional coordinates, fine enough to resolve every term, then refined to
+    machine precision by Newton steps with the exact gradient and Hessian.
+    """
+    n_dim = millers.shape[1]
+
+    def value(u: np.ndarray) -> np.ndarray:
+        return np.cos(2 * np.pi * u @ millers.T) @ amplitudes
+
+    n_grid = max(16, 8 * int(np.abs(millers).max(initial=0)))
+    axis = np.arange(n_grid) / n_grid
+    grid = np.stack(np.meshgrid(*[axis] * n_dim, indexing="ij"), axis=-1)
+    grid = grid.reshape(-1, n_dim)
+    values = value(grid)
+    best = float(values.min())
+
+    for u in grid[np.argsort(values)[:8]]:
+        point = u.copy()
+        for _ in range(50):
+            phase = 2 * np.pi * millers @ point
+            gradient = -2 * np.pi * (amplitudes * np.sin(phase)) @ millers
+            hessian = -((2 * np.pi) ** 2) * np.einsum(
+                "k,ki,kj->ij", amplitudes * np.cos(phase), millers, millers
+            )
+            if np.any(np.linalg.eigvalsh(hessian) <= 0):
+                break
+            step = np.linalg.solve(hessian, gradient)
+            point -= step
+            if np.max(np.abs(step)) < 1e-15:  # ruff: ignore[magic-value-comparison]
+                break
+        best = min(best, float(value(point)))
+    return best
+
+
+@dataclass(frozen=True, kw_only=True, init=False)
+class PeriodicSystem(System):
+    """A system whose potential is periodic on a lattice, with its minimum at zero.
+
+    The potential is a Fourier series, sum_k a_k cos(2 pi n_k . u) + C, in the
+    fractional coordinates u of the lattice: the position measured along each
+    lattice vector. The constant C puts the minimum at zero. The series is given
+    by the lattice vectors and the Miller indices n_k, and stored as the
+    wavevectors g_k = 2 pi n_k . B, with B the reciprocal basis, so the
+    potential in x is sum_k a_k cos(g_k . x) + C. Build the common surfaces with
+    CosineSystem1D, build_2d_fcc, build_2d_triangular, build_2d_square and
     build_2d_rectangular.
     """
 
     _lattice: tuple[tuple[float, ...], ...]
     _millers: tuple[tuple[int, ...], ...]
-    _barrier_energy: float
 
     def __init__(  # ruff:ignore[too-many-arguments]
         self,
@@ -251,44 +289,38 @@ class PeriodicSystem(System):
         gamma: float,
         temperature: float,
         m: float,
-        lattice_vectors: np.ndarray | list[list[float]],
+        lattice_vectors: np.ndarray,
         terms: tuple[FourierTerm, ...],
-        offset: float = 0.0,
-        barrier_energy: float,
         units: UnitSystem | None = None,
     ) -> None:
-        lattice = np.asarray(lattice_vectors, dtype=float)
-        n_dim = lattice.shape[0]
-        if lattice.shape != (n_dim, n_dim):
-            msg = f"lattice_vectors must be square, not {lattice.shape}"
+        n_dim = lattice_vectors.shape[0]
+        if lattice_vectors.shape != (n_dim, n_dim):
+            msg = f"lattice_vectors must be square, not {lattice_vectors.shape}"
             raise ValueError(msg)
-        millers = tuple(tuple(t.miller) for t in terms)
-        if any(len(n) != n_dim for n in millers):
+        millers = np.array([t.miller for t in terms], dtype=int).reshape(-1, n_dim)
+        if any(len(t.miller) != n_dim for t in terms):
             msg = f"every Miller index must have {n_dim} components"
             raise ValueError(msg)
+        amplitudes = np.array([t.amplitude for t in terms], dtype=float)
 
         # Rows of the reciprocal basis b_i satisfy a_i . b_j = delta_ij, so the
         # term with Miller index n has wavevector g = 2 pi n . B and phase 2 pi n . u.
-        reciprocal = np.linalg.inv(lattice).T
-        wavevectors = (
-            2 * np.pi * np.array(millers, dtype=float).reshape(-1, n_dim) @ reciprocal
-        )
+        reciprocal = np.linalg.inv(lattice_vectors).T
+        wavevectors = 2 * np.pi * millers @ reciprocal
+        offset = -_get_fourier_series_minimum(millers, amplitudes)
 
         super().__init__(
             gamma=gamma,
             temperature=temperature,
             m=m,
-            potential=(n_dim, _get_periodic_potential_expr(n_dim, len(millers))),
-            params=(
-                *wavevectors.ravel().tolist(),
-                *(float(t.amplitude) for t in terms),
-                float(offset),
-            ),
+            potential=(n_dim, _get_periodic_potential_expr(n_dim, len(terms))),
+            params=(*wavevectors.ravel().tolist(), *amplitudes.tolist(), offset),
             units=units or UnitSystem(),
         )
-        object.__setattr__(self, "_lattice", tuple(map(tuple, lattice.tolist())))
-        object.__setattr__(self, "_millers", millers)
-        object.__setattr__(self, "_barrier_energy", barrier_energy)
+        object.__setattr__(
+            self, "_lattice", tuple(map(tuple, lattice_vectors.astype(float).tolist()))
+        )
+        object.__setattr__(self, "_millers", tuple(map(tuple, millers.tolist())))
 
     @property
     def lattice_vectors(self) -> np.ndarray:
@@ -301,61 +333,29 @@ class PeriodicSystem(System):
         _, amplitude_slice, _ = _get_periodic_param_layout(
             self.n_dim, len(self._millers)
         )
-        amplitudes = self.params[amplitude_slice]
         return tuple(
             FourierTerm(miller=n, amplitude=a)
-            for n, a in zip(self._millers, amplitudes, strict=True)
-        )
-
-    @property
-    def offset(self) -> float:
-        """The constant term of the potential."""
-        _, _, offset_index = _get_periodic_param_layout(self.n_dim, len(self._millers))
-        return self.params[offset_index]
-
-    @property
-    def delta_x(self) -> float:
-        """The length of the first lattice vector."""
-        return float(np.linalg.norm(self.lattice_vectors[0]))
-
-    @property
-    def barrier_energy(self) -> float:
-        """The lowest barrier between adjacent minima, as given by the builder."""
-        return self._barrier_energy
-
-    def _extra_state(self) -> tuple[object, ...]:
-        """Return the state kept outside params, which equality and hashing must also see."""
-        return (self._lattice, self._millers, self._barrier_energy)
-
-    @override
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, PeriodicSystem):
-            return NotImplemented
-        return (
-            super().__eq__(other) is True
-            and self._extra_state() == other._extra_state()
+            for n, a in zip(self._millers, self.params[amplitude_slice], strict=True)
         )
 
     @override
     def __hash__(self) -> int:
-        return hash((super().__hash__(), self._extra_state()))
+        # System's hash is stable across processes; add the lattice and Miller indices
+        return hash((super().__hash__(), self._lattice, self._millers))
 
     @override
     def with_units(self, units: UnitSystem) -> PeriodicSystem:
         """Return the system in the given units."""
-        length = self.units.length_into(1.0, units)
         energy = self.units.energy_into(1.0, units)
         return PeriodicSystem(
             gamma=self.units.frequency_into(self.gamma, units),
             temperature=self.temperature,
             m=self.units.mass_into(self.m, units),
-            lattice_vectors=self.lattice_vectors * length,
+            lattice_vectors=self.units.length_into(self.lattice_vectors, units),
             terms=tuple(
                 FourierTerm(miller=t.miller, amplitude=t.amplitude * energy)
                 for t in self.terms
             ),
-            offset=self.offset * energy,
-            barrier_energy=self.barrier_energy * energy,
             units=units,
         )
 
@@ -364,8 +364,8 @@ class CosineSystem1D(PeriodicSystem):
     """A 1D cosine potential, V = (E_b / 2) (1 - cos(2 pi x / delta_x)).
 
     The minima are at x = n delta_x and the maxima at E_b halfway between. The
-    type guarantees a single cosine, which analytic results such as the Kramers
-    mapping rely on.
+    type guarantees a single cosine, so the period delta_x and the barrier E_b
+    are well defined, which analytic results such as the Kramers mapping rely on.
     """
 
     def __init__(  # ruff:ignore[too-many-arguments]
@@ -382,12 +382,20 @@ class CosineSystem1D(PeriodicSystem):
             gamma=gamma,
             temperature=temperature,
             m=m,
-            lattice_vectors=[[delta_x]],
+            lattice_vectors=np.array([[delta_x]]),
             terms=(FourierTerm(miller=(1,), amplitude=-barrier_energy / 2),),
-            offset=barrier_energy / 2,
-            barrier_energy=barrier_energy,
             units=units,
         )
+
+    @property
+    def delta_x(self) -> float:
+        """The period of the potential."""
+        return abs(self._lattice[0][0])
+
+    @property
+    def barrier_energy(self) -> float:
+        """The height of the maxima above the minima."""
+        return -2 * self.terms[0].amplitude
 
     @override
     def with_units(self, units: UnitSystem) -> CosineSystem1D:
@@ -402,9 +410,9 @@ class CosineSystem1D(PeriodicSystem):
         )
 
 
-def _get_hexagonal_lattice(delta_x: float) -> list[list[float]]:
+def _get_hexagonal_lattice(delta_x: float) -> np.ndarray:
     """Return the lattice vectors of a hexagonal lattice with nearest-neighbor spacing delta_x."""
-    return [[0.0, delta_x], [np.sqrt(3.0) / 2.0 * delta_x, 0.5 * delta_x]]
+    return np.array([[0.0, delta_x], [np.sqrt(3.0) / 2.0 * delta_x, 0.5 * delta_x]])
 
 
 _HEXAGONAL_SHELL = ((1, 0), (0, 1), (1, 1))
@@ -426,8 +434,8 @@ def build_2d_fcc(  # ruff:ignore[too-many-arguments]
     The fcc and hcp hollow sites are degenerate minima at zero, the bridge sites
     are saddle points at barrier_energy and the top sites are maxima at
     top_energy. This uses the first two shells of the hexagonal lattice,
-    A_1 sum_j cos(G_j . r) + A_2 sum_j cos(2 G_j . r) + C, with
-    A_1 = (E_t - E_b) / 4, A_2 = (9 E_b - E_t) / 36 and C = E_t / 3.
+    A_1 sum_j cos(G_j . r) + A_2 sum_j cos(2 G_j . r), with
+    A_1 = (E_t - E_b) / 4 and A_2 = (9 E_b - E_t) / 36.
     top_energy defaults to 9 barrier_energy, for which A_2 = 0.
     """
     top_energy = 9 * barrier_energy if top_energy is None else top_energy
@@ -445,8 +453,6 @@ def build_2d_fcc(  # ruff:ignore[too-many-arguments]
                 for n in _HEXAGONAL_SHELL
             ),
         ),
-        offset=top_energy / 3,
-        barrier_energy=barrier_energy,
         units=units,
     )
 
@@ -460,7 +466,7 @@ def build_2d_triangular(  # ruff:ignore[too-many-arguments]
     barrier_energy: float,
     units: UnitSystem | None = None,
 ) -> PeriodicSystem:
-    """Build V = (E_b / 4) (3 - sum_j cos(G_j . r)), with one minimum per hexagonal cell.
+    """Build -(E_b / 4) sum_j cos(G_j . r), with one minimum per hexagonal cell.
 
     The minima are at the lattice points, a spacing delta_x apart, the bridge
     sites are saddle points at E_b and the hollow sites are maxima at 9 E_b / 8.
@@ -476,8 +482,6 @@ def build_2d_triangular(  # ruff:ignore[too-many-arguments]
             FourierTerm(miller=n, amplitude=-barrier_energy / 4)
             for n in _HEXAGONAL_SHELL
         ),
-        offset=3 * barrier_energy / 4,
-        barrier_energy=barrier_energy,
         units=units,
     )
 
@@ -496,7 +500,7 @@ def build_2d_square(  # ruff:ignore[too-many-arguments]
 
     The hollow sites are minima at zero, the bridge sites are saddle points at
     barrier_energy and the top sites are maxima at top_energy. The potential is
-    A (2 - cos k x - cos k y) + B (2 - cos k (x + y) - cos k (x - y)), with
+    -A (cos k x + cos k y) - B (cos k (x + y) + cos k (x - y)), with
     k = 2 pi / delta_x, A = E_t / 4 and B = (2 E_b - E_t) / 8. top_energy
     defaults to 2 barrier_energy, for which B = 0.
     """
@@ -507,15 +511,13 @@ def build_2d_square(  # ruff:ignore[too-many-arguments]
         gamma=gamma,
         temperature=temperature,
         m=m,
-        lattice_vectors=[[delta_x, 0.0], [0.0, delta_x]],
+        lattice_vectors=np.array([[delta_x, 0.0], [0.0, delta_x]]),
         terms=(
             FourierTerm(miller=(1, 0), amplitude=-first),
             FourierTerm(miller=(0, 1), amplitude=-first),
             FourierTerm(miller=(1, 1), amplitude=-second),
             FourierTerm(miller=(1, -1), amplitude=-second),
         ),
-        offset=2 * first + 2 * second,
-        barrier_energy=barrier_energy,
         units=units,
     )
 
@@ -542,13 +544,11 @@ def build_2d_rectangular(  # ruff:ignore[too-many-arguments]
         gamma=gamma,
         temperature=temperature,
         m=m,
-        lattice_vectors=[[delta_x, 0.0], [0.0, delta_y]],
+        lattice_vectors=np.array([[delta_x, 0.0], [0.0, delta_y]]),
         terms=(
             FourierTerm(miller=(1, 0), amplitude=-barrier_energy_x / 2),
             FourierTerm(miller=(0, 1), amplitude=-barrier_energy_y / 2),
         ),
-        offset=(barrier_energy_x + barrier_energy_y) / 2,
-        barrier_energy=min(barrier_energy_x, barrier_energy_y),
         units=units,
     )
 
@@ -663,6 +663,6 @@ def get_diffusion_time(system: System, characteristic_length: float) -> float:
     return np.sqrt(system.m * characteristic_length**2 / system.kbt)
 
 
-def get_characteristic_periodic_mass(system: PeriodicSystem) -> float:
+def get_characteristic_periodic_mass(system: CosineSystem1D) -> float:
     """Return the characteristic mass of a periodic system, kT delta_x^2 / gamma^2."""
     return system.kbt * system.delta_x**2 / system.gamma**2

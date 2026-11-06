@@ -110,7 +110,12 @@ def _plot_effective_mass_fitted_isf_2d() -> None:
     fig, ax = get_fancy_figure()
     direction = np.array([0, 1])
     delta_k = tuple(
-        2 * np.pi / system.delta_x * 0.2 * direction / np.linalg.norm(direction)
+        2
+        * np.pi
+        / float(np.linalg.norm(system.lattice_vectors[0]))
+        * 0.2
+        * direction
+        / np.linalg.norm(direction)
     )
 
     result = solve_ensemble_ballistic(
@@ -136,7 +141,9 @@ def _plot_effective_mass_fitted_isf_2d() -> None:
     line_0.set_color(CAM_CHERRY.warm)
     fill_0.set_color(CAM_CHERRY.warm)
 
-    trapped_probability = get_under_barrier_occupation(result, system.barrier_energy)
+    trapped_probability = get_under_barrier_occupation(
+        result, SODIUM_COPPER_SYSTEM_1D.with_units(system.units).barrier_energy
+    )
 
     _, ax, line_1 = plot_exact_flat_ballistic_isf(
         system=system,
