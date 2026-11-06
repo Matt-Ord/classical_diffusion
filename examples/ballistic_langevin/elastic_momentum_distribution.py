@@ -9,11 +9,10 @@ from scipy.stats import halfnorm
 from classical_diffusion.analysis import plot_isf, plot_momentum_histogram
 from classical_diffusion.langevin import (
     SODIUM_COPPER_SYSTEM_1D,
+    CosineSystem1D,
     LangevinSimulationResult,
-    PeriodicSystem,
     System,
     breakdown_ballistic_trajectory,
-    build_1d_cosine,
     solve_ensemble_ballistic,
 )
 from classical_diffusion.plot import CAM_BLUE, get_fancy_figure
@@ -22,7 +21,7 @@ from classical_diffusion.system import unit_with_trajectory_scale
 from classical_diffusion.util import cache_base_path
 
 
-def _with_trajectory_units(system: PeriodicSystem) -> PeriodicSystem:
+def _with_trajectory_units(system: CosineSystem1D) -> CosineSystem1D:
     """Measure momentum in units of the thermal momentum sqrt(m k_B T)."""
     return system.with_units(
         unit_with_trajectory_scale(
@@ -41,7 +40,7 @@ def _get_elastic_momentum(
     return np.abs(np.average(elastic.p_points[:, 0, :], axis=-1))
 
 
-def _get_exact_parameters(system: PeriodicSystem) -> tuple[float, float, float]:
+def _get_exact_parameters(system: CosineSystem1D) -> tuple[float, float, float]:
     """Return the exact dynamic fraction A, TST rate Gamma_TST and effective mass.
 
     Each energy E = epsilon E_b is weighted by e^(-beta E) tau(E), where tau(E)
@@ -79,7 +78,7 @@ def _get_exact_parameters(system: PeriodicSystem) -> tuple[float, float, float]:
     return dynamic_fraction, rate, effective_mass
 
 
-def _get_gamma_parameters(system: PeriodicSystem) -> tuple[float, float, float]:
+def _get_gamma_parameters(system: CosineSystem1D) -> tuple[float, float, float]:
     """Return A and the gamma (shape, scale) of the escaping trajectories.
 
     The mean p_bar = 2 m Gamma_TST Delta x / A and the shape kappa are fixed by
@@ -107,7 +106,7 @@ def _truncate_results[S: System](
     )
 
 
-def _simulate_elastic_trajectories[S: PeriodicSystem](
+def _simulate_elastic_trajectories[S: CosineSystem1D](
     system: S, *, n_samples: int, escaping_only: bool = True
 ) -> LangevinSimulationResult[S]:
     # Only trajectories above the barrier escape, and contribute a
@@ -130,7 +129,7 @@ def _plot_elastic_momentum_distribution_flat() -> None:
     # On a flat surface, the elastic momentum is the momentum, which is
     # distributed according to a half-normal distribution
     system = _with_trajectory_units(
-        build_1d_cosine(
+        CosineSystem1D(
             gamma=SODIUM_COPPER_SYSTEM_1D.gamma,
             temperature=SODIUM_COPPER_SYSTEM_1D.temperature,
             m=SODIUM_COPPER_SYSTEM_1D.m,
