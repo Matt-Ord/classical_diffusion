@@ -303,8 +303,8 @@ class PeriodicSystem(System):
     build_2d_rectangular.
     """
 
-    _lattice: tuple[tuple[float, ...], ...]
-    _millers: tuple[tuple[int, ...], ...]
+    _lattice: tuple[tuple[float, ...], ...] = field(compare=False)
+    _millers: tuple[tuple[int, ...], ...] = field(compare=False)
 
     def __init__(  # ruff:ignore[too-many-arguments]
         self,
@@ -363,8 +363,10 @@ class PeriodicSystem(System):
 
     @override
     def __hash__(self) -> int:
-        # System's hash is stable across processes; add the lattice and Miller indices
-        return hash((super().__hash__(), self._lattice, self._millers))
+        # Keep System's hash, which is stable across processes. Without an explicit
+        # __hash__, the frozen dataclass would generate one from the fields. The
+        # lattice is left out, like in __eq__: the params fix the potential.
+        return super().__hash__()
 
     @override
     def with_units(self, units: UnitSystem) -> PeriodicSystem:
