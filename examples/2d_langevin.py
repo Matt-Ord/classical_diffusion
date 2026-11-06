@@ -6,7 +6,7 @@ from scipy.constants import Boltzmann
 from classical_diffusion.analysis import plot_isf, plot_x_evolution_2d
 from classical_diffusion.langevin import (
     build_2d_fcc,
-    plot_periodic_potential_fcc,
+    plot_periodic_potential_2d,
     solve_ensemble,
     solve_ensemble_ballistic,
     solve_single,
@@ -21,7 +21,7 @@ def _plot_periodic_system() -> None:
         gamma=0.1, temperature=1.0, m=1.0, delta_x=5.0, barrier_energy=1.5
     )
     fig, ax = get_fancy_figure()
-    _, _, mesh, _ = plot_periodic_potential_fcc(system, ax=ax)
+    _, _, mesh, _ = plot_periodic_potential_2d(system, ax=ax)
     mesh.set_rasterized(True)
     fig.savefig("examples/2d_langevin.potential.pdf")
 

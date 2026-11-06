@@ -664,5 +664,5 @@ def get_diffusion_time(system: System, characteristic_length: float) -> float:
 
 
 def get_characteristic_periodic_mass(system: PeriodicSystem) -> float:
-    """Return the characteristic mass for a 1D periodic system."""
+    """Return the characteristic mass of a periodic system, kT delta_x^2 / gamma^2."""
     return system.kbt * system.delta_x**2 / system.gamma**2
