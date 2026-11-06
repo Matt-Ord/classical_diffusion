@@ -11,7 +11,7 @@ import sympy as sp
 from classical_diffusion.system import UnitSystem
 
 if TYPE_CHECKING:
-    from classical_diffusion.langevin import PeriodicSystem1D, System
+    from classical_diffusion.langevin import PeriodicSystem, System
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -169,7 +169,7 @@ def get_lifson_jackson_rate(
     return system.kbt / (system.gamma * (i_plus * i_minus))
 
 
-def get_kramers_parameters_cosine(system: PeriodicSystem1D) -> KramersParameters:
+def get_kramers_parameters_cosine(system: PeriodicSystem) -> KramersParameters:
     """Potential must be cosine."""
     barrier_energy = system.barrier_energy
     delta_x = system.delta_x

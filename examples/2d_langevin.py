@@ -5,7 +5,7 @@ from scipy.constants import Boltzmann
 
 from classical_diffusion.analysis import plot_isf, plot_x_evolution_2d
 from classical_diffusion.langevin import (
-    PeriodicSystemFCC,
+    build_2d_fcc,
     plot_periodic_potential_fcc,
     solve_ensemble,
     solve_ensemble_ballistic,
@@ -17,7 +17,7 @@ from classical_diffusion.util import cache_base_path
 
 
 def _plot_periodic_system() -> None:
-    system = PeriodicSystemFCC(
+    system = build_2d_fcc(
         gamma=0.1, temperature=1.0, m=1.0, delta_x=5.0, barrier_energy=1.5
     )
     fig, ax = get_fancy_figure()
@@ -28,7 +28,7 @@ def _plot_periodic_system() -> None:
 
 def _plot_2d_periodic_isf() -> None:
 
-    system = PeriodicSystemFCC(
+    system = build_2d_fcc(
         gamma=0.1, temperature=0.5 / Boltzmann, m=1.0, delta_x=5, barrier_energy=1.5
     )
 
@@ -63,7 +63,7 @@ def _plot_2d_periodic_isf() -> None:
 
 
 def _plot_2d_trajectory() -> None:
-    system = PeriodicSystemFCC(
+    system = build_2d_fcc(
         gamma=0.1, temperature=0.5 / Boltzmann, m=1.0, delta_x=5, barrier_energy=1.5
     )
 

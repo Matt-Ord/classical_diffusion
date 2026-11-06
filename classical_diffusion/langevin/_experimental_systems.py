@@ -2,11 +2,11 @@ import numpy as np
 from scipy.constants import atomic_mass, electron_volt
 
 from classical_diffusion.langevin._system import (
-    PeriodicSystem1D,
-    PeriodicSystemFCC,
-    PeriodicSystemRectangular,
-    PeriodicSystemSquare,
-    PeriodicSystemTriangular,
+    build_1d_cosine,
+    build_2d_fcc,
+    build_2d_rectangular,
+    build_2d_square,
+    build_2d_triangular,
 )
 
 SODIUM_MASS = 22.990 * atomic_mass
@@ -30,7 +30,7 @@ Fitted by Rittmeyer et al. to the helium spin-echo dephasing rates, with
 Langevin dynamics m r'' = -grad V - m gamma r' + noise on the DFT potential.
 """
 
-SODIUM_COPPER_SYSTEM_2D = PeriodicSystemFCC(
+SODIUM_COPPER_SYSTEM_2D = build_2d_fcc(
     gamma=SODIUM_COPPER_GAMMA,
     temperature=155,
     barrier_energy=SODIUM_COPPER_BRIDGE_ENERGY,
@@ -39,7 +39,7 @@ SODIUM_COPPER_SYSTEM_2D = PeriodicSystemFCC(
     m=SODIUM_MASS,
 )
 
-SODIUM_COPPER_SYSTEM_1D = PeriodicSystem1D(
+SODIUM_COPPER_SYSTEM_1D = build_1d_cosine(
     gamma=SODIUM_COPPER_GAMMA,
     temperature=155,
     barrier_energy=SODIUM_COPPER_BRIDGE_ENERGY,
@@ -71,7 +71,7 @@ about +- 20 meV. With the bridge barrier it gives a potential whose variance,
 LITHIUM_COPPER_GAMMA = 1.2e12
 """The friction of lithium on Cu(111)."""
 
-LITHIUM_COPPER_SYSTEM_2D = PeriodicSystemFCC(
+LITHIUM_COPPER_SYSTEM_2D = build_2d_fcc(
     gamma=LITHIUM_COPPER_GAMMA,
     temperature=140,
     barrier_energy=LITHIUM_COPPER_BRIDGE_ENERGY,
@@ -81,7 +81,7 @@ LITHIUM_COPPER_SYSTEM_2D = PeriodicSystemFCC(
 )
 """Lithium on Cu(111), with the Cu-Cu distance of the slab of Lai et al."""
 
-LITHIUM_COPPER_SYSTEM_1D = PeriodicSystem1D(
+LITHIUM_COPPER_SYSTEM_1D = build_1d_cosine(
     gamma=LITHIUM_COPPER_GAMMA,
     temperature=140,
     barrier_energy=LITHIUM_COPPER_BRIDGE_ENERGY,
@@ -96,7 +96,7 @@ LITHIUM_COPPER_100_BRIDGE_ENERGY = 117.5e-3 * electron_volt
 Read from the same figure in the same way as LITHIUM_COPPER_BRIDGE_ENERGY, to +- 1 meV.
 """
 
-LITHIUM_COPPER_100_SYSTEM_2D = PeriodicSystemSquare(
+LITHIUM_COPPER_100_SYSTEM_2D = build_2d_square(
     gamma=LITHIUM_COPPER_GAMMA,
     temperature=140,
     barrier_energy=LITHIUM_COPPER_100_BRIDGE_ENERGY,
@@ -112,7 +112,7 @@ pixel to the colour bar (7.9 meV per bar pixel), puts the top sites at about
 3.45e-3 eV^2, is close to the 2.9e-3 eV^2 Lai et al. quote for that map.
 """
 
-LITHIUM_COPPER_100_SYSTEM_1D = PeriodicSystem1D(
+LITHIUM_COPPER_100_SYSTEM_1D = build_1d_cosine(
     gamma=LITHIUM_COPPER_GAMMA,
     temperature=140,
     barrier_energy=LITHIUM_COPPER_100_BRIDGE_ENERGY,
@@ -133,7 +133,7 @@ LITHIUM_COPPER_110_ACROSS_ENERGY = 452.7e-3 * electron_volt
 Path a of Lai et al., Fig. S10a, a hop of 3.615 Angstrom, read in the same way to +- 1 meV.
 """
 
-LITHIUM_COPPER_110_SYSTEM_2D = PeriodicSystemRectangular(
+LITHIUM_COPPER_110_SYSTEM_2D = build_2d_rectangular(
     gamma=LITHIUM_COPPER_GAMMA,
     temperature=140,
     barrier_energy_x=LITHIUM_COPPER_110_TROUGH_ENERGY,
@@ -153,7 +153,7 @@ C (1 - cos k_x x) (1 - cos k_y y) to lower the top sites cannot reach it while
 both DFT barriers remain saddle points.
 """
 
-LITHIUM_COPPER_110_SYSTEM_1D = PeriodicSystem1D(
+LITHIUM_COPPER_110_SYSTEM_1D = build_1d_cosine(
     gamma=LITHIUM_COPPER_GAMMA,
     temperature=140,
     barrier_energy=LITHIUM_COPPER_110_TROUGH_ENERGY,
@@ -162,11 +162,11 @@ LITHIUM_COPPER_110_SYSTEM_1D = PeriodicSystem1D(
 )
 """The cut through LITHIUM_COPPER_110_SYSTEM_2D along a trough, the easy direction."""
 
-LITHIUM_COPPER_110_ACROSS_SYSTEM_1D = PeriodicSystem1D(
+LITHIUM_COPPER_110_ACROSS_SYSTEM_1D = build_1d_cosine(
     gamma=LITHIUM_COPPER_GAMMA,
     temperature=140,
     barrier_energy=LITHIUM_COPPER_110_ACROSS_ENERGY,
-    delta_x=LITHIUM_COPPER_110_SYSTEM_2D.delta_y,
+    delta_x=float(LITHIUM_COPPER_110_SYSTEM_2D.lattice_vectors[1, 1]),
     m=LITHIUM_MASS,
 )
 """The cut through LITHIUM_COPPER_110_SYSTEM_2D across the rows, the hard direction."""
@@ -189,7 +189,7 @@ An upper bound from the HREELS linewidth of the parallel vibration, P. S. M.
 Townsend, PhD thesis, University of Cambridge (2017), Section 6.5.6.
 """
 
-HYDROGEN_COPPER_SYSTEM_2D = PeriodicSystemFCC(
+HYDROGEN_COPPER_SYSTEM_2D = build_2d_fcc(
     gamma=HYDROGEN_COPPER_GAMMA,
     temperature=150,
     barrier_energy=HYDROGEN_COPPER_BRIDGE_ENERGY,
@@ -198,7 +198,7 @@ HYDROGEN_COPPER_SYSTEM_2D = PeriodicSystemFCC(
 )
 """Hydrogen on Cu(111). Fang et al. give no top site energy, so it is 9 times the bridge."""
 
-HYDROGEN_COPPER_SYSTEM_1D = PeriodicSystem1D(
+HYDROGEN_COPPER_SYSTEM_1D = build_1d_cosine(
     gamma=HYDROGEN_COPPER_GAMMA,
     temperature=150,
     barrier_energy=HYDROGEN_COPPER_BRIDGE_ENERGY,
@@ -216,7 +216,7 @@ lineshapes in helium atom scattering from adsorbates", PhD thesis, University
 of Cambridge (2013).
 """
 
-XENON_PLATINUM_SYSTEM_2D = PeriodicSystemTriangular(
+XENON_PLATINUM_SYSTEM_2D = build_2d_triangular(
     gamma=5e10,
     temperature=121,
     barrier_energy=XENON_PLATINUM_BRIDGE_ENERGY,
@@ -224,7 +224,7 @@ XENON_PLATINUM_SYSTEM_2D = PeriodicSystemTriangular(
     m=131.293 * atomic_mass,
 )
 
-XENON_PLATINUM_SYSTEM_1D = PeriodicSystem1D(
+XENON_PLATINUM_SYSTEM_1D = build_1d_cosine(
     gamma=XENON_PLATINUM_SYSTEM_2D.gamma,
     temperature=XENON_PLATINUM_SYSTEM_2D.temperature,
     barrier_energy=XENON_PLATINUM_BRIDGE_ENERGY,
