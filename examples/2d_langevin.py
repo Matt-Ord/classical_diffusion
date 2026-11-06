@@ -40,7 +40,9 @@ def _plot_2d_periodic_isf() -> None:
 
     fig, ax = get_fancy_figure()
 
-    delta_k = (0.5 * 2 * np.pi / system.delta_x,)
+    # Both hexagonal lattice vectors have the nearest-neighbor spacing as length
+    spacing = float(np.linalg.norm(system.lattice_vectors[0]))
+    delta_k = (0.5 * 2 * np.pi / spacing,)
     _, ax, line_0, _ = plot_isf(
         result=result,
         ax=ax,
