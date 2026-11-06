@@ -1,14 +1,18 @@
 import zlib
 from dataclasses import dataclass, field
 from functools import cache, cached_property
-from typing import final, override
+from typing import TYPE_CHECKING, final, override
 
 import jax
 import numpy as np
 import sympy as sp
+from scipy import optimize
 
 from classical_diffusion.hopping import KramersParameters
 from classical_diffusion.system import CanonicalUnitSystem, UnitSystem
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def _hash_sympy_expr(expr: sp.Expr) -> int:
@@ -229,41 +233,60 @@ def _get_periodic_potential_expr(n_dim: int, n_terms: int) -> sp.Expr:
     return symbols[offset_index] + sp.Add(*terms)
 
 
+@cache
+def _get_periodic_potential_functions(
+    n_dim: int, n_terms: int
+) -> tuple[Callable[..., float], Callable[..., list[float]], Callable[..., np.ndarray]]:
+    """Return the value, gradient and Hessian of the periodic potential.
+
+    Each is lambdified from the shared expression of _get_periodic_potential_expr,
+    and takes the coordinates followed by the parameters.
+    """
+    expr = _get_periodic_potential_expr(n_dim, n_terms)
+    coordinates = sp.symbols(f"x0:{n_dim}")
+    _, _, offset_index = _get_periodic_param_layout(n_dim, n_terms)
+    symbols = (*coordinates, *sp.symbols(f"s0:{offset_index + 1}"))
+    gradient = [sp.diff(expr, c) for c in coordinates]
+    hessian = sp.hessian(expr, coordinates)
+    return (
+        sp.lambdify(symbols, expr, modules="numpy"),
+        sp.lambdify(symbols, gradient, modules="numpy"),
+        sp.lambdify(symbols, hessian, modules="numpy"),
+    )
+
+
 def _get_fourier_series_minimum(millers: np.ndarray, amplitudes: np.ndarray) -> float:
     """Return the minimum over u of sum_k a_k cos(2 pi n_k . u).
 
-    The minimum does not depend on the lattice. It is found on a grid of
-    fractional coordinates, fine enough to resolve every term, then refined to
-    machine precision by Newton steps with the exact gradient and Hessian.
+    The minimum does not depend on the lattice, so the series is evaluated in
+    fractional coordinates, with wavevectors 2 pi n_k. A brute-force grid over one
+    unit cell, fine enough to resolve every term, finds the deepest well, and a
+    trust-region Newton search with the exact gradient and Hessian refines it.
     """
     n_dim = millers.shape[1]
+    value_fn, gradient_fn, hessian_fn = _get_periodic_potential_functions(
+        n_dim, len(amplitudes)
+    )
+    params = (*(2 * np.pi * millers).ravel().tolist(), *amplitudes.tolist(), 0.0)
 
-    def value(u: np.ndarray) -> np.ndarray:
-        return np.cos(2 * np.pi * u @ millers.T) @ amplitudes
+    def value(u: np.ndarray) -> float:
+        return float(value_fn(*u, *params))
+
+    def gradient(u: np.ndarray) -> np.ndarray:
+        return np.array(gradient_fn(*u, *params), dtype=float)
+
+    def hessian(u: np.ndarray) -> np.ndarray:
+        return np.array(hessian_fn(*u, *params), dtype=float)
 
     n_grid = max(16, 8 * int(np.abs(millers).max(initial=0)))
-    axis = np.arange(n_grid) / n_grid
-    grid = np.stack(np.meshgrid(*[axis] * n_dim, indexing="ij"), axis=-1)
-    grid = grid.reshape(-1, n_dim)
-    values = value(grid)
-    best = float(values.min())
-
-    for u in grid[np.argsort(values)[:8]]:
-        point = u.copy()
-        for _ in range(50):
-            phase = 2 * np.pi * millers @ point
-            gradient = -2 * np.pi * (amplitudes * np.sin(phase)) @ millers
-            hessian = -((2 * np.pi) ** 2) * np.einsum(
-                "k,ki,kj->ij", amplitudes * np.cos(phase), millers, millers
-            )
-            if np.any(np.linalg.eigvalsh(hessian) <= 0):
-                break
-            step = np.linalg.solve(hessian, gradient)
-            point -= step
-            if np.max(np.abs(step)) < 1e-15:  # ruff: ignore[magic-value-comparison]
-                break
-        best = min(best, float(value(point)))
-    return best
+    start = np.atleast_1d(
+        optimize.brute(value, ranges=[(0.0, 1.0)] * n_dim, Ns=n_grid, finish=None)
+    )
+    return float(
+        optimize.minimize(
+            value, start, jac=gradient, hess=hessian, method="trust-exact"
+        ).fun
+    )
 
 
 @dataclass(frozen=True, kw_only=True, init=False)
