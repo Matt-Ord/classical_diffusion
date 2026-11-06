@@ -13,8 +13,8 @@ from classical_diffusion.hopping import (
     plot_deterministic_isf,
 )
 from classical_diffusion.langevin import (
+    CosineSystem1D,
     KramersSystem1D,
-    build_1d_cosine,
     plot_force_1d,
     plot_potential_1d,
     solve_ensemble_overdamped,
@@ -26,7 +26,7 @@ from classical_diffusion.util import cache_base_path
 
 
 def _plot_kramers_potential() -> None:
-    system = build_1d_cosine(
+    system = CosineSystem1D(
         gamma=0.1, temperature=0.5 / Boltzmann, m=2.0, delta_x=5, barrier_energy=3
     )
 
@@ -47,7 +47,7 @@ def _plot_kramers_potential() -> None:
 
 
 def _plot_kramers_periodic_comparison() -> None:
-    system = build_1d_cosine(
+    system = CosineSystem1D(
         gamma=0.1, temperature=0.5 / Boltzmann, m=1.0, delta_x=5, barrier_energy=3
     )
 
@@ -81,7 +81,7 @@ def _plot_kramers_periodic_comparison() -> None:
 
 
 def _plot_kramers_hopping_comparison() -> None:
-    system = build_1d_cosine(
+    system = CosineSystem1D(
         gamma=0.1, temperature=0.5 / Boltzmann, m=1.0, delta_x=5, barrier_energy=3
     )
     system = KramersSystem1D(params=get_kramers_parameters_cosine(system))

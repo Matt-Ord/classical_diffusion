@@ -9,8 +9,7 @@ from tqdm import tqdm
 
 from classical_diffusion.langevin import (
     SODIUM_COPPER_SYSTEM_1D,
-    PeriodicSystem,
-    build_1d_cosine,
+    CosineSystem1D,
     get_effective_mass,
     solve_ensemble_ballistic,
 )
@@ -25,10 +24,10 @@ from classical_diffusion.util import (
 
 
 def _with_barrier_energy(
-    system: PeriodicSystem, barrier_energy: float
-) -> PeriodicSystem:
+    system: CosineSystem1D, barrier_energy: float
+) -> CosineSystem1D:
     """Return a copy of the system with a new barrier energy."""
-    return build_1d_cosine(
+    return CosineSystem1D(
         gamma=system.gamma,
         temperature=system.temperature,
         m=system.m,
@@ -72,7 +71,7 @@ def _get_low_barrier_effective_mass_ratio(
 
 
 def _solve_effective_mass_path(
-    system: PeriodicSystem,
+    system: CosineSystem1D,
     barrier_energy_ratio: np.ndarray,
     n_samples: np.ndarray,
 ) -> Path:
@@ -82,7 +81,7 @@ def _solve_effective_mass_path(
 
 @cached(_solve_effective_mass_path)
 def _get_simulated_effective_mass(
-    system: PeriodicSystem,
+    system: CosineSystem1D,
     barrier_energy_ratio: np.ndarray,
     n_samples: np.ndarray,
 ) -> np.ndarray:

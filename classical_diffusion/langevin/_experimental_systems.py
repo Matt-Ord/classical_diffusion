@@ -2,7 +2,7 @@ import numpy as np
 from scipy.constants import atomic_mass, electron_volt
 
 from classical_diffusion.langevin._system import (
-    build_1d_cosine,
+    CosineSystem1D,
     build_2d_fcc,
     build_2d_rectangular,
     build_2d_square,
@@ -39,7 +39,7 @@ SODIUM_COPPER_SYSTEM_2D = build_2d_fcc(
     m=SODIUM_MASS,
 )
 
-SODIUM_COPPER_SYSTEM_1D = build_1d_cosine(
+SODIUM_COPPER_SYSTEM_1D = CosineSystem1D(
     gamma=SODIUM_COPPER_GAMMA,
     temperature=155,
     barrier_energy=SODIUM_COPPER_BRIDGE_ENERGY,
@@ -81,7 +81,7 @@ LITHIUM_COPPER_SYSTEM_2D = build_2d_fcc(
 )
 """Lithium on Cu(111), with the Cu-Cu distance of the slab of Lai et al."""
 
-LITHIUM_COPPER_SYSTEM_1D = build_1d_cosine(
+LITHIUM_COPPER_SYSTEM_1D = CosineSystem1D(
     gamma=LITHIUM_COPPER_GAMMA,
     temperature=140,
     barrier_energy=LITHIUM_COPPER_BRIDGE_ENERGY,
@@ -112,7 +112,7 @@ pixel to the colour bar (7.9 meV per bar pixel), puts the top sites at about
 3.45e-3 eV^2, is close to the 2.9e-3 eV^2 Lai et al. quote for that map.
 """
 
-LITHIUM_COPPER_100_SYSTEM_1D = build_1d_cosine(
+LITHIUM_COPPER_100_SYSTEM_1D = CosineSystem1D(
     gamma=LITHIUM_COPPER_GAMMA,
     temperature=140,
     barrier_energy=LITHIUM_COPPER_100_BRIDGE_ENERGY,
@@ -133,13 +133,16 @@ LITHIUM_COPPER_110_ACROSS_ENERGY = 452.7e-3 * electron_volt
 Path a of Lai et al., Fig. S10a, a hop of 3.615 Angstrom, read in the same way to +- 1 meV.
 """
 
+LITHIUM_COPPER_110_ROW_SPACING = 3.615e-10
+"""The spacing of the close-packed rows of Cu(110), the cubic lattice constant."""
+
 LITHIUM_COPPER_110_SYSTEM_2D = build_2d_rectangular(
     gamma=LITHIUM_COPPER_GAMMA,
     temperature=140,
     barrier_energy_x=LITHIUM_COPPER_110_TROUGH_ENERGY,
     barrier_energy_y=LITHIUM_COPPER_110_ACROSS_ENERGY,
     delta_x=2.556e-10,
-    delta_y=3.615e-10,
+    delta_y=LITHIUM_COPPER_110_ROW_SPACING,
     m=LITHIUM_MASS,
 )
 """Lithium on Cu(110), with x along the troughs and y across the rows.
@@ -153,7 +156,7 @@ C (1 - cos k_x x) (1 - cos k_y y) to lower the top sites cannot reach it while
 both DFT barriers remain saddle points.
 """
 
-LITHIUM_COPPER_110_SYSTEM_1D = build_1d_cosine(
+LITHIUM_COPPER_110_SYSTEM_1D = CosineSystem1D(
     gamma=LITHIUM_COPPER_GAMMA,
     temperature=140,
     barrier_energy=LITHIUM_COPPER_110_TROUGH_ENERGY,
@@ -162,11 +165,11 @@ LITHIUM_COPPER_110_SYSTEM_1D = build_1d_cosine(
 )
 """The cut through LITHIUM_COPPER_110_SYSTEM_2D along a trough, the easy direction."""
 
-LITHIUM_COPPER_110_ACROSS_SYSTEM_1D = build_1d_cosine(
+LITHIUM_COPPER_110_ACROSS_SYSTEM_1D = CosineSystem1D(
     gamma=LITHIUM_COPPER_GAMMA,
     temperature=140,
     barrier_energy=LITHIUM_COPPER_110_ACROSS_ENERGY,
-    delta_x=float(LITHIUM_COPPER_110_SYSTEM_2D.lattice_vectors[1, 1]),
+    delta_x=LITHIUM_COPPER_110_ROW_SPACING,
     m=LITHIUM_MASS,
 )
 """The cut through LITHIUM_COPPER_110_SYSTEM_2D across the rows, the hard direction."""
@@ -198,7 +201,7 @@ HYDROGEN_COPPER_SYSTEM_2D = build_2d_fcc(
 )
 """Hydrogen on Cu(111). Fang et al. give no top site energy, so it is 9 times the bridge."""
 
-HYDROGEN_COPPER_SYSTEM_1D = build_1d_cosine(
+HYDROGEN_COPPER_SYSTEM_1D = CosineSystem1D(
     gamma=HYDROGEN_COPPER_GAMMA,
     temperature=150,
     barrier_energy=HYDROGEN_COPPER_BRIDGE_ENERGY,
@@ -224,7 +227,7 @@ XENON_PLATINUM_SYSTEM_2D = build_2d_triangular(
     m=131.293 * atomic_mass,
 )
 
-XENON_PLATINUM_SYSTEM_1D = build_1d_cosine(
+XENON_PLATINUM_SYSTEM_1D = CosineSystem1D(
     gamma=XENON_PLATINUM_SYSTEM_2D.gamma,
     temperature=XENON_PLATINUM_SYSTEM_2D.temperature,
     barrier_energy=XENON_PLATINUM_BRIDGE_ENERGY,
