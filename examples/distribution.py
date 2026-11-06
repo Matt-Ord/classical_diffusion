@@ -15,7 +15,7 @@ from classical_diffusion.langevin import (
     plot_phase_space_density,
     plot_x_distribution_histogram,
     plot_x_distribution_kde,
-    shift_origin_to_unit_cell_1d,
+    shift_origin_to_unit_cell,
     solve_ensemble,
 )
 from classical_diffusion.plot import get_fancy_figure
@@ -96,7 +96,7 @@ def _plot_x_distribution_spread() -> None:
     result = solve_ensemble(
         system, TimeSpan(t_end=100 / system.gamma, n_steps=100), n_samples=4000
     )
-    result = shift_origin_to_unit_cell_1d(result)
+    result = shift_origin_to_unit_cell(result)
 
     fig, ax = get_fancy_figure()
 

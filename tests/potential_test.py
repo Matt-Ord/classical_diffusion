@@ -11,12 +11,14 @@ from classical_diffusion.langevin import (
     LITHIUM_COPPER_SYSTEM_2D,
     CosineSystem1D,
     FourierTerm,
+    LangevinSimulationResult,
     PeriodicSystem,
     System,
     build_2d_fcc,
     build_2d_rectangular,
     build_2d_square,
     build_2d_triangular,
+    shift_origin_to_unit_cell,
 )
 from classical_diffusion.langevin._langevin import (  # ruff: ignore[import-private-name]
     _get_langevin_units,
@@ -223,3 +225,88 @@ def test_cosine_system_is_a_periodic_system() -> None:
     assert cosine.params == general.params
     assert cosine.with_units(cosine.units) == cosine
     assert isinstance(cosine.with_units(cosine.units), CosineSystem1D)
+
+
+def _periodic(
+    *,
+    lattice: list[list[float]] | None = None,
+    terms: tuple[FourierTerm, ...] | None = None,
+    offset: float = 0.5,
+    barrier: float = 1.0,
+) -> PeriodicSystem:
+    return PeriodicSystem(
+        gamma=1.0,
+        temperature=1.0,
+        m=1.0,
+        lattice_vectors=lattice or [[2.0, 0.0], [0.0, 3.0]],
+        terms=terms
+        or (
+            FourierTerm(miller=(1, 0), amplitude=-0.5),
+            FourierTerm(miller=(0, 1), amplitude=-0.25),
+        ),
+        offset=offset,
+        barrier_energy=barrier,
+    )
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        _periodic(lattice=[[2.0, 0.0], [0.0, 4.0]]),
+        _periodic(
+            terms=(
+                FourierTerm(miller=(1, 0), amplitude=-0.5),
+                FourierTerm(miller=(0, 2), amplitude=-0.25),
+            )
+        ),
+        _periodic(
+            terms=(
+                FourierTerm(miller=(1, 0), amplitude=-0.5),
+                FourierTerm(miller=(0, 1), amplitude=-0.3),
+            )
+        ),
+        _periodic(terms=(FourierTerm(miller=(1, 0), amplitude=-0.5),)),
+        _periodic(offset=0.0),
+        _periodic(barrier=2.0),
+    ],
+    ids=["lattice", "miller", "amplitude", "number of terms", "offset", "barrier"],
+)
+def test_any_change_to_the_potential_breaks_equality(changed: PeriodicSystem) -> None:
+    reference = _periodic()
+    assert reference == _periodic()
+    assert hash(reference) == hash(_periodic())
+    assert changed != reference
+    assert hash(changed) != hash(reference)
+
+
+@pytest.mark.parametrize(
+    "system",
+    [
+        CosineSystem1D(
+            gamma=1.0, temperature=1.0, m=1.0, delta_x=2.0, barrier_energy=1.0
+        ),
+        build_2d_fcc(
+            gamma=1.0, temperature=1.0, m=1.0, delta_x=2.0, barrier_energy=1.0
+        ),
+    ],
+    ids=["1d", "fcc"],
+)
+def test_shift_origin_to_unit_cell(system: PeriodicSystem) -> None:
+    rng = np.random.default_rng(0)
+    lattice = system.lattice_vectors
+    start_in_cell = rng.uniform(-0.45, 0.45, size=(5, system.n_dim)) @ lattice
+    lattice_offset = rng.integers(-3, 4, size=(5, system.n_dim)) @ lattice
+    path = rng.normal(size=(5, system.n_dim, 4))
+    path[:, :, 0] = 0.0
+    x_points = (start_in_cell + lattice_offset)[:, :, None] + path
+    result = LangevinSimulationResult(
+        system=system,
+        x_points=x_points,
+        p_points=np.zeros_like(x_points),
+        times=np.arange(4.0),
+    )
+    shifted = shift_origin_to_unit_cell(result)
+    np.testing.assert_allclose(shifted.x_points[:, :, 0], start_in_cell, atol=1e-12)
+    np.testing.assert_allclose(
+        shifted.x_points - shifted.x_points[:, :, :1], x_points - x_points[:, :, :1]
+    )

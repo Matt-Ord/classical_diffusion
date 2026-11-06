@@ -12,7 +12,7 @@ from classical_diffusion.langevin import (
     plot_force_1d,
     plot_force_distribution_histogram,
     plot_periodic_potential_1d,
-    shift_origin_to_unit_cell_1d,
+    shift_origin_to_unit_cell,
     solve_ensemble,
     solve_ensemble_ballistic,
     solve_single,
@@ -52,7 +52,7 @@ def _plot_trajectory() -> None:
         TimeSpan(t_end=10 / system.gamma, n_steps=4000),
         n_samples=20,
     )
-    result = shift_origin_to_unit_cell_1d(result)
+    result = shift_origin_to_unit_cell(result)
 
     fig, ax = get_fancy_figure()
     _, _, _ = plot_x_evolution_1d(result=result, ax=ax)
