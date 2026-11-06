@@ -1,4 +1,5 @@
 import zlib
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import final, override
@@ -230,6 +231,25 @@ class PeriodicSystem1D(System):
         )
 
 
+class PeriodicSystem2D(System, ABC):
+    """A 2D system whose potential is periodic on a lattice.
+
+    The 2D analysis helpers rely only on this interface: the lattice vectors of
+    the unit cell, and delta_x, the length scale used for plot extents and
+    momentum transfers.
+    """
+
+    @property
+    @abstractmethod
+    def delta_x(self) -> float:
+        """The characteristic spacing of the lattice."""
+
+    @property
+    @abstractmethod
+    def lattice_vectors(self) -> np.ndarray:
+        """Primitive lattice vectors (as rows) of the unit cell."""
+
+
 def _get_potential_expr_fcc() -> sp.Expr:
     """Return the potential energy expression for a 2D FCC lattice.
 
@@ -262,7 +282,7 @@ def _get_potential_expr_fcc() -> sp.Expr:
     )
 
 
-class PeriodicSystemFCC(System):
+class PeriodicSystemFCC(PeriodicSystem2D):
     """Parameters for the face-centered cubic periodic system.
 
     The hollow sites are degenerate minima at zero, the bridge sites are saddle
@@ -348,7 +368,7 @@ def _get_potential_expr_triangular() -> sp.Expr:
     return s1 / sp.Integer(4) * (sp.Integer(3) - cos_sum)
 
 
-class PeriodicSystemTriangular(System):
+class PeriodicSystemTriangular(PeriodicSystem2D):
     """Parameters for a periodic system with minima on a triangular lattice.
 
     The potential is V = (E_b / 4) (3 - sum_j cos(G_j . r)), where G_j are the
@@ -404,6 +424,174 @@ class PeriodicSystemTriangular(System):
             m=self.units.mass_into(self.m, units),
             delta_x=self.units.length_into(self.delta_x, units),
             barrier_energy=self.units.energy_into(self.barrier_energy, units),
+            units=units,
+        )
+
+
+def _get_potential_expr_square() -> sp.Expr:
+    """Return the potential of a square lattice with hollow-site minima.
+
+    The potential is A (2 - cos k x - cos k y) + B (2 - cos k (x + y) - cos k (x - y)),
+    with k = 2 pi / s0. The hollow sites are at the lattice points with energy
+    zero, the bridge sites at s1 and the top sites at s2, which fixes A = s2 / 4
+    and B = (2 s1 - s2) / 8.
+    """
+    x0, x1 = sp.symbols("x0 x1")
+    s0, s1, s2 = sp.symbols("s0 s1 s2")
+    k = sp.Integer(2) * sp.pi / s0
+
+    first = sp.Integer(2) - sp.cos(k * x0) - sp.cos(k * x1)
+    second = sp.Integer(2) - sp.cos(k * (x0 + x1)) - sp.cos(k * (x0 - x1))
+    return s2 / sp.Integer(4) * first + (2 * s1 - s2) / sp.Integer(8) * second
+
+
+class PeriodicSystemSquare(PeriodicSystem2D):
+    """Parameters for a periodic system on a square lattice, such as an fcc(100) surface.
+
+    The hollow sites are minima at zero, the bridge sites are saddle points at
+    barrier_energy and the top sites are maxima at top_energy. The hollow sites
+    lie on a square lattice of spacing delta_x, and the shortest hop crosses a
+    bridge site. The top_energy defaults to 2 barrier_energy, for which the
+    potential has a single Fourier component.
+    """
+
+    def __init__(  # ruff:ignore[too-many-arguments]
+        self,
+        *,
+        gamma: float,
+        temperature: float,
+        m: float,
+        delta_x: float,
+        barrier_energy: float,
+        top_energy: float | None = None,
+        units: UnitSystem | None = None,
+    ) -> None:
+        top_energy = 2 * barrier_energy if top_energy is None else top_energy
+        super().__init__(
+            gamma=gamma,
+            temperature=temperature,
+            m=m,
+            potential=(2, _get_potential_expr_square()),
+            params=(delta_x, barrier_energy, top_energy),
+            units=units or UnitSystem(),
+        )
+
+    @property
+    def delta_x(self) -> float:
+        """The spacing of the hollow sites."""
+        return self.params[0]
+
+    @property
+    def barrier_energy(self) -> float:
+        """The energy of the bridge sites, relative to the hollow sites."""
+        return self.params[1]
+
+    @property
+    def top_energy(self) -> float:
+        """The energy of the top sites, relative to the hollow sites."""
+        return self.params[2]
+
+    @property
+    def lattice_vectors(self) -> np.ndarray:
+        """Primitive lattice vectors (as rows) for the square unit cell."""
+        return np.array([[self.delta_x, 0.0], [0.0, self.delta_x]])
+
+    @override
+    def with_units(self, units: UnitSystem) -> PeriodicSystemSquare:
+        """Return the parameters of the system in the specified units."""
+        return PeriodicSystemSquare(
+            gamma=self.units.frequency_into(self.gamma, units),
+            temperature=self.temperature,
+            m=self.units.mass_into(self.m, units),
+            delta_x=self.units.length_into(self.delta_x, units),
+            barrier_energy=self.units.energy_into(self.barrier_energy, units),
+            top_energy=self.units.energy_into(self.top_energy, units),
+            units=units,
+        )
+
+
+def _get_potential_expr_rectangular() -> sp.Expr:
+    """Return the potential of a rectangular lattice with hollow-site minima.
+
+    The potential is (s2 / 2) (1 - cos(2 pi x / s0)) + (s3 / 2) (1 - cos(2 pi y / s1)),
+    so the hollow sites are at the lattice points with energy zero, the saddle
+    points between them are at s2 along x and s3 along y, and the maxima are at
+    s2 + s3.
+    """
+    x0, x1 = sp.symbols("x0 x1")
+    s0, s1, s2, s3 = sp.symbols("s0 s1 s2 s3")
+    along_x = sp.Integer(1) - sp.cos(sp.Integer(2) * sp.pi * x0 / s0)
+    along_y = sp.Integer(1) - sp.cos(sp.Integer(2) * sp.pi * x1 / s1)
+    return s2 / sp.Integer(2) * along_x + s3 / sp.Integer(2) * along_y
+
+
+class PeriodicSystemRectangular(PeriodicSystem2D):
+    """Parameters for a periodic system on a rectangular lattice, such as an fcc(110) surface.
+
+    The potential is a sum of one cosine along each axis. The hollow sites are
+    minima at zero, on a rectangular lattice of spacing delta_x along x and
+    delta_y along y. A hop along x crosses a saddle point at barrier_energy_x,
+    a hop along y crosses one at barrier_energy_y, and the maxima are at their
+    sum. Along each axis the potential reduces to the cosine of PeriodicSystem1D.
+    """
+
+    def __init__(  # ruff:ignore[too-many-arguments]
+        self,
+        *,
+        gamma: float,
+        temperature: float,
+        m: float,
+        delta_x: float,
+        delta_y: float,
+        barrier_energy_x: float,
+        barrier_energy_y: float,
+        units: UnitSystem | None = None,
+    ) -> None:
+        super().__init__(
+            gamma=gamma,
+            temperature=temperature,
+            m=m,
+            potential=(2, _get_potential_expr_rectangular()),
+            params=(delta_x, delta_y, barrier_energy_x, barrier_energy_y),
+            units=units or UnitSystem(),
+        )
+
+    @property
+    def delta_x(self) -> float:
+        """The spacing of the hollow sites along x."""
+        return self.params[0]
+
+    @property
+    def delta_y(self) -> float:
+        """The spacing of the hollow sites along y."""
+        return self.params[1]
+
+    @property
+    def barrier_energy_x(self) -> float:
+        """The barrier to a hop along x."""
+        return self.params[2]
+
+    @property
+    def barrier_energy_y(self) -> float:
+        """The barrier to a hop along y."""
+        return self.params[3]
+
+    @property
+    def lattice_vectors(self) -> np.ndarray:
+        """Primitive lattice vectors (as rows) for the rectangular unit cell."""
+        return np.array([[self.delta_x, 0.0], [0.0, self.delta_y]])
+
+    @override
+    def with_units(self, units: UnitSystem) -> PeriodicSystemRectangular:
+        """Return the parameters of the system in the specified units."""
+        return PeriodicSystemRectangular(
+            gamma=self.units.frequency_into(self.gamma, units),
+            temperature=self.temperature,
+            m=self.units.mass_into(self.m, units),
+            delta_x=self.units.length_into(self.delta_x, units),
+            delta_y=self.units.length_into(self.delta_y, units),
+            barrier_energy_x=self.units.energy_into(self.barrier_energy_x, units),
+            barrier_energy_y=self.units.energy_into(self.barrier_energy_y, units),
             units=units,
         )
 

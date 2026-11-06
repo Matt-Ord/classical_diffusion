@@ -4,6 +4,8 @@ from scipy.constants import atomic_mass, electron_volt
 from classical_diffusion.langevin._system import (
     PeriodicSystem1D,
     PeriodicSystemFCC,
+    PeriodicSystemRectangular,
+    PeriodicSystemSquare,
     PeriodicSystemTriangular,
 )
 
@@ -48,12 +50,14 @@ SODIUM_COPPER_SYSTEM_1D = PeriodicSystem1D(
 
 LITHIUM_MASS = 6.94 * atomic_mass
 
-LITHIUM_COPPER_BRIDGE_ENERGY = 8e-3 * electron_volt
+LITHIUM_COPPER_BRIDGE_ENERGY = 7.6e-3 * electron_volt
 """The hollow to bridge barrier of lithium on Cu(111).
 
 The DFT (PBE) climbing image nudged elastic band barrier of G. Lai et al.,
-arXiv:2208.04089 (2022), Fig. S10a, read from the figure to about +- 2 meV.
-The two hollow sites are degenerate within this precision.
+Small 19, 2205416 (2022) (thesis key Lai_2022), arXiv:2208.04089 Fig. S10a.
+The figure is a raster image: the peak was found to +- 1 meV by fitting a
+parabola to the centre of the plotted line, with the axis ticks giving
+1.87 meV per pixel. The two hollow sites are degenerate within this precision.
 """
 
 LITHIUM_COPPER_TOP_ENERGY = 200e-3 * electron_volt
@@ -61,7 +65,7 @@ LITHIUM_COPPER_TOP_ENERGY = 200e-3 * electron_volt
 
 Read from the neural network potential energy map of Lai et al., Fig. 3c, to
 about +- 20 meV. With the bridge barrier it gives a potential whose variance,
-3.5e-3 eV^2, is close to the 3.0e-3 eV^2 Lai et al. quote for the map.
+3.49e-3 eV^2, is close to the 3.0e-3 eV^2 Lai et al. quote for the map.
 """
 
 LITHIUM_COPPER_GAMMA = 1.2e12
@@ -85,6 +89,87 @@ LITHIUM_COPPER_SYSTEM_1D = PeriodicSystem1D(
     m=LITHIUM_MASS,
 )
 """The 1D analogue of LITHIUM_COPPER_SYSTEM_2D, with the same hollow to bridge barrier."""
+
+LITHIUM_COPPER_100_BRIDGE_ENERGY = 117.5e-3 * electron_volt
+"""The hollow to bridge barrier of lithium on Cu(100).
+
+Read from the same figure in the same way as LITHIUM_COPPER_BRIDGE_ENERGY, to +- 1 meV.
+"""
+
+LITHIUM_COPPER_100_SYSTEM_2D = PeriodicSystemSquare(
+    gamma=LITHIUM_COPPER_GAMMA,
+    temperature=140,
+    barrier_energy=LITHIUM_COPPER_100_BRIDGE_ENERGY,
+    delta_x=2.556e-10,
+    m=LITHIUM_MASS,
+)
+"""Lithium on Cu(100), with a single Fourier component.
+
+Lai et al. give no DFT top-site energy, so the top sites are at twice the
+bridge, 235 meV. Their neural network map (Fig. 3a), read by matching each
+pixel to the colour bar (7.9 meV per bar pixel), puts the top sites at about
+253 meV, so a second parameter is not needed. The potential's variance,
+3.45e-3 eV^2, is close to the 2.9e-3 eV^2 Lai et al. quote for that map.
+"""
+
+LITHIUM_COPPER_100_SYSTEM_1D = PeriodicSystem1D(
+    gamma=LITHIUM_COPPER_GAMMA,
+    temperature=140,
+    barrier_energy=LITHIUM_COPPER_100_BRIDGE_ENERGY,
+    delta_x=LITHIUM_COPPER_100_SYSTEM_2D.delta_x,
+    m=LITHIUM_MASS,
+)
+"""The cut through LITHIUM_COPPER_100_SYSTEM_2D from hollow to hollow over a bridge."""
+
+LITHIUM_COPPER_110_TROUGH_ENERGY = 82.4e-3 * electron_volt
+"""The barrier of lithium hopping along a trough of Cu(110), over the long bridge.
+
+Path b of Lai et al., Fig. S10a, a hop of 2.556 Angstrom, read in the same way to +- 1 meV.
+"""
+
+LITHIUM_COPPER_110_ACROSS_ENERGY = 452.7e-3 * electron_volt
+"""The barrier of lithium hopping across a row of Cu(110), over the short bridge.
+
+Path a of Lai et al., Fig. S10a, a hop of 3.615 Angstrom, read in the same way to +- 1 meV.
+"""
+
+LITHIUM_COPPER_110_SYSTEM_2D = PeriodicSystemRectangular(
+    gamma=LITHIUM_COPPER_GAMMA,
+    temperature=140,
+    barrier_energy_x=LITHIUM_COPPER_110_TROUGH_ENERGY,
+    barrier_energy_y=LITHIUM_COPPER_110_ACROSS_ENERGY,
+    delta_x=2.556e-10,
+    delta_y=3.615e-10,
+    m=LITHIUM_MASS,
+)
+"""Lithium on Cu(110), with x along the troughs and y across the rows.
+
+The top sites are at the sum of the two barriers, 535 meV. Lai et al.'s neural
+network map (Fig. 3b) cannot fix them: its highest point, about 363 meV above
+the hollow, is below their DFT barrier for crossing a row, so the map and the
+NEB disagree on this surface. Its variance, 1.1e-2 eV^2, is also below the
+2.65e-2 eV^2 of this potential; adding a cross term
+C (1 - cos k_x x) (1 - cos k_y y) to lower the top sites cannot reach it while
+both DFT barriers remain saddle points.
+"""
+
+LITHIUM_COPPER_110_SYSTEM_1D = PeriodicSystem1D(
+    gamma=LITHIUM_COPPER_GAMMA,
+    temperature=140,
+    barrier_energy=LITHIUM_COPPER_110_TROUGH_ENERGY,
+    delta_x=LITHIUM_COPPER_110_SYSTEM_2D.delta_x,
+    m=LITHIUM_MASS,
+)
+"""The cut through LITHIUM_COPPER_110_SYSTEM_2D along a trough, the easy direction."""
+
+LITHIUM_COPPER_110_ACROSS_SYSTEM_1D = PeriodicSystem1D(
+    gamma=LITHIUM_COPPER_GAMMA,
+    temperature=140,
+    barrier_energy=LITHIUM_COPPER_110_ACROSS_ENERGY,
+    delta_x=LITHIUM_COPPER_110_SYSTEM_2D.delta_y,
+    m=LITHIUM_MASS,
+)
+"""The cut through LITHIUM_COPPER_110_SYSTEM_2D across the rows, the hard direction."""
 
 HYDROGEN_MASS = 1.008 * atomic_mass
 

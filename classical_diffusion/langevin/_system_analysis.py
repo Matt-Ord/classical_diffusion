@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from classical_diffusion.langevin._system import (
         HarmonicSystem,
         PeriodicSystem1D,
-        PeriodicSystemFCC,
+        PeriodicSystem2D,
         System,
     )
 
@@ -175,7 +175,7 @@ def plot_potential_2d(
 
 def _plot_unit_cell(
     ax: Axes,
-    system: PeriodicSystemFCC,
+    system: PeriodicSystem2D,
 ) -> Line2D:
     a1, a2 = system.lattice_vectors
 
@@ -188,7 +188,7 @@ def _plot_unit_cell(
 
 
 def plot_periodic_potential_fcc(
-    system: PeriodicSystemFCC,
+    system: PeriodicSystem2D,
     *,
     n_points: tuple[int, int] = (1000, 1000),
     ax: Axes | None = None,
@@ -373,7 +373,7 @@ def shift_origin_to_unit_cell_1d[S: PeriodicSystem1D](
     )
 
 
-def shift_origin_to_unit_cell_fcc[S: PeriodicSystemFCC](
+def shift_origin_to_unit_cell_fcc[S: PeriodicSystem2D](
     result: LangevinSimulationResult[S], *, origin_idx: int | None = None
 ) -> LangevinSimulationResult[S]:
     lattice_vectors = result.system.lattice_vectors
