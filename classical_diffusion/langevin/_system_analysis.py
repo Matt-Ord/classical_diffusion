@@ -186,14 +186,14 @@ def _plot_unit_cell(
     return line
 
 
-def plot_periodic_potential_fcc(
+def plot_periodic_potential_2d(
     system: PeriodicSystem,
     *,
     n_points: tuple[int, int] = (1000, 1000),
     ax: Axes | None = None,
     shape: tuple[int, int] = (3, 3),
 ) -> tuple[Figure, Axes, QuadMesh, Line2D]:
-    """Plot the periodic potential in 2D."""
+    """Plot a 2D periodic potential over a few unit cells, with one unit cell outlined."""
     fig, ax, mesh = plot_potential_2d(
         system,
         (-shape[0] / 2 * system.delta_x, -shape[1] / 2 * system.delta_x),
@@ -354,37 +354,25 @@ def get_under_barrier_probability(
     return np.mean(energies < barrier_energy)
 
 
-def shift_origin_to_unit_cell_1d[S: PeriodicSystem](
+def shift_origin_to_unit_cell[S: PeriodicSystem](
     result: LangevinSimulationResult[S], *, origin_idx: int | None = None
 ) -> LangevinSimulationResult[S]:
-    origin_idx = (
-        origin_idx if origin_idx is not None else np.argmin(np.abs(result.times)).item()
-    )
-    x0 = result.x_points[:, :, origin_idx]
+    """Shift each trajectory by a lattice vector so that it starts in the unit cell at the origin.
 
-    n_shift = np.floor(x0 / result.system.delta_x + 0.5)
-    x_folded = result.x_points - n_shift[:, :, None] * result.system.delta_x
-    return LangevinSimulationResult(
-        times=result.times,
-        x_points=x_folded,
-        p_points=result.p_points,
-        system=result.system,
-    )
-
-
-def shift_origin_to_unit_cell_fcc[S: PeriodicSystem](
-    result: LangevinSimulationResult[S], *, origin_idx: int | None = None
-) -> LangevinSimulationResult[S]:
+    Works on any lattice: the starting point is written in fractional
+    coordinates, rounded to the nearest lattice point, and that lattice vector
+    is subtracted from the whole trajectory.
+    """
     lattice_vectors = result.system.lattice_vectors
 
     origin_idx = (
         origin_idx if origin_idx is not None else np.argmin(np.abs(result.times)).item()
     )
     x0 = result.x_points[:, :, origin_idx]
-    n_shift = np.round(x0 @ np.linalg.inv(lattice_vectors))
-    cartesian_shifts = np.round(n_shift) @ lattice_vectors
+    n_shift = np.floor(x0 @ np.linalg.inv(lattice_vectors) + 0.5)
+    cartesian_shifts = n_shift @ lattice_vectors
 
-    # 6. Broadcast subtract the shift across all time points (shape: n_samples, 2, n_time_points)
+    # Subtract the shift at every time point (shape: n_samples, n_dim, n_times)
     x_folded = result.x_points - cartesian_shifts[:, :, np.newaxis]
 
     return LangevinSimulationResult(

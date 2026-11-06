@@ -17,7 +17,7 @@ from classical_diffusion.langevin import (
     System,
     breakdown_ballistic_trajectory,
     plot_periodic_potential_1d,
-    plot_periodic_potential_fcc,
+    plot_periodic_potential_2d,
     solve_ensemble_ballistic,
     solve_many_ballistic,
 )
@@ -320,7 +320,7 @@ def _plot_filtered_ballistic_trajectory_2d() -> None:
     system = SODIUM_COPPER_SYSTEM_2D
 
     fig, ax = get_fancy_figure()
-    _, _, mesh, _unit_cell = plot_periodic_potential_fcc(system, ax=ax, shape=(5, 4))
+    _, _, mesh, _unit_cell = plot_periodic_potential_2d(system, ax=ax, shape=(5, 4))
     mesh.set_rasterized(True)
 
     _annotate_bridge_site_energy(ax, system)
