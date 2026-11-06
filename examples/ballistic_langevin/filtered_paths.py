@@ -12,6 +12,7 @@ from classical_diffusion.analysis import (
 from classical_diffusion.langevin import (
     SODIUM_COPPER_SYSTEM_1D,
     SODIUM_COPPER_SYSTEM_2D,
+    CosineSystem1D,
     LangevinSimulationResult,
     PeriodicSystem,
     System,
@@ -252,7 +253,7 @@ def _wrap_into_cell(
     )
 
 
-def _plot_separatrix_1d(system: PeriodicSystem, ax: Axes) -> None:
+def _plot_separatrix_1d(system: CosineSystem1D, ax: Axes) -> None:
     """Plot the separatrix E = E_b over a single period of the potential."""
     x = np.linspace(-system.delta_x / 2, system.delta_x / 2, 1000)
     potential = (
@@ -334,7 +335,11 @@ def _plot_filtered_ballistic_trajectory_2d() -> None:
         system,
         TimeSpan(t_start=-20 / system.gamma, t_end=20 / system.gamma, n_steps=1000),
         n_samples=1,
-        energy_range=(system.barrier_energy, np.inf),
+        # The Na/Cu(111) bridge barrier, which the matching 1D cut carries
+        energy_range=(
+            SODIUM_COPPER_SYSTEM_1D.with_units(system.units).barrier_energy,
+            np.inf,
+        ),
     )
 
     elastic, inelastic = breakdown_ballistic_trajectory(
