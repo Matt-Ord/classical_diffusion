@@ -9,10 +9,10 @@ from classical_diffusion.langevin import (
     LITHIUM_COPPER_110_SYSTEM_1D,
     LITHIUM_COPPER_110_SYSTEM_2D,
     LITHIUM_COPPER_SYSTEM_2D,
+    CosineSystem1D,
     FourierTerm,
     PeriodicSystem,
     System,
-    build_1d_cosine,
     build_2d_fcc,
     build_2d_rectangular,
     build_2d_square,
@@ -74,7 +74,7 @@ def test_term_is_a_cosine_of_the_fractional_coordinate() -> None:
 
 
 def test_1d_cosine_site_energies() -> None:
-    system = build_1d_cosine(
+    system = CosineSystem1D(
         gamma=1.0, temperature=1.0, m=1.0, delta_x=2.0, barrier_energy=3.0
     )
     assert _energy_at(system, 0.0) == pytest.approx(0, abs=1e-12)
@@ -189,3 +189,37 @@ def test_units_round_trip(system: PeriodicSystem) -> None:
     )
     np.testing.assert_allclose(si_system.m, system.m, rtol=1e-6)
     np.testing.assert_allclose(si_system.gamma, system.gamma, rtol=1e-6)
+
+
+def _cosine_on_cell(cell: float, miller: int, barrier: float = 1.0) -> PeriodicSystem:
+    return PeriodicSystem(
+        gamma=1.0,
+        temperature=1.0,
+        m=1.0,
+        lattice_vectors=[[cell]],
+        terms=(FourierTerm(miller=(miller,), amplitude=-0.5),),
+        offset=0.5,
+        barrier_energy=barrier,
+    )
+
+
+def test_equality_sees_the_lattice_and_barrier() -> None:
+    cosine = _cosine_on_cell(2.0, 1)
+    doubled_cell = _cosine_on_cell(4.0, 2)
+    assert cosine.params == doubled_cell.params
+    assert cosine != doubled_cell
+    assert hash(cosine) != hash(doubled_cell)
+
+    assert cosine != _cosine_on_cell(2.0, 1, barrier=2.0)
+    assert cosine == _cosine_on_cell(2.0, 1)
+    assert hash(cosine) == hash(_cosine_on_cell(2.0, 1))
+
+
+def test_cosine_system_is_a_periodic_system() -> None:
+    cosine = CosineSystem1D(
+        gamma=1.0, temperature=1.0, m=1.0, delta_x=2.0, barrier_energy=1.0
+    )
+    general = _cosine_on_cell(2.0, 1)
+    assert cosine.params == general.params
+    assert cosine.with_units(cosine.units) == cosine
+    assert isinstance(cosine.with_units(cosine.units), CosineSystem1D)

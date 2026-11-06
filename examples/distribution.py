@@ -6,9 +6,9 @@ from matplotlib.animation import ArtistAnimation
 from scipy.constants import Boltzmann
 
 from classical_diffusion.langevin import (
+    CosineSystem1D,
     HarmonicSystem,
     LangevinSimulationResult,
-    build_1d_cosine,
     get_random_initial_conditions,
     plot_kinetic_probability,
     plot_p_distribution_histogram,
@@ -38,7 +38,7 @@ def fold_results(
 
 def _plot_xp_distributions_periodic() -> None:
 
-    system = build_1d_cosine(
+    system = CosineSystem1D(
         gamma=0.5, temperature=0.5 / Boltzmann, m=1.0, delta_x=5, barrier_energy=2
     )
 
@@ -89,7 +89,7 @@ def sample_results(
 
 def _plot_x_distribution_spread() -> None:
 
-    system = build_1d_cosine(
+    system = CosineSystem1D(
         gamma=0.5, temperature=0.5 / Boltzmann, m=1.0, delta_x=5, barrier_energy=2
     )
 
@@ -159,7 +159,7 @@ def _plot_xp_distributions_harmonic() -> None:
 
 def _plot_x_distribution_spread_thermal_sample() -> None:
 
-    system = build_1d_cosine(
+    system = CosineSystem1D(
         gamma=0.5, temperature=0.5 / Boltzmann, m=1.0, delta_x=5, barrier_energy=2
     )
     x_points, p_points = get_random_initial_conditions(system, n_samples=32000)

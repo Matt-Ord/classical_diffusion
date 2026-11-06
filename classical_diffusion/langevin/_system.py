@@ -184,7 +184,7 @@ class HarmonicSystem(System):
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class FourierTerm:
     """One term, amplitude cos(2 pi miller . u), of a periodic potential.
 
@@ -194,6 +194,16 @@ class FourierTerm:
 
     miller: tuple[int, ...]
     amplitude: float
+
+
+def _get_periodic_param_layout(n_dim: int, n_terms: int) -> tuple[slice, slice, int]:
+    """Return where the wavevectors, amplitudes and offset sit in the parameters."""
+    n_wavevector = n_dim * n_terms
+    return (
+        slice(0, n_wavevector),
+        slice(n_wavevector, n_wavevector + n_terms),
+        n_wavevector + n_terms,
+    )
 
 
 @cache
@@ -206,9 +216,9 @@ def _get_periodic_potential_expr(n_dim: int, n_terms: int) -> sp.Expr:
     dimension and number of terms shares one expression.
     """
     coordinates = sp.symbols(f"x0:{n_dim}")
-    n_wavevector = n_dim * n_terms
-    symbols = sp.symbols(f"s0:{n_wavevector + n_terms + 1}")
-    amplitudes = symbols[n_wavevector : n_wavevector + n_terms]
+    _, amplitude_slice, offset_index = _get_periodic_param_layout(n_dim, n_terms)
+    symbols = sp.symbols(f"s0:{offset_index + 1}")
+    amplitudes = symbols[amplitude_slice]
     terms = (
         amplitudes[k]
         * sp.cos(
@@ -216,7 +226,7 @@ def _get_periodic_potential_expr(n_dim: int, n_terms: int) -> sp.Expr:
         )
         for k in range(n_terms)
     )
-    return symbols[-1] + sp.Add(*terms)
+    return symbols[offset_index] + sp.Add(*terms)
 
 
 class PeriodicSystem(System):
@@ -227,7 +237,7 @@ class PeriodicSystem(System):
     each lattice vector. It is given by the lattice vectors and the Miller
     indices n_k, and stored as the wavevectors g_k = 2 pi n_k . B, with B the
     reciprocal basis, so the potential in x is offset + sum_k a_k cos(g_k . x). Build the common surfaces
-    with build_1d_cosine, build_2d_fcc, build_2d_triangular, build_2d_square and
+    with CosineSystem1D, build_2d_fcc, build_2d_triangular, build_2d_square and
     build_2d_rectangular.
     """
 
@@ -288,8 +298,10 @@ class PeriodicSystem(System):
     @property
     def terms(self) -> tuple[FourierTerm, ...]:
         """The Fourier terms of the potential."""
-        n_wavevector = self.n_dim * len(self._millers)
-        amplitudes = self.params[n_wavevector : n_wavevector + len(self._millers)]
+        _, amplitude_slice, _ = _get_periodic_param_layout(
+            self.n_dim, len(self._millers)
+        )
+        amplitudes = self.params[amplitude_slice]
         return tuple(
             FourierTerm(miller=n, amplitude=a)
             for n, a in zip(self._millers, amplitudes, strict=True)
@@ -298,7 +310,8 @@ class PeriodicSystem(System):
     @property
     def offset(self) -> float:
         """The constant term of the potential."""
-        return self.params[-1]
+        _, _, offset_index = _get_periodic_param_layout(self.n_dim, len(self._millers))
+        return self.params[offset_index]
 
     @property
     def delta_x(self) -> float:
@@ -309,6 +322,23 @@ class PeriodicSystem(System):
     def barrier_energy(self) -> float:
         """The lowest barrier between adjacent minima, as given by the builder."""
         return self._barrier_energy
+
+    def _extra_state(self) -> tuple[object, ...]:
+        """Return the state kept outside params, which equality and hashing must also see."""
+        return (self._lattice, self._millers, self._barrier_energy)
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, PeriodicSystem):
+            return NotImplemented
+        return (
+            super().__eq__(other) is True
+            and self._extra_state() == other._extra_state()
+        )
+
+    @override
+    def __hash__(self) -> int:
+        return hash((super().__hash__(), self._extra_state()))
 
     @override
     def with_units(self, units: UnitSystem) -> PeriodicSystem:
@@ -330,29 +360,50 @@ class PeriodicSystem(System):
         )
 
 
-def build_1d_cosine(  # ruff:ignore[too-many-arguments]
-    *,
-    gamma: float,
-    temperature: float,
-    m: float,
-    delta_x: float,
-    barrier_energy: float,
-    units: UnitSystem | None = None,
-) -> PeriodicSystem:
-    """Build V = (E_b / 2) (1 - cos(2 pi x / delta_x)), with minima at x = n delta_x."""
-    return PeriodicSystem(
-        gamma=gamma,
-        temperature=temperature,
-        m=m,
-        lattice_vectors=[[delta_x]],
-        terms=(FourierTerm(miller=(1,), amplitude=-barrier_energy / 2),),
-        offset=barrier_energy / 2,
-        barrier_energy=barrier_energy,
-        units=units,
-    )
+class CosineSystem1D(PeriodicSystem):
+    """A 1D cosine potential, V = (E_b / 2) (1 - cos(2 pi x / delta_x)).
+
+    The minima are at x = n delta_x and the maxima at E_b halfway between. The
+    type guarantees a single cosine, which analytic results such as the Kramers
+    mapping rely on.
+    """
+
+    def __init__(  # ruff:ignore[too-many-arguments]
+        self,
+        *,
+        gamma: float,
+        temperature: float,
+        m: float,
+        delta_x: float,
+        barrier_energy: float,
+        units: UnitSystem | None = None,
+    ) -> None:
+        super().__init__(
+            gamma=gamma,
+            temperature=temperature,
+            m=m,
+            lattice_vectors=[[delta_x]],
+            terms=(FourierTerm(miller=(1,), amplitude=-barrier_energy / 2),),
+            offset=barrier_energy / 2,
+            barrier_energy=barrier_energy,
+            units=units,
+        )
+
+    @override
+    def with_units(self, units: UnitSystem) -> CosineSystem1D:
+        """Return the system in the given units."""
+        return CosineSystem1D(
+            gamma=self.units.frequency_into(self.gamma, units),
+            temperature=self.temperature,
+            m=self.units.mass_into(self.m, units),
+            delta_x=self.units.length_into(self.delta_x, units),
+            barrier_energy=self.units.energy_into(self.barrier_energy, units),
+            units=units,
+        )
 
 
-def _hexagonal_lattice(delta_x: float) -> list[list[float]]:
+def _get_hexagonal_lattice(delta_x: float) -> list[list[float]]:
+    """Return the lattice vectors of a hexagonal lattice with nearest-neighbor spacing delta_x."""
     return [[0.0, delta_x], [np.sqrt(3.0) / 2.0 * delta_x, 0.5 * delta_x]]
 
 
@@ -386,7 +437,7 @@ def build_2d_fcc(  # ruff:ignore[too-many-arguments]
         gamma=gamma,
         temperature=temperature,
         m=m,
-        lattice_vectors=_hexagonal_lattice(delta_x),
+        lattice_vectors=_get_hexagonal_lattice(delta_x),
         terms=(
             *(FourierTerm(miller=n, amplitude=first) for n in _HEXAGONAL_SHELL),
             *(
@@ -413,14 +464,14 @@ def build_2d_triangular(  # ruff:ignore[too-many-arguments]
 
     The minima are at the lattice points, a spacing delta_x apart, the bridge
     sites are saddle points at E_b and the hollow sites are maxima at 9 E_b / 8.
-    Along a close-packed row the potential reduces to build_1d_cosine with the
+    Along a close-packed row the potential reduces to CosineSystem1D with the
     same barrier and period.
     """
     return PeriodicSystem(
         gamma=gamma,
         temperature=temperature,
         m=m,
-        lattice_vectors=_hexagonal_lattice(delta_x),
+        lattice_vectors=_get_hexagonal_lattice(delta_x),
         terms=tuple(
             FourierTerm(miller=n, amplitude=-barrier_energy / 4)
             for n in _HEXAGONAL_SHELL
@@ -485,7 +536,7 @@ def build_2d_rectangular(  # ruff:ignore[too-many-arguments]
     The hollow sites are minima at zero on a rectangular lattice, delta_x apart
     along x and delta_y along y. A hop along x crosses a saddle point at
     barrier_energy_x, a hop along y one at barrier_energy_y, and the maxima are
-    at their sum. Along each axis the potential reduces to build_1d_cosine.
+    at their sum. Along each axis the potential reduces to CosineSystem1D.
     """
     return PeriodicSystem(
         gamma=gamma,
