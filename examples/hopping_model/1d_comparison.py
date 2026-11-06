@@ -16,7 +16,7 @@ from classical_diffusion.hopping import (
 from classical_diffusion.langevin import (
     HarmonicSystem,
     KramersSystem1D,
-    PeriodicSystem1D,
+    build_1d_cosine,
     get_exact_harmonic_isf,
     plot_force_1d,
     plot_potential_1d,
@@ -166,7 +166,7 @@ def _kramers_harmonic_comparison() -> None:
 
 def _kramers_sinusoid_comparison() -> None:
 
-    system = PeriodicSystem1D(
+    system = build_1d_cosine(
         gamma=0.1,
         temperature=0.5,
         m=1.0,

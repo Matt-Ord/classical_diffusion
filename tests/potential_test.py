@@ -9,15 +9,19 @@ from classical_diffusion.langevin import (
     LITHIUM_COPPER_110_SYSTEM_1D,
     LITHIUM_COPPER_110_SYSTEM_2D,
     LITHIUM_COPPER_SYSTEM_2D,
-    PeriodicSystem1D,
-    PeriodicSystem2D,
-    PeriodicSystemRectangular,
-    PeriodicSystemSquare,
+    FourierTerm,
+    PeriodicSystem,
     System,
+    build_1d_cosine,
+    build_2d_fcc,
+    build_2d_rectangular,
+    build_2d_square,
+    build_2d_triangular,
 )
 from classical_diffusion.langevin._langevin import (  # ruff: ignore[import-private-name]
     _get_langevin_units,
 )
+from classical_diffusion.system import UnitSystem
 
 
 def _energy_at(system: System, *point: float) -> float:
@@ -25,19 +29,62 @@ def _energy_at(system: System, *point: float) -> float:
     return float(f(*point, *system.params))
 
 
-def _potential_grid(system: PeriodicSystem2D, n: int = 200) -> np.ndarray:
+def _potential_on_cell(system: PeriodicSystem, n: int = 200) -> np.ndarray:
     f = sp.lambdify(system.lambda_symbols, system.potential_expr, "numpy")
     u = np.linspace(0, 1, n, endpoint=False)
-    grid_u, grid_v = np.meshgrid(u, u, indexing="ij")
-    a1, a2 = system.lattice_vectors
-    x = grid_u * a1[0] + grid_v * a2[0]
-    y = grid_u * a1[1] + grid_v * a2[1]
-    return np.asarray(f(x, y, *system.params)) * np.ones_like(x)
+    grid = np.stack(np.meshgrid(*[u] * system.n_dim, indexing="ij"), axis=-1)
+    x = grid @ system.lattice_vectors
+    values = f(*np.moveaxis(x, -1, 0), *system.params)
+    return np.asarray(values) * np.ones(x.shape[:-1])
 
 
-@pytest.mark.parametrize("top_energy", [None, 1.5, 3.0])
-def test_square_site_energies(top_energy: float | None) -> None:
-    system = PeriodicSystemSquare(
+def test_potential_is_periodic_on_the_lattice() -> None:
+    system = PeriodicSystem(
+        gamma=1.0,
+        temperature=1.0,
+        m=1.0,
+        lattice_vectors=[[1.0, 0.3], [-0.2, 1.4]],
+        terms=(
+            FourierTerm(miller=(1, 0), amplitude=0.7),
+            FourierTerm(miller=(2, -1), amplitude=-0.4),
+        ),
+        offset=0.1,
+        barrier_energy=1.0,
+    )
+    point = np.array([0.37, -0.81])
+    for shift in system.lattice_vectors:
+        assert _energy_at(system, *(point + shift)) == pytest.approx(
+            _energy_at(system, *point)
+        )
+
+
+def test_term_is_a_cosine_of_the_fractional_coordinate() -> None:
+    lattice = np.array([[2.0, 0.5], [0.0, 3.0]])
+    system = PeriodicSystem(
+        gamma=1.0,
+        temperature=1.0,
+        m=1.0,
+        lattice_vectors=lattice,
+        terms=(FourierTerm(miller=(1, 2), amplitude=1.0),),
+        barrier_energy=1.0,
+    )
+    fractional = np.array([0.13, 0.29])
+    expected = np.cos(2 * np.pi * (fractional[0] + 2 * fractional[1]))
+    assert _energy_at(system, *(fractional @ lattice)) == pytest.approx(expected)
+
+
+def test_1d_cosine_site_energies() -> None:
+    system = build_1d_cosine(
+        gamma=1.0, temperature=1.0, m=1.0, delta_x=2.0, barrier_energy=3.0
+    )
+    assert _energy_at(system, 0.0) == pytest.approx(0, abs=1e-12)
+    assert _energy_at(system, 1.0) == pytest.approx(3.0)
+    assert system.delta_x == pytest.approx(2.0)
+
+
+@pytest.mark.parametrize("top_energy", [None, 5.0, 12.0])
+def test_fcc_site_energies(top_energy: float | None) -> None:
+    system = build_2d_fcc(
         gamma=1.0,
         temperature=1.0,
         m=1.0,
@@ -45,18 +92,46 @@ def test_square_site_energies(top_energy: float | None) -> None:
         barrier_energy=1.0,
         top_energy=top_energy,
     )
+    a1, a2 = system.lattice_vectors
+    top = 9.0 if top_energy is None else top_energy
+    assert _energy_at(system, *((a1 + a2) / 3)) == pytest.approx(0, abs=1e-12)
+    assert _energy_at(system, *(2 * (a1 + a2) / 3)) == pytest.approx(0, abs=1e-12)
+    assert _energy_at(system, *(a1 / 2)) == pytest.approx(1.0)
+    assert _energy_at(system, 0.0, 0.0) == pytest.approx(top)
+
+
+def test_triangular_site_energies() -> None:
+    system = build_2d_triangular(
+        gamma=1.0, temperature=1.0, m=1.0, delta_x=2.0, barrier_energy=1.0
+    )
+    a1, a2 = system.lattice_vectors
+    assert _energy_at(system, 0.0, 0.0) == pytest.approx(0, abs=1e-12)
+    assert _energy_at(system, *(a1 / 2)) == pytest.approx(1.0)
+    assert _energy_at(system, *((a1 + a2) / 3)) == pytest.approx(9 / 8)
+
+
+@pytest.mark.parametrize("top_energy", [None, 1.5, 3.0])
+def test_square_site_energies(top_energy: float | None) -> None:
+    system = build_2d_square(
+        gamma=1.0,
+        temperature=1.0,
+        m=1.0,
+        delta_x=2.0,
+        barrier_energy=1.0,
+        top_energy=top_energy,
+    )
+    top = 2.0 if top_energy is None else top_energy
     assert _energy_at(system, 0, 0) == pytest.approx(0, abs=1e-12)
     assert _energy_at(system, 1, 0) == pytest.approx(1)
-    assert _energy_at(system, 1, 1) == pytest.approx(system.top_energy)
-    assert system.top_energy == (2.0 if top_energy is None else top_energy)
+    assert _energy_at(system, 1, 1) == pytest.approx(top)
 
-    grid = _potential_grid(system)
+    grid = _potential_on_cell(system)
     assert grid.min() == pytest.approx(0, abs=1e-12)
-    assert grid.max() == pytest.approx(system.top_energy, rel=1e-3)
+    assert grid.max() == pytest.approx(top, rel=1e-3)
 
 
 def test_rectangular_site_energies() -> None:
-    system = PeriodicSystemRectangular(
+    system = build_2d_rectangular(
         gamma=1.0,
         temperature=1.0,
         m=1.0,
@@ -69,6 +144,7 @@ def test_rectangular_site_energies() -> None:
     assert _energy_at(system, 1, 0) == pytest.approx(1)
     assert _energy_at(system, 0, 1.5) == pytest.approx(5)
     assert _energy_at(system, 1, 1.5) == pytest.approx(6)
+    assert system.barrier_energy == pytest.approx(1)
 
 
 @pytest.mark.parametrize(
@@ -78,7 +154,7 @@ def test_rectangular_site_energies() -> None:
         (LITHIUM_COPPER_110_SYSTEM_2D, LITHIUM_COPPER_110_SYSTEM_1D),
     ],
 )
-def test_1d_cut_matches_2d_along_x(system: System, cut: PeriodicSystem1D) -> None:
+def test_1d_cut_matches_2d_along_x(system: System, cut: PeriodicSystem) -> None:
     for fraction in (0.1, 0.25, 0.5):
         x = fraction * cut.delta_x
         assert _energy_at(system, x, 0) == pytest.approx(_energy_at(cut, x))
@@ -98,11 +174,18 @@ def test_110_across_cut_matches_2d_along_y() -> None:
         LITHIUM_COPPER_SYSTEM_2D,
         LITHIUM_COPPER_100_SYSTEM_2D,
         LITHIUM_COPPER_110_SYSTEM_2D,
+        LITHIUM_COPPER_110_SYSTEM_1D,
     ],
 )
-def test_units_round_trip(system: System) -> None:
+def test_units_round_trip(system: PeriodicSystem) -> None:
     units = _get_langevin_units(system)
-    si_system = system.with_units(units).with_si_units()
+    si_system = system.with_units(units).with_units(UnitSystem())
     np.testing.assert_allclose(si_system.params, system.params, rtol=1e-6)
+    np.testing.assert_allclose(
+        si_system.lattice_vectors, system.lattice_vectors, rtol=1e-6
+    )
+    np.testing.assert_allclose(
+        si_system.barrier_energy, system.barrier_energy, rtol=1e-6
+    )
     np.testing.assert_allclose(si_system.m, system.m, rtol=1e-6)
     np.testing.assert_allclose(si_system.gamma, system.gamma, rtol=1e-6)

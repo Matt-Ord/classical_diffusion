@@ -1,7 +1,7 @@
 import numpy as np
 
 from classical_diffusion.langevin import (
-    PeriodicSystem1D,
+    build_1d_cosine,
 )
 from classical_diffusion.langevin._langevin import (  # ruff: ignore[import-private-name]
     _get_langevin_units,
@@ -9,7 +9,7 @@ from classical_diffusion.langevin._langevin import (  # ruff: ignore[import-priv
 
 
 def test_units() -> None:
-    system = PeriodicSystem1D(
+    system = build_1d_cosine(
         gamma=4e12,
         temperature=110,
         m=8e-27,
