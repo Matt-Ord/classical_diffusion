@@ -121,19 +121,6 @@ CAM_SLATE_3 = "#546072"
 CAM_SLATE_4 = "#232830"
 
 
-CAM_BLUE_CMAP = LinearSegmentedColormap.from_list(
-    "CAM_BLUE_CMAP",
-    [CAM_BLUE.light, CAM_BLUE.warm, CAM_BLUE.dark],
-)
-mpl.colormaps.register(cmap=CAM_BLUE_CMAP, force=True)
-
-CAM_CHERRY_CMAP = LinearSegmentedColormap.from_list(
-    "CAM_CHERRY_CMAP",
-    [CAM_CHERRY.light, CAM_CHERRY.warm, CAM_CHERRY.dark],
-)
-mpl.colormaps.register(cmap=CAM_CHERRY_CMAP, force=True)
-
-
 def _register_cmap(
     name: str, nodes: list[tuple[float, str]]
 ) -> LinearSegmentedColormap:
@@ -151,8 +138,8 @@ def _register_cmap(
 # setup_fancy_figure, so every entry stands out against the axes, and the
 # chroma stays high through the middle, so no map passes through grey.
 
-CAM_BLUE_SEQUENTIAL_CMAP = _register_cmap(
-    "CAM_BLUE_SEQUENTIAL_CMAP",
+CAM_BLUE_CMAP = _register_cmap(
+    "CAM_BLUE_CMAP",
     [
         (0.0, CAM_BLUE.dark),
         (0.0625, "#0E414F"),
@@ -175,8 +162,8 @@ CAM_BLUE_SEQUENTIAL_CMAP = _register_cmap(
 )
 """Sequential CAM blue, from CAM_BLUE.dark (J' = 23) through CAM_BLUE.warm to a light teal (J' = 80)."""
 
-CAM_CHERRY_SEQUENTIAL_CMAP = _register_cmap(
-    "CAM_CHERRY_SEQUENTIAL_CMAP",
+CAM_CHERRY_CMAP = _register_cmap(
+    "CAM_CHERRY_CMAP",
     [
         (0.0, "#4B0A30"),
         (0.0625, "#570B34"),
