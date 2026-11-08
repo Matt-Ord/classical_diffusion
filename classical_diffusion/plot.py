@@ -134,6 +134,144 @@ CAM_CHERRY_CMAP = LinearSegmentedColormap.from_list(
 mpl.colormaps.register(cmap=CAM_CHERRY_CMAP, force=True)
 
 
+def _register_cmap(
+    name: str, nodes: list[tuple[float, str]]
+) -> LinearSegmentedColormap:
+    cmap = LinearSegmentedColormap.from_list(name, nodes, N=256)
+    mpl.colormaps.register(cmap=cmap, force=True)
+    return cmap
+
+
+# The colormaps below are perceptually uniform: they were designed in the
+# CAM02-UCS colour space, where the lightness J' rises (or, for the diverging
+# map, rises then falls) linearly and the colour difference between
+# adjacent entries is constant. The nodes are close enough together that
+# matplotlib's interpolation in sRGB keeps the steps within 5% of uniform.
+# None reaches the near-white of CAM_SLATE_1 (J' = 95), the background of
+# setup_fancy_figure, so every entry stands out against the axes, and the
+# chroma stays high through the middle, so no map passes through grey.
+
+CAM_BLUE_SEQUENTIAL_CMAP = _register_cmap(
+    "CAM_BLUE_SEQUENTIAL_CMAP",
+    [
+        (0.0, CAM_BLUE.dark),
+        (0.0625, "#0E414F"),
+        (0.125, "#034A59"),
+        (0.1875, "#005462"),
+        (0.25, "#005E6B"),
+        (0.3125, "#006774"),
+        (0.375, "#00717C"),
+        (0.4375, "#007B85"),
+        (0.5, "#00868D"),
+        (0.5625, "#009096"),
+        (0.625, "#009B9E"),
+        (0.6875, "#00A5A6"),
+        (0.75, "#00B0AE"),
+        (0.8202, CAM_BLUE.warm),
+        (0.875, "#13C7BB"),
+        (0.9375, "#21D1C0"),
+        (1.0, "#2DDCC3"),
+    ],
+)
+"""Sequential CAM blue, from CAM_BLUE.dark (J' = 23) through CAM_BLUE.warm to a light teal (J' = 80)."""
+
+CAM_CHERRY_SEQUENTIAL_CMAP = _register_cmap(
+    "CAM_CHERRY_SEQUENTIAL_CMAP",
+    [
+        (0.0, "#4B0A30"),
+        (0.0625, "#570B34"),
+        (0.125, "#640B38"),
+        (0.1875, "#710C3C"),
+        (0.25, "#7E0E40"),
+        (0.337, CAM_CHERRY.dark),
+        (0.375, "#99184E"),
+        (0.4375, "#A61E56"),
+        (0.5, "#B4245F"),
+        (0.5625, "#C12C68"),
+        (0.6246, CAM_CHERRY.base),
+        (0.6875, "#D7427D"),
+        (0.75, "#DD5188"),
+        (0.8125, "#E06092"),
+        (0.875, "#E16F9B"),
+        (0.9375, "#E27DA4"),
+        (1.0, CAM_CHERRY.warm),
+    ],
+)
+"""Sequential CAM cherry, from a dark wine (J' = 19) through CAM_CHERRY.dark and CAM_CHERRY.base to CAM_CHERRY.warm (J' = 72)."""
+
+CAM_BLUE_CHERRY_DIVERGING_CMAP = _register_cmap(
+    "CAM_BLUE_CHERRY_DIVERGING_CMAP",
+    [
+        (0.0, CAM_BLUE.dark),
+        (0.0312, "#084051"),
+        (0.0625, "#00495F"),
+        (0.0938, "#00526E"),
+        (0.125, "#005B7E"),
+        (0.1562, "#00638F"),
+        (0.1875, "#006AA1"),
+        (0.2188, "#0070B5"),
+        (0.25, "#1A76C8"),
+        (0.2812, "#397CD4"),
+        (0.3125, "#5081DE"),
+        (0.3438, "#6586E7"),
+        (0.375, "#798BED"),
+        (0.4062, "#8B90F1"),
+        (0.4375, "#9C95F3"),
+        (0.4688, "#AB9AF4"),
+        (0.5, "#B9A1F3"),
+        (0.5312, "#BE97F0"),
+        (0.5625, "#C38DEC"),
+        (0.5938, "#C882E6"),
+        (0.625, "#CC78DD"),
+        (0.6562, "#CF6ED3"),
+        (0.6875, "#D263C7"),
+        (0.7188, "#D45ABA"),
+        (0.75, "#D551AB"),
+        (0.7812, "#D6499B"),
+        (0.8125, "#D5418A"),
+        (0.8565, CAM_CHERRY.base),
+        (0.875, "#C62F6C"),
+        (0.9062, "#BA2562"),
+        (0.9375, "#AD1C59"),
+        (0.9688, "#9F1651"),
+        (1.0, CAM_CHERRY.dark),
+    ],
+)
+"""Diverging CAM blue to cherry with a light lavender centre (J' = 74).
+
+CAM_BLUE.dark (J' = 23) at the low end, through blue, to a lavender between
+CAM_INDIGO.warm and CAM_PURPLE.warm at the centre, then through magenta and
+CAM_CHERRY.base to CAM_CHERRY.dark (J' = 36) at the high end. The centre keeps
+its colour (chroma 24), so it stands out from CAM_SLATE_1 rather than fading
+into it. The two ends differ in lightness, so the blue half spans more
+lightness than the cherry half.
+"""
+
+CAM_SUNSET_CMAP = _register_cmap(
+    "CAM_SUNSET_CMAP",
+    [
+        (0.0, "#2A327D"),
+        (0.0625, "#413591"),
+        (0.125, "#5835A1"),
+        (0.1875, "#6E33AD"),
+        (0.25, "#8130AC"),
+        (0.3125, "#922FA7"),
+        (0.375, "#A22E9D"),
+        (0.4375, "#B13091"),
+        (0.5, "#BE3381"),
+        (0.5625, "#CB3872"),
+        (0.625, "#DB4267"),
+        (0.6875, "#EA4E5B"),
+        (0.75, "#F95B4F"),
+        (0.8125, "#FF6E4A"),
+        (0.875, "#FF8550"),
+        (0.9375, "#FF9A5C"),
+        (1.0, "#FFB06E"),
+    ],
+)
+"""Multi-hue sequential map following the CAM hues indigo, purple, cherry and crest (J' from 26 to 82)."""
+
+
 def get_fig_size() -> tuple[float, float]:
     """Get default figure size in inches based on document text width."""
     total_textwidth_pt = 437.5
