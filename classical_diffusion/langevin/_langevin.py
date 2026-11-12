@@ -326,6 +326,16 @@ def solve_single[S: System](
     )[0]
 
 
+def _sampling_tag(system: System) -> str:
+    """Tag the cache of ensembles drawn from a unit cell.
+
+    Initial positions of periodic systems used to be drawn from a Gaussian
+    around the origin, which biased stiff 2D potentials. The tag keeps those
+    cached ensembles from being reused.
+    """
+    return "_cell" if system.as_canonical().unit_cell is not None else ""
+
+
 def _solve_ensemble_path[S: System](
     system: S,
     time_span: TimeSpan,
@@ -336,7 +346,7 @@ def _solve_ensemble_path[S: System](
     _key: jax.Array | None = None,
 ) -> Path:
     return Path(
-        f"solve_ensemble_{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}_{energy_range[0]}_{energy_range[1]}_{hash(step_config)}{hash_key(_key)}.npz"
+        f"solve_ensemble_{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}_{energy_range[0]}_{energy_range[1]}_{hash(step_config)}{_sampling_tag(system)}{hash_key(_key)}.npz"
     )
 
 
@@ -479,7 +489,7 @@ def _solve_ensemble_ballistic_path[S: System](
     # The default step is left out, so that existing caches remain valid
     step = "" if step_config == DEFAULT_STEP_CONFIG else f"_{hash(step_config)}"
     return Path(
-        f"solve_ensemble_ballistic_{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}_{energy_range[0]}_{energy_range[1]}{step}{hash_key(_key)}.npz"
+        f"solve_ensemble_ballistic_{system.__class__.__name__}_{hash(system)}_{hash(time_span)}_{n_samples}_{energy_range[0]}_{energy_range[1]}{step}{_sampling_tag(system)}{hash_key(_key)}.npz"
     )
 
 
@@ -610,7 +620,7 @@ def _solve_ensemble_overdamped_path[S: System](
     _key: jax.Array | None = None,
 ) -> Path:
     return Path(
-        f"overdamped_ensemble_{hash(system)}_{hash(time_span)}_{n_samples}_{energy_range[0]}_{energy_range[1]}_{hash(step_config)}{hash_key(_key)}.npz"
+        f"overdamped_ensemble_{hash(system)}_{hash(time_span)}_{n_samples}_{energy_range[0]}_{energy_range[1]}_{hash(step_config)}{_sampling_tag(system)}{hash_key(_key)}.npz"
     )
 
 
