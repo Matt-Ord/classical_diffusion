@@ -1,3 +1,4 @@
+import dataclasses
 import zlib
 from dataclasses import dataclass, field
 from functools import cache, cached_property
@@ -137,10 +138,30 @@ class CanonicalSystem(System):
 
     potential: tuple[int, sp.Expr] = field(metadata={"static": True})
     units: CanonicalUnitSystem = field(default_factory=CanonicalUnitSystem)
+    unit_cell: tuple[tuple[float, ...], ...] | None = field(
+        default=None, metadata={"static": True}
+    )
+    """Lattice vectors, as rows, of a periodic potential, or None if it is not periodic.
 
+    Initial positions are drawn from this cell when it is given, and from all x
+    otherwise.
+    """
+
+    @override
+    def as_canonical(self) -> CanonicalSystem:
+        """Return the system itself, which is already canonical."""
+        return self
+
+    @override
     def with_units(self, units: UnitSystem) -> CanonicalSystem:
         """Return the system converted to the given units."""
-        return super().with_units(units).as_canonical()
+        converted = System.as_canonical(super().with_units(units))
+        if self.unit_cell is None:
+            return converted
+        cell = self.units.length_into(np.array(self.unit_cell), units)
+        return dataclasses.replace(
+            converted, unit_cell=tuple(map(tuple, cell.astype(float).tolist()))
+        )
 
 
 class HarmonicSystem(System):
@@ -367,6 +388,11 @@ class PeriodicSystem(System):
         # __hash__, the frozen dataclass would generate one from the fields. The
         # lattice is left out, like in __eq__: the params fix the potential.
         return super().__hash__()
+
+    @override
+    def as_canonical(self) -> CanonicalSystem:
+        """Return the canonical form of the system, keeping the unit cell for sampling."""
+        return dataclasses.replace(super().as_canonical(), unit_cell=self._lattice)
 
     @override
     def with_units(self, units: UnitSystem) -> PeriodicSystem:
