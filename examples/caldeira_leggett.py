@@ -2,14 +2,13 @@ from pathlib import Path
 
 import numpy as np
 
-from classical_diffusion.analysis import plot_isf
+from classical_diffusion.analysis import get_isf, plot_isf
 from classical_diffusion.caldeira_leggett import (
     get_diffusion_constant,
     get_steady_state,
     solve_isf,
 )
-from classical_diffusion.langevin import LITHIUM_COPPER_SYSTEM_1D
-from classical_diffusion.langevin import solve_isf as solve_langevin_isf
+from classical_diffusion.langevin import LITHIUM_COPPER_SYSTEM_1D, solve_ensemble
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.simulation import TimeSpan
 from classical_diffusion.util import cache_base_path
@@ -27,10 +26,10 @@ def _plot_isf() -> None:
     _, ax, line_0, _ = plot_isf(quantum, ax=ax, measure="real")
     line_0.set_label("Caldeira-Leggett")
 
-    classical = solve_langevin_isf(
-        system, delta_k, TimeSpan(t_end=t_end, n_steps=4000), n_samples=1000
+    classical = solve_ensemble(
+        system, TimeSpan(t_end=t_end, n_steps=4000), n_samples=1000
     )
-    _, ax, line_1, _ = plot_isf(classical, ax=ax, measure="real")
+    _, ax, line_1, _ = plot_isf(get_isf(classical, delta_k), ax=ax, measure="real")
     line_1.set_label("Langevin")
 
     ax.set_xlim(0, t_end)
