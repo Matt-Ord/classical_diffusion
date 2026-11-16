@@ -1,3 +1,4 @@
+# cspell: ignore eigvalsh ndimage triu
 import itertools
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any

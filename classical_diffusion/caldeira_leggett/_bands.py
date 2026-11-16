@@ -1,3 +1,4 @@
+# cspell: ignore eigh
 from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np

@@ -1,4 +1,4 @@
-# cspell: ignore Daleckii Krein Davidovic digamma jkab jkac
+# cspell: ignore Daleckii Krein Davidovic digamma jkab jkac eigh
 from typing import TYPE_CHECKING, NamedTuple
 
 import jax

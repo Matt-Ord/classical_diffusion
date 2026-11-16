@@ -1,3 +1,4 @@
+# cspell: ignore mathrm xscale
 from pathlib import Path
 
 import jax
