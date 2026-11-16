@@ -4,7 +4,6 @@ import jax.numpy as jnp
 import numpy as np
 
 from classical_diffusion._isf import get_isf as get_ensemble_isf
-from classical_diffusion._isf import with_span_times
 from classical_diffusion.hopping._hopping import (
     DeterministicSolverResult,
     get_deterministic_probabilities,
@@ -57,8 +56,6 @@ def solve_isf(
     """Solve the rate equation of the hopping model, and get its ISF.
 
     The probabilities of a lattice of the given shape are found by
-    ``get_deterministic_probabilities``, starting from the central site. The
-    times of the ISF are those of the time span, measured from its start.
+    ``get_deterministic_probabilities``, starting from the central site.
     """
-    result = get_deterministic_probabilities(system, shape, time_span)
-    return with_span_times(get_isf(result, delta_k), time_span)
+    return get_isf(get_deterministic_probabilities(system, shape, time_span), delta_k)

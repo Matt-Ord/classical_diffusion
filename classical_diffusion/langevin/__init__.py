@@ -30,7 +30,7 @@ from classical_diffusion.langevin._experimental_systems import (
     XENON_PLATINUM_SYSTEM_1D,
     XENON_PLATINUM_SYSTEM_2D,
 )
-from classical_diffusion.langevin._isf import get_isf, solve_isf, solve_overdamped_isf
+from classical_diffusion._isf import get_isf
 from classical_diffusion.langevin._langevin import (
     LangevinSimulationResult,
     SingleLangevinSimulationResult,
@@ -133,11 +133,9 @@ __all__ = [
     "solve_ensemble",
     "solve_ensemble_ballistic",
     "solve_ensemble_overdamped",
-    "solve_isf",
     "solve_many",
     "solve_many_ballistic",
     "solve_many_overdamped",
-    "solve_overdamped_isf",
     "solve_single",
     "solve_single_ballistic",
 ]
