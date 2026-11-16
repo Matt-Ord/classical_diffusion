@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 from scipy.constants import Boltzmann
 
-from classical_diffusion.analysis import plot_isf, plot_x_evolution_2d
+from classical_diffusion.analysis import get_isf, plot_isf, plot_x_evolution_2d
 from classical_diffusion.langevin import (
     build_2d_fcc,
     plot_periodic_potential_2d,
@@ -43,11 +43,7 @@ def _plot_2d_periodic_isf() -> None:
     # Both hexagonal lattice vectors have the nearest-neighbor spacing as length
     spacing = float(np.linalg.norm(system.lattice_vectors[0]))
     delta_k = (0.5 * 2 * np.pi / spacing,)
-    _, ax, line_0, _ = plot_isf(
-        result=result,
-        ax=ax,
-        delta_k=delta_k,
-    )
+    _, ax, line_0, _ = plot_isf(get_isf(result, delta_k), ax=ax)
     line_0.set_label("simulation")
 
     result = solve_ensemble_ballistic(
@@ -55,7 +51,7 @@ def _plot_2d_periodic_isf() -> None:
         TimeSpan(t_end=4 / system.gamma, n_steps=400),
         n_samples=2000,
     )
-    _, ax, line_1, _ = plot_isf(result=result, ax=ax, delta_k=delta_k, pairwise=False)
+    _, ax, line_1, _ = plot_isf(get_isf(result, delta_k, pairwise=False), ax=ax)
     line_1.set_label("ballistic simulation")
 
     ax.set_xlim(0, 4 / system.gamma)

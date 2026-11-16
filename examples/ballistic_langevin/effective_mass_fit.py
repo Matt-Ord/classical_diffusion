@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 
 from classical_diffusion.analysis import (
+    get_isf,
     plot_isf,
 )
 from classical_diffusion.langevin import (
@@ -13,13 +14,31 @@ from classical_diffusion.langevin import (
     System,
     breakdown_ballistic_trajectory,
     get_effective_mass,
+    get_exact_flat_ballistic_isf,
     get_under_barrier_occupation,
-    plot_exact_flat_ballistic_isf,
     solve_ensemble_ballistic,
 )
 from classical_diffusion.plot import CAM_BLUE, CAM_CHERRY, get_fancy_figure
-from classical_diffusion.simulation import TimeSpan
+from classical_diffusion.simulation import IsfResult, TimeSpan
 from classical_diffusion.util import cache_base_path
+
+
+def _get_offset_ballistic_isf(
+    system: System,
+    delta_k: tuple[float, ...],
+    times: np.ndarray,
+    *,
+    offset: float,
+) -> IsfResult:
+    """Get the exact flat ballistic ISF of the escaping fraction, above a constant offset."""
+    exact = get_exact_flat_ballistic_isf(system, delta_k, times)
+    return IsfResult(
+        times=exact.times,
+        isf=offset + (1 - offset) * exact.isf,
+        error=exact.error,
+        delta_k=exact.delta_k,
+        units=exact.units,
+    )
 
 
 def _truncate_results[S: System](
@@ -47,9 +66,7 @@ def _plot_effective_mass_fitted_isf_1d() -> None:
         TimeSpan(t_end=8 / system.gamma, n_steps=4000),
         n_samples=10000,
     )
-    _, ax, line_0, fill_0 = plot_isf(
-        result=result, ax=ax, delta_k=delta_k, pairwise=False
-    )
+    _, ax, line_0, fill_0 = plot_isf(get_isf(result, delta_k, pairwise=False), ax=ax)
 
     elastic_result, _ = breakdown_ballistic_trajectory(
         result,
@@ -60,7 +77,7 @@ def _plot_effective_mass_fitted_isf_1d() -> None:
     )
 
     _, ax, line_0, fill_0 = plot_isf(
-        result=elastic_result, ax=ax, delta_k=delta_k, pairwise=False
+        get_isf(elastic_result, delta_k, pairwise=False), ax=ax
     )
     line_0.set_label("elastic")
     line_0.set_color(CAM_CHERRY.warm)
@@ -71,12 +88,14 @@ def _plot_effective_mass_fitted_isf_1d() -> None:
         system.barrier_energy,
     )
 
-    _, ax, line_1 = plot_exact_flat_ballistic_isf(
-        system=system,
+    _, ax, line_1, _ = plot_isf(
+        _get_offset_ballistic_isf(
+            system,
+            delta_k,
+            result.times,
+            offset=trapped_probability,
+        ),
         ax=ax,
-        delta_k=delta_k,
-        offset=trapped_probability,
-        times=result.times,
     )
     line_1.set_label("actual mass")
     line_1.set_linestyle(":")
@@ -87,12 +106,14 @@ def _plot_effective_mass_fitted_isf_1d() -> None:
         filter_timescale=1 / system.gamma,
     )
 
-    _, ax, line_2 = plot_exact_flat_ballistic_isf(
-        system=dataclasses.replace(system.as_canonical(), m=effective_mass),
+    _, ax, line_2, _ = plot_isf(
+        _get_offset_ballistic_isf(
+            dataclasses.replace(system.as_canonical(), m=effective_mass),
+            delta_k,
+            result.times,
+            offset=trapped_probability,
+        ),
         ax=ax,
-        delta_k=delta_k,
-        offset=trapped_probability,
-        times=result.times,
     )
     line_2.set_label("effective mass")
     line_2.set_linestyle(":")
@@ -123,9 +144,7 @@ def _plot_effective_mass_fitted_isf_2d() -> None:
         TimeSpan(t_end=8 / system.gamma, n_steps=1000),
         n_samples=1000,
     )
-    _, ax, line_0, fill_0 = plot_isf(
-        result=result, ax=ax, delta_k=delta_k, pairwise=False
-    )
+    _, ax, line_0, fill_0 = plot_isf(get_isf(result, delta_k, pairwise=False), ax=ax)
 
     elastic_result, _ = breakdown_ballistic_trajectory(
         result, filter_timescale=1 / system.gamma
@@ -135,7 +154,7 @@ def _plot_effective_mass_fitted_isf_2d() -> None:
     )
 
     _, ax, line_0, fill_0 = plot_isf(
-        result=elastic_result, ax=ax, delta_k=delta_k, pairwise=False
+        get_isf(elastic_result, delta_k, pairwise=False), ax=ax
     )
     line_0.set_label("elastic")
     line_0.set_color(CAM_CHERRY.warm)
@@ -145,12 +164,14 @@ def _plot_effective_mass_fitted_isf_2d() -> None:
         result, SODIUM_COPPER_SYSTEM_1D.with_units(system.units).barrier_energy
     )
 
-    _, ax, line_1 = plot_exact_flat_ballistic_isf(
-        system=system,
+    _, ax, line_1, _ = plot_isf(
+        _get_offset_ballistic_isf(
+            system,
+            delta_k,
+            result.times,
+            offset=trapped_probability,
+        ),
         ax=ax,
-        delta_k=delta_k,
-        offset=trapped_probability,
-        times=result.times,
     )
     line_1.set_label("actual mass")
     line_1.set_linestyle(":")
@@ -161,12 +182,14 @@ def _plot_effective_mass_fitted_isf_2d() -> None:
         filter_timescale=1 / system.gamma,
     )
 
-    _, ax, line_2 = plot_exact_flat_ballistic_isf(
-        system=dataclasses.replace(system.as_canonical(), m=effective_mass),
+    _, ax, line_2, _ = plot_isf(
+        _get_offset_ballistic_isf(
+            dataclasses.replace(system.as_canonical(), m=effective_mass),
+            delta_k,
+            result.times,
+            offset=trapped_probability,
+        ),
         ax=ax,
-        delta_k=delta_k,
-        offset=trapped_probability,
-        times=result.times,
     )
     line_2.set_label("effective mass")
     line_2.set_linestyle(":")

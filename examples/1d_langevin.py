@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 
 from classical_diffusion.analysis import (
+    get_isf,
     plot_isf,
     plot_root_mean_square_x,
     plot_x_evolution_1d,
@@ -105,9 +106,7 @@ def _plot_isf() -> None:
     fig, ax = get_fancy_figure()
 
     delta_k = (0.5 * 2 * np.pi / system.delta_x,)
-    _, ax, line_0, _fill_0 = plot_isf(
-        result=result, ax=ax, delta_k=delta_k, pairwise=False
-    )
+    _, ax, line_0, _fill_0 = plot_isf(get_isf(result, delta_k, pairwise=False), ax=ax)
     line_0.set_label("full simulation")
 
     result = solve_ensemble_ballistic(
@@ -116,7 +115,7 @@ def _plot_isf() -> None:
         n_samples=10000,
     )
 
-    _, ax, line_1, _ = plot_isf(result=result, ax=ax, delta_k=delta_k, pairwise=False)
+    _, ax, line_1, _ = plot_isf(get_isf(result, delta_k, pairwise=False), ax=ax)
     line_1.set_label("ballistic simulation")
 
     ax.set_xlim(0, 2 / system.gamma)

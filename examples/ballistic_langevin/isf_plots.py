@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 
 from classical_diffusion.analysis import (
+    get_isf,
     plot_isf,
 )
 from classical_diffusion.hopping import get_kramers_parameters_cosine
@@ -50,7 +51,7 @@ def _plot_periodic_isf_1d() -> None:
     fig, ax = get_fancy_figure()
     delta_k = (2 * np.pi / system.delta_x * 0.3,)
 
-    _, ax, line_0, _fill_0 = plot_isf(result=full_result, ax=ax, delta_k=delta_k)
+    _, ax, line_0, _fill_0 = plot_isf(get_isf(full_result, delta_k), ax=ax)
     line_0.set_label("full simulation")
 
     ballistic_result = solve_ensemble_ballistic(
@@ -60,7 +61,7 @@ def _plot_periodic_isf_1d() -> None:
     )
 
     _, ax, line_1, _ = plot_isf(
-        result=ballistic_result, ax=ax, delta_k=delta_k, pairwise=False
+        get_isf(ballistic_result, delta_k, pairwise=False), ax=ax
     )
     line_1.set_label("ballistic simulation")
 
@@ -69,13 +70,11 @@ def _plot_periodic_isf_1d() -> None:
     )
 
     _, ax, line_2, _ = plot_isf(
-        result=inelastic_result, ax=ax, delta_k=delta_k, pairwise=False
+        get_isf(inelastic_result, delta_k, pairwise=False), ax=ax
     )
     line_2.set_label("inelastic")
 
-    _, ax, line_3, _ = plot_isf(
-        result=elastic_result, ax=ax, delta_k=delta_k, pairwise=False
-    )
+    _, ax, line_3, _ = plot_isf(get_isf(elastic_result, delta_k, pairwise=False), ax=ax)
     line_3.set_label("elastic")
 
     ax.set_xlim(0, 1 / system.gamma)
@@ -116,7 +115,7 @@ def _plot_periodic_isf_2d() -> None:
         n_samples=2000,
     )
 
-    _, _, line_1, _ = plot_isf(result=result, ax=ax, delta_k=delta_k, pairwise=False)
+    _, _, line_1, _ = plot_isf(get_isf(result, delta_k, pairwise=False), ax=ax)
     line_1.set_label("ballistic simulation")
 
     omega = get_kramers_parameters_cosine(
@@ -129,13 +128,11 @@ def _plot_periodic_isf_2d() -> None:
     )
 
     _, _, line_2, _ = plot_isf(
-        result=inelastic_result, ax=ax, delta_k=delta_k, pairwise=False
+        get_isf(inelastic_result, delta_k, pairwise=False), ax=ax
     )
     line_2.set_label("inelastic")
 
-    _, _, line_3, _ = plot_isf(
-        result=elastic_result, ax=ax, delta_k=delta_k, pairwise=False
-    )
+    _, _, line_3, _ = plot_isf(get_isf(elastic_result, delta_k, pairwise=False), ax=ax)
     line_3.set_label("elastic")
 
     ax.set_xlim(0, 0.5 / system.gamma)

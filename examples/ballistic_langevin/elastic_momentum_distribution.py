@@ -6,7 +6,7 @@ from scipy.special import ellipk
 from scipy.stats import gamma as gamma_distribution
 from scipy.stats import halfnorm
 
-from classical_diffusion.analysis import plot_isf, plot_momentum_histogram
+from classical_diffusion.analysis import get_isf, plot_isf, plot_momentum_histogram
 from classical_diffusion.langevin import (
     SODIUM_COPPER_SYSTEM_1D,
     CosineSystem1D,
@@ -203,7 +203,7 @@ def _plot_elastic_isf_corrugated() -> None:
 
     fig, ax = get_fancy_figure()
     _, _, line, fill = plot_isf(
-        elastic, ax=ax, delta_k=(delta_k,), measure="real", pairwise=False
+        get_isf(elastic, (delta_k,), pairwise=False), ax=ax, measure="real"
     )
     line.set_color(CAM_BLUE.warm)
     fill.set_color(CAM_BLUE.warm)

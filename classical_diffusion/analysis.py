@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import matplotlib as mpl
 import numpy as np
 
-from classical_diffusion.jax.analysis import get_pairwise_isf as get_pairwise_isf_jax
+from classical_diffusion._isf import get_isf
 from classical_diffusion.jax.langevin import (
     get_trajectory_breakpoints as get_trajectory_breakpoints_jax,
 )
@@ -17,7 +17,7 @@ from classical_diffusion.simulation import SimulationResult, SingleSimulationRes
 from classical_diffusion.util import timed
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
 
     from matplotlib.axes import Axes
     from matplotlib.collections import PolyCollection
@@ -27,93 +27,65 @@ if TYPE_CHECKING:
 
     from classical_diffusion.langevin import SingleLangevinSimulationResult
     from classical_diffusion.plot import Measure
+    from classical_diffusion.simulation import IsfResult
 
 
-def get_isf(
-    positions: np.ndarray[Any, np.dtype[np.floating]],
-    delta_k: tuple[float, ...],
-    *,
-    origin_idx: int = 0,
-) -> np.ndarray[Any, np.dtype[np.complex128]]:
-    """Get the isf, calculated from with respect to a fixed reference position."""
-    phase = np.einsum(
-        "i,...ij->...j",
-        delta_k,
-        positions - positions[..., origin_idx].reshape((*positions.shape[:-1], 1)),
-    )
-    return np.exp(1j * phase)
-
-
-def get_pairwise_isf(
-    positions: np.ndarray[Any, np.dtype[np.floating]],
-    delta_k: tuple[float, ...],
-) -> np.ndarray[Any, np.dtype[np.complex128]]:
-    """Get the ISF, calculated from the pairwise correlation of the positions."""
-    return np.array(get_pairwise_isf_jax(jnp.array(positions), jnp.asarray(delta_k)))
+__all__ = [
+    "get_hop_times",
+    "get_isf",
+    "partition_trajectory",
+    "plot_hop_time_distribution_histogram",
+    "plot_isf",
+    "plot_isf_with_delta_k",
+    "plot_momentum_histogram",
+    "plot_p_evolution_1d",
+    "plot_p_evolution_2d",
+    "plot_root_mean_square_x",
+    "plot_x_evolution_1d",
+    "plot_x_evolution_2d",
+]
 
 
 def plot_isf(
-    result: SimulationResult,
+    result: IsfResult,
     *,
     ax: Axes | None = None,
     measure: Measure = "abs",
-    delta_k: tuple[float, ...],
-    pairwise: bool = True,
 ) -> tuple[Figure, Axes, Line2D, PolyCollection]:
-    """Plot the ensemble-averaged ISF over time, with a shaded ±1 SEM band."""
+    """Plot an ISF over time, with a shaded band of one standard error."""
     fig, ax = get_figure(ax)
 
-    if pairwise:
-        isf = get_pairwise_isf(result.x_points, delta_k=delta_k)
-        times = result.times - result.times[0]
-    else:
-        origin_idx = np.argmin(np.abs(result[0].times)).item()
-        isf = get_isf(result.x_points, delta_k=delta_k, origin_idx=origin_idx)
-        times = result.times - result.times[origin_idx]
+    data = get_measured_data(result.isf, measure)
 
-    avg_isf = np.mean(isf, axis=0)
-    sem_isf = np.std(isf, axis=0) / np.sqrt(isf.shape[0])
-
-    avg_data = get_measured_data(avg_isf, measure)
-    sem_data = get_measured_data(sem_isf, measure)
-
-    (line,) = ax.plot(times, avg_data)
+    (line,) = ax.plot(result.times, data)
     line.set_label("ISF")
 
-    fill = ax.fill_between(times, avg_data - sem_data, avg_data + sem_data)
+    fill = ax.fill_between(result.times, data - result.error, data + result.error)
     fill.set_alpha(0.3)
     fill.set_color(line.get_color())
 
     ax.set_xlabel("Time")
     ax.set_ylabel("ISF")
-    ax.set_xlim(times[0], times[-1])
+    ax.set_xlim(result.times[0], result.times[-1])
 
     return fig, ax, line, fill
 
 
 def plot_isf_with_delta_k(
-    result: SimulationResult,
-    delta_k_values: np.ndarray[Any, np.dtype[np.floating]],
+    results: Iterable[IsfResult],
     *,
     ax: Axes | None = None,
     measure: Measure = "abs",
-    pairwise: bool = True,
 ) -> tuple[Figure, Axes]:
-    """Plot the ensemble-averaged ISF over time, with a shaded ±1 SEM band."""
+    """Plot the ISF at each scattering wavevector, colored by its magnitude."""
     fig, ax = get_figure(ax)
 
-    norm = mpl.colors.Normalize(
-        vmin=np.min(delta_k_values).item(), vmax=np.max(delta_k_values).item()
-    )
+    results = list(results)
+    delta_k = [float(np.linalg.norm(r.delta_k)) for r in results]
+    norm = mpl.colors.Normalize(vmin=min(delta_k), vmax=max(delta_k))
     cmap = mpl.colormaps[mpl.rcParams["image.cmap"]]
-    for dk in delta_k_values:
-        _, _, line, poly = plot_isf(
-            result,
-            ax=ax,
-            measure=measure,
-            delta_k=(dk,),
-            pairwise=pairwise,
-        )
+    for result, dk in zip(results, delta_k, strict=True):
+        _, _, line, poly = plot_isf(result, ax=ax, measure=measure)
         poly.set_alpha(0)
         line.set_color(cmap(norm(dk)))
 

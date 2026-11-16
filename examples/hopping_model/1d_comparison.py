@@ -25,10 +25,8 @@ from classical_diffusion.langevin import (
 from classical_diffusion.plot import (
     Measure,
     get_fancy_figure,
-    get_figure,
-    get_measured_data,
 )
-from classical_diffusion.simulation import SimulationResult, TimeSpan
+from classical_diffusion.simulation import IsfResult, SimulationResult, TimeSpan
 from classical_diffusion.util import timed
 
 if TYPE_CHECKING:
@@ -47,26 +45,16 @@ def plot_relaxation_corrected_hopping_isf(
     correction_factor: float,
 ) -> tuple[Figure, Axes, Line2D, PolyCollection]:
     """Plot the ensemble-averaged ISF over time, with a shaded ±1 SEM band."""
-    fig, ax = get_figure(ax)
-
-    isf = get_isf(result.x_points, delta_k) * correction_factor
-
-    avg_isf = np.mean(isf, axis=0)
-    sem_isf = np.std(isf, axis=0) / np.sqrt(isf.shape[0])
-
-    avg_data = get_measured_data(avg_isf, measure)
-    sem_data = get_measured_data(sem_isf, measure)
-
-    (line,) = ax.plot(result.times, avg_data)
-    line.set_label("ISF")
-
-    fill = ax.fill_between(result.times, avg_data - sem_data, avg_data + sem_data)
-    fill.set_alpha(0.3)
-    fill.set_color(line.get_color())
-
+    isf = get_isf(result, delta_k, pairwise=False)
+    corrected = IsfResult(
+        times=isf.times,
+        isf=correction_factor * isf.isf,
+        error=correction_factor * isf.error,
+        delta_k=isf.delta_k,
+        units=isf.units,
+    )
+    fig, ax, line, fill = plot_isf(corrected, ax=ax, measure=measure)
     ax.set_xlabel("Time / s")
-    ax.set_ylabel("ISF")
-
     return fig, ax, line, fill
 
 
@@ -137,7 +125,7 @@ def _kramers_harmonic_comparison() -> None:
         ),
         delta_k=delta_k,
         times=np.array([1000 / system.gamma]),
-    ).item()
+    ).isf.real.item()
 
     _, _, line_0, _ = plot_relaxation_corrected_hopping_isf(
         result=lattice_result,
@@ -148,7 +136,7 @@ def _kramers_harmonic_comparison() -> None:
     line_0.set_label("Hopping model")
 
     _, _, line, _ = plot_isf(
-        result=langevin_result, ax=ax, delta_k=delta_k, pairwise=True, measure="real"
+        get_isf(langevin_result, delta_k, pairwise=True), ax=ax, measure="real"
     )
     line.set_label("Overdamped Langevin")
 
@@ -186,7 +174,7 @@ def _kramers_sinusoid_comparison() -> None:
 
     delta_k = (0.5 * 2 * np.pi / system.delta_x,)
     _, _, line, _ = plot_isf(
-        result=langevin_result, ax=ax, delta_k=delta_k, pairwise=True, measure="real"
+        get_isf(langevin_result, delta_k, pairwise=True), ax=ax, measure="real"
     )
     line.set_label("Overdamped Langevin")
 
@@ -208,7 +196,7 @@ def _kramers_sinusoid_comparison() -> None:
         ),
         delta_k=delta_k,
         times=np.array([1000 / system.gamma]),
-    ).item()
+    ).isf.real.item()
 
     _, _, line_0, _ = plot_relaxation_corrected_hopping_isf(
         result=lattice_result,

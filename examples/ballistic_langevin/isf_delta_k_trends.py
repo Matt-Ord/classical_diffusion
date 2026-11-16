@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 
 from classical_diffusion.analysis import (
+    get_isf,
     plot_isf_with_delta_k,
 )
 from classical_diffusion.langevin import (
@@ -33,12 +34,14 @@ def _plot_isf_trends() -> None:
 
     fig, ax = get_two_panel_figure()
     plot_isf_with_delta_k(
-        result=elastic_result, ax=ax[0], delta_k_values=delta_k_values, pairwise=False
+        (get_isf(elastic_result, (dk,), pairwise=False) for dk in delta_k_values),
+        ax=ax[0],
     )
     fig.axes[-1].remove()
 
     plot_isf_with_delta_k(
-        result=inelastic_result, ax=ax[1], delta_k_values=delta_k_values, pairwise=False
+        (get_isf(inelastic_result, (dk,), pairwise=False) for dk in delta_k_values),
+        ax=ax[1],
     )
 
     ax[0].set_xlim(0, 1e-12)

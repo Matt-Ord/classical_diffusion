@@ -3,12 +3,12 @@ from pathlib import Path
 import numpy as np
 from scipy.constants import Boltzmann
 
-from classical_diffusion.analysis import plot_isf, plot_x_evolution_1d
+from classical_diffusion.analysis import get_isf, plot_isf, plot_x_evolution_1d
 from classical_diffusion.langevin import (
     HarmonicSystem,
-    plot_exact_flat_ballistic_isf,
-    plot_exact_flat_isf,
-    plot_exact_harmonic_isf,
+    get_exact_flat_ballistic_isf,
+    get_exact_flat_isf,
+    get_exact_harmonic_isf,
     solve_ensemble,
     solve_ensemble_ballistic,
 )
@@ -31,11 +31,7 @@ def _plot_harmonic_isf() -> None:
     fig, ax = get_fancy_figure()
 
     delta_k = (2 * np.pi / 5,)
-    _, ax, line_simulated, _ = plot_isf(
-        result=result,
-        ax=ax,
-        delta_k=delta_k,
-    )
+    _, ax, line_simulated, _ = plot_isf(get_isf(result, delta_k), ax=ax)
     line_simulated.set_label("simulation")
 
     ax.axhline(
@@ -46,7 +42,9 @@ def _plot_harmonic_isf() -> None:
         color="black",
     )
 
-    _, ax, line_exact = plot_exact_harmonic_isf(system, delta_k, result.times, ax=ax)
+    _, ax, line_exact, _ = plot_isf(
+        get_exact_harmonic_isf(system, delta_k, result.times), ax=ax
+    )
     line_exact.set_label("exact")
     ax.legend(
         loc="upper right",
@@ -69,10 +67,12 @@ def _plot_flat_isf() -> None:
     fig, ax = get_fancy_figure()
 
     delta_k = (2 * np.pi / 40,)
-    _, ax, line_simulated, _ = plot_isf(result=result, ax=ax, delta_k=delta_k)
+    _, ax, line_simulated, _ = plot_isf(get_isf(result, delta_k), ax=ax)
     line_simulated.set_label("simulation")
 
-    _, ax, line_exact = plot_exact_flat_isf(system, delta_k, result.times, ax=ax)
+    _, ax, line_exact, _ = plot_isf(
+        get_exact_flat_isf(system, delta_k, result.times), ax=ax
+    )
     line_exact.set_label("exact")
     ax.legend(
         loc="upper right",
@@ -99,13 +99,11 @@ def _plot_flat_ballistic_isf() -> None:
     fig, ax = get_fancy_figure()
 
     delta_k = (2 * np.pi / 40,)
-    _, ax, line_simulated, _ = plot_isf(
-        result=result, ax=ax, delta_k=delta_k, pairwise=False
-    )
+    _, ax, line_simulated, _ = plot_isf(get_isf(result, delta_k, pairwise=False), ax=ax)
     line_simulated.set_label("simulation")
 
-    _, ax, line_exact = plot_exact_flat_ballistic_isf(
-        system, delta_k, result.times, ax=ax
+    _, ax, line_exact, _ = plot_isf(
+        get_exact_flat_ballistic_isf(system, delta_k, result.times), ax=ax
     )
     line_exact.set_label("exact")
     ax.legend(
@@ -131,10 +129,12 @@ def _plot_flat_isf_2d() -> None:
     fig, ax = get_fancy_figure()
 
     delta_k = (2 * np.pi / 40, 0)
-    _, ax, line_simulated, _ = plot_isf(result=result, ax=ax, delta_k=delta_k)
+    _, ax, line_simulated, _ = plot_isf(get_isf(result, delta_k), ax=ax)
     line_simulated.set_label("simulation")
 
-    _, ax, line_exact = plot_exact_flat_isf(system, delta_k, result.times, ax=ax)
+    _, ax, line_exact, _ = plot_isf(
+        get_exact_flat_isf(system, delta_k, result.times), ax=ax
+    )
     line_exact.set_label("exact")
     ax.legend(
         loc="upper right",
