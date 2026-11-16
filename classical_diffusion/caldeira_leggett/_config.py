@@ -32,21 +32,19 @@ class CaldeiraLeggettConfig:
     classically have, its height above the minimum of the potential.
     """
     linear_rtol: float = 1e-12
-    """The relative residual of each linear solve (GMRES), or its floor from round off if that is higher.
+    """The relative residual of each linear solve (BiCGSTAB), or its floor from round off if that is higher.
 
     The steady state relaxes slowly along some modes, such as hops between
     the sites of the cell, so its error can be much larger than its residual:
     for hydrogen on Cu(111) at 300 times its mass, a residual of 1e-8 leaves
     D wrong by 2e-3, and of 1e-12 by 1e-7.
     """
-    linear_restart: int = 30
-    """The number of GMRES iterations between restarts."""
-    linear_maxiter: int = 50
-    """The largest number of GMRES restarts in each pass."""
+    linear_maxiter: int = 1000
+    """The largest number of BiCGSTAB iterations in each pass."""
     linear_inner_rtol: float = 1e-4
-    """The factor by which each pass of GMRES reduces the residual."""
+    """The factor by which each pass of BiCGSTAB reduces the residual."""
     linear_refinements: int = 20
-    """The largest number of passes of GMRES, each from the true residual."""
+    """The largest number of passes of BiCGSTAB, each from the true residual."""
 
     @override
     def __hash__(self) -> int:
