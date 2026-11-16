@@ -1,7 +1,8 @@
-# cspell: ignore eigh
+# cspell: ignore eigh eigvalsh
 from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
+import scipy.linalg
 
 from classical_diffusion.caldeira_leggett._model import (
     get_hamiltonian,
@@ -61,18 +62,33 @@ def get_bands(model: Model) -> Bands:
     The lowest energy of band b is below a cutoff exactly when some crystal
     momentum has more than b energies below it, so the number of bands is the
     most energies below the cutoff at any crystal momentum.
+
+    The plane wave Hamiltonian is diagonalized one crystal momentum at a
+    time, first for its energies, then for the vectors of the bands kept only,
+    which is cheaper than all of its vectors and holds one Hamiltonian at once.
     """
-    energies, vectors = np.linalg.eigh(
-        get_hamiltonian(
-            model.kappa @ model.cell_reciprocal,
+    wavevectors = model.kappa @ model.cell_reciprocal
+
+    def hamiltonian(i: int) -> ComplexArray:
+        return get_hamiltonian(
+            wavevectors[i : i + 1],
             model.reciprocal_vectors,
             model.reciprocal,
             model.potential,
-        )
+        )[0]
+
+    all_energies = np.array(
+        [scipy.linalg.eigvalsh(hamiltonian(i)) for i in range(model.n_kappa)]
     )
-    cutoff = max(energies.min(), model.saddle_energy) + model.max_energy
-    n_bands = int(np.count_nonzero(energies < cutoff, axis=-1).max())
-    return Bands(energies=energies[:, :n_bands], vectors=vectors[:, :, :n_bands])
+    cutoff = max(all_energies.min(), model.saddle_energy) + model.max_energy
+    n_bands = int(np.count_nonzero(all_energies < cutoff, axis=-1).max())
+    kept = [
+        scipy.linalg.eigh(hamiltonian(i), subset_by_index=(0, n_bands - 1))
+        for i in range(model.n_kappa)
+    ]
+    return Bands(
+        energies=np.array([e for e, _ in kept]), vectors=np.array([v for _, v in kept])
+    )
 
 
 def get_shift_operator(model: Model, bands: Bands, shift: IntVector) -> ComplexArray:
