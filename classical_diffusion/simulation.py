@@ -111,7 +111,6 @@ class SimulationResult[S: Any]:
         )
 
 
-@dataclass(frozen=True, kw_only=True, init=False)
 class IsfResult:
     """An intermediate scattering function I(delta_k, t) = <e^{i delta_k . (x(t) - x(0))}>.
 
@@ -119,15 +118,6 @@ class IsfResult:
     trajectories, where the ISF is the mean and the error its standard error, or
     from a deterministic solver, where the error is zero.
     """
-
-    times: np.ndarray[tuple[int], np.dtype[np.floating]]
-    """The time since the origin, in the units."""
-    isf: np.ndarray[tuple[int], np.dtype[np.complexfloating]]
-    error: np.ndarray[tuple[int], np.dtype[np.floating]]
-    """The standard error of the ISF at each time."""
-    delta_k: tuple[float, ...]
-    """The scattering wavevector, in the units."""
-    units: UnitSystem
 
     def __init__(
         self,
@@ -138,15 +128,36 @@ class IsfResult:
         units: UnitSystem,
         error: np.ndarray[Any, np.dtype[np.floating]] | None = None,
     ) -> None:
-        object.__setattr__(self, "times", np.asarray(times, dtype=np.float64))
-        object.__setattr__(self, "isf", np.asarray(isf, dtype=np.complex128))
-        object.__setattr__(
-            self,
-            "error",
-            np.zeros(np.shape(isf)) if error is None else np.asarray(error),
-        )
-        object.__setattr__(self, "delta_k", tuple(float(k) for k in delta_k))
-        object.__setattr__(self, "units", units)
+        self._times = np.asarray(times, dtype=np.float64)
+        self._isf = np.asarray(isf, dtype=np.complex128)
+        self._error = np.zeros(self._isf.shape) if error is None else np.asarray(error)
+        self._delta_k = tuple(float(k) for k in delta_k)
+        self._units = units
+
+    @property
+    def times(self) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
+        """The time since the origin, in the units."""
+        return self._times
+
+    @property
+    def isf(self) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
+        """The ISF at each time."""
+        return self._isf
+
+    @property
+    def error(self) -> np.ndarray[tuple[int], np.dtype[np.floating]]:
+        """The standard error of the ISF at each time."""
+        return self._error
+
+    @property
+    def delta_k(self) -> tuple[float, ...]:
+        """The scattering wavevector, in the units."""
+        return self._delta_k
+
+    @property
+    def units(self) -> UnitSystem:
+        """The units of the times and the scattering wavevector."""
+        return self._units
 
     def with_units(self, units: UnitSystem) -> IsfResult:
         """Return the ISF, with its times and wavevector in the given units."""
