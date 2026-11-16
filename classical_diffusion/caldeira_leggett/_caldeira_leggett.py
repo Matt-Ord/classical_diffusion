@@ -31,13 +31,13 @@ from classical_diffusion.caldeira_leggett._solver import (
     get_steady_state as get_band_steady_state,
 )
 from classical_diffusion.jax.langevin import Adaptive
+from classical_diffusion.simulation import IsfResult
 from classical_diffusion.util import cached, timed
 
 if TYPE_CHECKING:
     from classical_diffusion.caldeira_leggett._model import ComplexArray, FloatArray
     from classical_diffusion.jax.langevin import StepConfig
     from classical_diffusion.langevin._system import PeriodicSystem
-    from classical_diffusion.simulation import IsfResult
 
 
 class SteadyState(NamedTuple):
@@ -146,7 +146,7 @@ def solve_isf(
     # S[kappa] = <kappa - dK, m| e^{-i dK x} |kappa, n>, and the block
     # (kappa - dK, kappa) of rho e^{-i dK x} is rho[kappa - dK] S[kappa]
     scattering = get_shift_operator(model, bands, shift)
-    return get_isf(
+    result = get_isf(
         get_liouvillian(operators, bra, shifted_kappa),
         rho[shifted_kappa] @ scattering,
         scattering,
@@ -154,7 +154,10 @@ def solve_isf(
         delta_k=tuple(scaled),
         units=model.units,
         step_config=step_config,
-    ).with_units(system.units)
+    )
+    # The ISF at exactly the given times, rather than at their round trip
+    # through the natural units
+    return IsfResult(times=times, isf=result.isf, delta_k=delta_k, units=system.units)
 
 
 @timed

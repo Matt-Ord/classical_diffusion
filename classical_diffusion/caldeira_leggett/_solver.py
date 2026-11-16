@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import jax.scipy.sparse.linalg
 import numpy as np
 
+from classical_diffusion.caldeira_leggett._krylov import KrylovExponential
 from classical_diffusion.caldeira_leggett._liouvillian import (
     Liouvillian,
     Operators,
@@ -148,26 +149,12 @@ def get_steady_state(
     return 0.5 * (rho + rho.conj().swapaxes(-1, -2))
 
 
-@jax.jit
-def _get_spectral_radius(liouvillian: Liouvillian, x: jax.Array) -> jax.Array:
-    """Get the largest |eigenvalue| of L, to about 10%, by 30 steps of power iteration from x."""
-
-    def step(x: jax.Array, _: None) -> tuple[jax.Array, jax.Array]:
-        y = apply_liouvillian(liouvillian, x)
-        norm = jnp.linalg.norm(y)
-        return y / norm, norm
-
-    _, growth = jax.lax.scan(step, x / jnp.linalg.norm(x), None, length=30)
-    return growth[-1]
-
-
 @partial(jax.jit, static_argnames=("step_config",))
-def _propagate(  # ruff:ignore[too-many-arguments]
+def _propagate(
     liouvillian: Liouvillian,
     initial: jax.Array,
     observable: jax.Array,
     times: jax.Array,
-    dt0: jax.Array,
     *,
     step_config: StepConfig,
 ) -> jax.Array:
@@ -186,12 +173,14 @@ def _propagate(  # ruff:ignore[too-many-arguments]
     ) -> jax.Array:
         return jnp.sum(observable.conj() * (y[0] + 1j * y[1]))
 
+    # The state is split into its real and imaginary parts, as diffrax
+    # supports complex states only experimentally
     return dfx.diffeqsolve(
         dfx.ODETerm(vector_field),
-        dfx.Tsit5(),  # cspell: disable-line
+        KrylovExponential(),
         t0=times[0],
         t1=times[-1],
-        dt0=dt0,
+        dt0=step_config.initial_step(times),
         y0=jnp.stack([initial.real, initial.imag]),
         saveat=dfx.SaveAt(ts=times, fn=measure),
         stepsize_controller=step_config.controller(times),
@@ -213,20 +202,14 @@ def get_isf(  # ruff:ignore[too-many-arguments]
 ) -> IsfResult:
     """Get the ISF Tr[O^dagger X(t)], where X(t) is propagated from the initial state, at the times and scattering vector in the units.
 
-    The fastest coherences, between the highest and lowest bands, limit the
-    stable step of the explicit Runge-Kutta method, so the first step is at
-    most the inverse of the largest |eigenvalue| of L.
+    Each step is an exponential exp(h L) in a Krylov basis
+    (`KrylovExponential`), whose length is set by its error alone.
     """
-    radius = _get_spectral_radius(
-        liouvillian, jax.random.normal(jax.random.key(0), initial.shape) + 0j
-    )
-    steps = jnp.asarray(times)
     isf = _propagate(
         liouvillian,
         jnp.asarray(initial),
         jnp.asarray(observable),
-        steps,
-        jnp.minimum(1 / radius, step_config.initial_step(steps)),
+        jnp.asarray(times),
         step_config=step_config,
     )
     return IsfResult(times=times, isf=np.asarray(isf), delta_k=delta_k, units=units)
