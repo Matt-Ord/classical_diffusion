@@ -1,7 +1,6 @@
 """Simulations using a hopping model."""
 
-from classical_diffusion._isf import get_isf
-from classical_diffusion.hopping._analysis import solve_isf
+from classical_diffusion.hopping._analysis import get_isf, solve_isf
 from classical_diffusion.hopping._hopping import (
     DeterministicSolverResult,
     HoppingSimulationResult,
