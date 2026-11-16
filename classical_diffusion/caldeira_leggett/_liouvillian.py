@@ -1,4 +1,4 @@
-# cspell: ignore Daleckii Krein Davidovic digamma
+# cspell: ignore Daleckii Krein Davidovic digamma jkab jkac
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
