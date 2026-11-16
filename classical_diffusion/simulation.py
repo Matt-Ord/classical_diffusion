@@ -111,6 +111,55 @@ class SimulationResult[S: Any]:
         )
 
 
+@dataclass(frozen=True, kw_only=True, init=False)
+class IsfResult:
+    """An intermediate scattering function I(delta_k, t) = <e^{i delta_k . (x(t) - x(0))}>.
+
+    Every method which finds an ISF returns this, whether from an ensemble of
+    trajectories, where the ISF is the mean and the error its standard error, or
+    from a deterministic solver, where the error is zero.
+    """
+
+    times: np.ndarray[tuple[int], np.dtype[np.floating]]
+    """The time since the origin, in the units."""
+    isf: np.ndarray[tuple[int], np.dtype[np.complexfloating]]
+    error: np.ndarray[tuple[int], np.dtype[np.floating]]
+    """The standard error of the ISF at each time."""
+    delta_k: tuple[float, ...]
+    """The scattering wavevector, in the units."""
+    units: UnitSystem
+
+    def __init__(
+        self,
+        *,
+        times: np.ndarray[Any, np.dtype[np.floating]],
+        isf: np.ndarray[Any, np.dtype[np.number]],
+        delta_k: tuple[float, ...],
+        units: UnitSystem,
+        error: np.ndarray[Any, np.dtype[np.floating]] | None = None,
+    ) -> None:
+        object.__setattr__(self, "times", np.asarray(times, dtype=np.float64))
+        object.__setattr__(self, "isf", np.asarray(isf, dtype=np.complex128))
+        object.__setattr__(
+            self,
+            "error",
+            np.zeros(np.shape(isf)) if error is None else np.asarray(error),
+        )
+        object.__setattr__(self, "delta_k", tuple(float(k) for k in delta_k))
+        object.__setattr__(self, "units", units)
+
+    def with_units(self, units: UnitSystem) -> IsfResult:
+        """Return the ISF, with its times and wavevector in the given units."""
+        length = self.units.length_into(1.0, units)
+        return IsfResult(
+            times=self.units.time_into(self.times, units),
+            isf=self.isf,
+            error=self.error,
+            delta_k=tuple(k / length for k in self.delta_k),
+            units=units,
+        )
+
+
 @final
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True, kw_only=True)

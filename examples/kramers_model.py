@@ -4,13 +4,13 @@ import numpy as np
 from scipy.constants import Boltzmann
 
 from classical_diffusion.analysis import (
+    get_isf,
     plot_isf,
 )
 from classical_diffusion.hopping import (
-    get_deterministic_probabilities,
     get_kramers_parameters_cosine,
     lattice_1d_from_kramers_parameters,
-    plot_deterministic_isf,
+    solve_isf,
 )
 from classical_diffusion.langevin import (
     CosineSystem1D,
@@ -21,7 +21,7 @@ from classical_diffusion.langevin import (
     solve_many_overdamped,
 )
 from classical_diffusion.plot import get_fancy_figure
-from classical_diffusion.simulation import TimeSpan
+from classical_diffusion.simulation import IsfResult, TimeSpan
 from classical_diffusion.util import cache_base_path
 
 
@@ -60,7 +60,7 @@ def _plot_kramers_periodic_comparison() -> None:
     fig, ax = get_fancy_figure()
 
     delta_k = (0.7 * 2 * np.pi / system.delta_x,)
-    _, _, line_0, _ = plot_isf(result=result, ax=ax, delta_k=delta_k)
+    _, _, line_0, _ = plot_isf(get_isf(result, delta_k), ax=ax)
     line_0.set_label("cosine model")
 
     system = KramersSystem1D(params=get_kramers_parameters_cosine(system))
@@ -70,7 +70,7 @@ def _plot_kramers_periodic_comparison() -> None:
         n_samples=20,
     )
     delta_k = (0.7 * 2 * np.pi / system.delta_x,)
-    _, _, line_1, _ = plot_isf(result=result, ax=ax, delta_k=delta_k)
+    _, _, line_1, _ = plot_isf(get_isf(result, delta_k), ax=ax)
     line_1.set_label("kramers model")
 
     ax.set_xlim(0, 4 / system.gamma)
@@ -95,17 +95,25 @@ def _plot_kramers_hopping_comparison() -> None:
     fig, ax = get_fancy_figure()
 
     delta_k = (0.7 * 2 * np.pi / system.delta_x,)
-    _, _, line_0, _ = plot_isf(result=result, ax=ax, delta_k=delta_k)
+    _, _, line_0, _ = plot_isf(get_isf(result, delta_k), ax=ax)
     line_0.set_label("kramers model")
     ax.set_xlim(0, 4 / system.gamma)
 
     hop_system = lattice_1d_from_kramers_parameters(system.kramers_params)
-    result = get_deterministic_probabilities(
+    hop_isf = solve_isf(
         hop_system,
-        (501,),
+        delta_k,
         TimeSpan(t_end=4 / system.gamma, n_steps=200),
+        shape=(501,),
     )
-    _, _, line_1 = plot_deterministic_isf(result, ax=ax, delta_k=delta_k, amplitude=0.8)
+    scaled_isf = IsfResult(
+        times=hop_isf.times,
+        isf=0.8 * hop_isf.isf,
+        error=hop_isf.error,
+        delta_k=hop_isf.delta_k,
+        units=hop_isf.units,
+    )
+    _, _, line_1, _ = plot_isf(scaled_isf, ax=ax)
     line_1.set_label("hopping model")
 
     ax.set_ylim(0, 1)

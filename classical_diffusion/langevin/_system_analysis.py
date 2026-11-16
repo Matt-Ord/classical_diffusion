@@ -10,6 +10,7 @@ from classical_diffusion.langevin import (
 from classical_diffusion.langevin._analysis import _get_energy
 from classical_diffusion.langevin._langevin import get_random_initial_conditions_ext
 from classical_diffusion.plot import get_figure
+from classical_diffusion.simulation import IsfResult
 from classical_diffusion.util import _get_key, timed
 
 if TYPE_CHECKING:
@@ -211,12 +212,12 @@ def get_exact_harmonic_isf(
     system: HarmonicSystem,
     delta_k: tuple[float,],
     times: np.ndarray[tuple[int], np.dtype[np.floating[Any]]],
-) -> np.ndarray[tuple[int], np.dtype[np.floating[Any]]]:
-    """Return the exact ISF for simulation."""
-    gamma, _temp, m = system.gamma, system.temperature, system.m
+) -> IsfResult:
+    """Return the exact ISF of a harmonic well."""
+    gamma, m = system.gamma, system.m
     f = np.sqrt(system.omega**2 - gamma**2 / 4)
 
-    return np.exp(
+    isf = np.exp(
         -(delta_k[0] ** 2)
         * (system.kbt / (m * system.omega**2))
         * (
@@ -225,107 +226,36 @@ def get_exact_harmonic_isf(
             * (np.cos(f * times) + (gamma / (2 * f)) * np.sin(f * times))
         )
     )
-
-
-def plot_exact_harmonic_isf(
-    system: HarmonicSystem,
-    delta_k: tuple[float,],
-    times: np.ndarray[Any, np.dtype[np.floating[Any]]] | None = None,
-    *,
-    ax: Axes | None = None,
-) -> tuple[Figure, Axes, Line2D]:
-    """Plot the state occupations of a quantum simulation result."""
-    fig, ax = get_figure(ax)
-
-    times = times if times is not None else np.linspace(0, 30, 1000)
-
-    isf_exact = get_exact_harmonic_isf(system, delta_k, times)
-    (line,) = ax.plot(times, isf_exact)
-    line.set_label("ISF")
-
-    ax.set_title("Intermediate Scattering Function Over Time")
-    ax.set_xlabel("Time")
-    ax.set_ylabel("ISF")
-    ax.legend()
-
-    return fig, ax, line
+    return IsfResult(times=times, isf=isf, delta_k=delta_k, units=system.units)
 
 
 def get_exact_flat_isf(
     system: System,
     delta_k: tuple[float, ...],
     times: np.ndarray[Any, np.dtype[np.floating[Any]]],
-) -> np.ndarray:
+) -> IsfResult:
     """Return the exact ISF for a flat (potential-free) surface."""
     kbt, m, gamma = system.kbt, system.m, system.gamma
     k_squared = np.sum(np.array(delta_k) ** 2)
-    return np.exp(
+    isf = np.exp(
         ((k_squared) * kbt / (gamma**2 * m))
         * (1 - gamma * times - np.exp(-gamma * times))
     )
-
-
-def plot_exact_flat_isf(
-    system: System,
-    delta_k: tuple[float, ...],
-    times: np.ndarray[Any, np.dtype[np.floating[Any]]] | None = None,
-    *,
-    ax: Axes | None = None,
-) -> tuple[Figure, Axes, Line2D]:
-    """Plot the exact ISF for a flat (potential-free) surface."""
-    fig, ax = get_figure(ax)
-
-    times = times if times is not None else np.linspace(0, 10, 1000)
-    isf_exact = get_exact_flat_isf(system, delta_k=delta_k, times=times)
-
-    (line,) = ax.plot(times, isf_exact)
-    line.set_label("Exact Flat ISF")
-
-    ax.set_title("Intermediate Scattering Function Over Time")
-    ax.set_xlabel("Time")
-    ax.set_ylabel("ISF")
-    ax.legend()
-
-    return fig, ax, line
+    return IsfResult(times=times, isf=isf, delta_k=delta_k, units=system.units)
 
 
 def get_exact_flat_ballistic_isf(
     system: System,
     delta_k: tuple[float, ...],
     times: np.ndarray[Any, np.dtype[np.floating[Any]]],
-) -> np.ndarray:
+) -> IsfResult:
     """Return the exact ballistic ISF for a flat (potential-free) surface."""
     kbt, m = system.kbt, system.m
     m = np.atleast_2d(m)
     inv_m = np.linalg.inv(m)
     inner_product = np.einsum("i,ij,j->", delta_k, inv_m, delta_k)
-    return np.exp(-(inner_product * kbt / 2) * times**2)
-
-
-def plot_exact_flat_ballistic_isf(
-    system: System,
-    delta_k: tuple[float, ...],
-    times: np.ndarray[Any, np.dtype[np.floating[Any]]] | None = None,
-    *,
-    ax: Axes | None = None,
-    offset: float = 0,
-) -> tuple[Figure, Axes, Line2D]:
-    """Plot the exact ISF for a flat (potential-free) surface."""
-    fig, ax = get_figure(ax)
-
-    times = times if times is not None else np.linspace(0, 30, 1000)
-    isf_exact = offset + (1 - offset) * get_exact_flat_ballistic_isf(
-        system=system, delta_k=delta_k, times=times
-    )
-
-    (line,) = ax.plot(times, isf_exact)
-
-    ax.set_title("Intermediate Scattering Function Over Time")
-    ax.set_xlabel("Time")
-    ax.set_ylabel("ISF")
-    ax.legend()
-
-    return fig, ax, line
+    isf = np.exp(-(inner_product * kbt / 2) * times**2)
+    return IsfResult(times=times, isf=isf, delta_k=delta_k, units=system.units)
 
 
 def get_characteristic_friction_time(system: System) -> float:

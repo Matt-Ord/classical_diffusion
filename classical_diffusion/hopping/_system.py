@@ -62,9 +62,16 @@ class CanonicalLattice:
 class Lattice1D(Lattice):
     """A Hopping model for a 1D system."""
 
-    def __init__(self, lattice_spacing: float, hop_time: float) -> None:
+    def __init__(
+        self,
+        lattice_spacing: float,
+        hop_time: float,
+        *,
+        units: UnitSystem | None = None,
+    ) -> None:
         self._lattice_spacing = lattice_spacing
         self._hop_time = hop_time
+        object.__setattr__(self, "units", units or UnitSystem())
 
     @property
     def hop_time(self) -> float:
