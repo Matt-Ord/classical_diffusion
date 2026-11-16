@@ -15,9 +15,14 @@ from classical_diffusion.caldeira_leggett._liouvillian import (
     get_liouvillian,
 )
 
+# jax.jit reads the annotations of _propagate, which needs StepConfig at run time
+from classical_diffusion.jax.langevin import StepConfig  # ruff: ignore[typing-only-first-party-import]
+from classical_diffusion.simulation import IsfResult
+
 if TYPE_CHECKING:
     from classical_diffusion.caldeira_leggett._config import CaldeiraLeggettConfig
     from classical_diffusion.caldeira_leggett._model import ComplexArray, FloatArray
+    from classical_diffusion.system import UnitSystem
 
 
 class _NoJumpInverse(NamedTuple):
@@ -156,7 +161,7 @@ def _get_spectral_radius(liouvillian: Liouvillian, x: jax.Array) -> jax.Array:
     return growth[-1]
 
 
-@partial(jax.jit, static_argnames=("rtol", "atol"))
+@partial(jax.jit, static_argnames=("step_config",))
 def _propagate(  # ruff:ignore[too-many-arguments]
     liouvillian: Liouvillian,
     initial: jax.Array,
@@ -164,8 +169,7 @@ def _propagate(  # ruff:ignore[too-many-arguments]
     times: jax.Array,
     dt0: jax.Array,
     *,
-    rtol: float,
-    atol: float,
+    step_config: StepConfig,
 ) -> jax.Array:
     def vector_field(
         _t: Any,  # ruff:ignore[any-type]
@@ -190,39 +194,42 @@ def _propagate(  # ruff:ignore[too-many-arguments]
         dt0=dt0,
         y0=jnp.stack([initial.real, initial.imag]),
         saveat=dfx.SaveAt(ts=times, fn=measure),
-        stepsize_controller=dfx.PIDController(rtol=rtol, atol=atol),
+        stepsize_controller=step_config.controller(times),
+        # Nothing is differentiated, so the number of steps need not be bounded
         adjoint=dfx.ForwardMode(),
         max_steps=None,
     ).ys
 
 
-def get_isf(
+def get_isf(  # ruff:ignore[too-many-arguments]
     liouvillian: Liouvillian,
     initial: ComplexArray,
     observable: ComplexArray,
     times: FloatArray,
-    config: CaldeiraLeggettConfig,
-) -> ComplexArray:
-    """Get Tr[O^dagger X(t)], where X(t) is propagated from the initial state, with adaptive steps.
+    *,
+    delta_k: tuple[float, ...],
+    units: UnitSystem,
+    step_config: StepConfig,
+) -> IsfResult:
+    """Get the ISF Tr[O^dagger X(t)], where X(t) is propagated from the initial state, at the times and scattering vector in the units.
 
-    The steps are chosen by a PID controller. The fastest coherences, between
-    the highest and lowest bands, limit the stable step of the explicit
-    Runge-Kutta method, so the first step is the inverse of the largest
-    |eigenvalue| of L.
+    The fastest coherences, between the highest and lowest bands, limit the
+    stable step of the explicit Runge-Kutta method, so the first step is at
+    most the inverse of the largest |eigenvalue| of L.
     """
     radius = _get_spectral_radius(
         liouvillian, jax.random.normal(jax.random.key(0), initial.shape) + 0j
     )
+    steps = jnp.asarray(times)
     isf = _propagate(
         liouvillian,
         jnp.asarray(initial),
         jnp.asarray(observable),
-        jnp.asarray(times),
-        jnp.minimum(1 / radius, times[-1]),
-        rtol=config.ode_rtol,
-        atol=config.ode_atol,
+        steps,
+        jnp.minimum(1 / radius, step_config.initial_step(steps)),
+        step_config=step_config,
     )
-    return np.asarray(isf)
+    return IsfResult(times=times, isf=np.asarray(isf), delta_k=delta_k, units=units)
 
 
 def get_diffusion_coefficient(
@@ -251,21 +258,22 @@ def get_diffusion_coefficient(
         L_1 X = i X K'^dagger + sum_j L_j X L_j'^dagger,
 
     the Liouvillian of a ket with jumps L_j and no Hamiltonian, and a bra of
-    the derivatives. L_2 needs no second derivative: the Liouvillian with both
+    the derivatives (first_derivative). L_2 needs no second derivative: the Liouvillian with both
     the ket and the bra on the offset grid preserves the trace for every
     theta, so the second derivative of its trace vanishes, which gives
-    Re Tr[L_2 rho_ss] = -1/2 sum_j Tr[L_j' rho_ss L_j'^dagger].
+    Re Tr[L_2 rho_ss] = -1/2 sum_j Tr[L_j' rho_ss L_j'^dagger]
+    (second_derivative_trace).
     """
     liouvillian = get_liouvillian(operators, operators)
-    first = get_liouvillian(
+    first_derivative = get_liouvillian(
         operators._replace(hamiltonian=np.zeros_like(derivative.hamiltonian)),
         derivative,
     )
-    second_order = -0.5 * np.einsum(
+    second_derivative_trace = -0.5 * np.einsum(
         "jkab,kbc,jkac->", derivative.jumps, steady_state, derivative.jumps.conj()
     )
     rho = jnp.asarray(steady_state)
-    drift = apply_liouvillian(first, rho)
+    drift = apply_liouvillian(first_derivative, rho)
     # Tr[L_1 rho_ss] is the first order rate, which vanishes without a net drift
     response = _solve(
         liouvillian,
@@ -273,5 +281,7 @@ def get_diffusion_coefficient(
         drift - _trace(drift) * rho,
         config,
     )
-    rate = second_order - complex(_trace(apply_liouvillian(first, response)))
+    rate = second_derivative_trace - complex(
+        _trace(apply_liouvillian(first_derivative, response))
+    )
     return -rate.real

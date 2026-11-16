@@ -111,7 +111,7 @@ def get_couplings(model: Model, bands: Bands) -> Couplings:
             c = tuple(sign * i for i in direction)
             q = np.array(c) @ model.cell_reciprocal
             prefactor = np.sqrt(4 * model.friction * weight) / (2 * np.linalg.norm(q))
-            matrices.append(prefactor * get_shift_operator(bands, c))
+            matrices.append(prefactor * get_shift_operator(model, bands, c))
             targets.append(get_shifted_kappa(model, c))
     return Couplings(matrices=np.array(matrices), targets=np.array(targets))
 
@@ -161,7 +161,7 @@ def get_offset_operators(
     and where the truncation splits a degenerate set of bands an arbitrarily
     different one.
     """
-    perturbation = get_velocity(bands, model, offset) + 0.5 * offset @ offset * np.eye(
+    perturbation = get_velocity(model, bands, offset) + 0.5 * offset @ offset * np.eye(
         bands.energies.shape[1]
     )
     offset_energies, w = np.linalg.eigh(_diagonal(bands.energies) + perturbation)

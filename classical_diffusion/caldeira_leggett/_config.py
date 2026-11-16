@@ -5,11 +5,13 @@ from typing import override
 
 @dataclass(frozen=True, kw_only=True)
 class CaldeiraLeggettConfig:
-    """The convergence parameters of the Caldeira-Leggett master equation.
+    """The convergence parameters of the steady state of the Caldeira-Leggett master equation.
 
     The basis is set by friction_tol, max_energy and plane_wave_energy, and the
-    numerical solution by the tolerances of the linear solves and of the time
-    propagation. Energies are in units of k_B T.
+    linear solves by the rest. Every function starts from the steady state, so
+    every function takes these, and the steady state is cached by them. The
+    time steps of an ISF are set separately (`solve_isf`). Energies are in
+    units of k_B T.
     """
 
     friction_tol: float = 5e-3
@@ -45,10 +47,6 @@ class CaldeiraLeggettConfig:
     """The factor by which each pass of GMRES reduces the residual."""
     linear_refinements: int = 20
     """The largest number of passes of GMRES, each from the true residual."""
-    ode_rtol: float = 1e-8
-    """The relative tolerance of the adaptive time steps of the ISF."""
-    ode_atol: float = 1e-10
-    """The absolute tolerance of the adaptive time steps of the ISF."""
 
     @override
     def __hash__(self) -> int:

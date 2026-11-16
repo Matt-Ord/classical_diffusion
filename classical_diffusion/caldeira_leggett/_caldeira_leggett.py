@@ -30,12 +30,14 @@ from classical_diffusion.caldeira_leggett._solver import (
 from classical_diffusion.caldeira_leggett._solver import (
     get_steady_state as get_band_steady_state,
 )
-from classical_diffusion.simulation import IsfResult
+from classical_diffusion.jax.langevin import Adaptive
 from classical_diffusion.util import cached, timed
 
 if TYPE_CHECKING:
     from classical_diffusion.caldeira_leggett._model import ComplexArray, FloatArray
+    from classical_diffusion.jax.langevin import StepConfig
     from classical_diffusion.langevin._system import PeriodicSystem
+    from classical_diffusion.simulation import IsfResult
 
 
 class SteadyState(NamedTuple):
@@ -77,6 +79,10 @@ def get_steady_state(
     return SteadyState(model=model, bands=bands, density=density)
 
 
+DEFAULT_ISF_STEP_CONFIG = Adaptive(rtol=1e-8, atol=1e-10)
+"""The default time steps of an ISF, adaptive to a relative error of 1e-8."""
+
+
 @timed
 def solve_isf(
     system: PeriodicSystem,
@@ -84,13 +90,13 @@ def solve_isf(
     times: FloatArray,
     *,
     config: CaldeiraLeggettConfig = DEFAULT_CONFIG,
+    step_config: StepConfig = DEFAULT_ISF_STEP_CONFIG,
 ) -> IsfResult:
     """Solve the Caldeira-Leggett master equation of a periodic system, and get its ISF.
 
     The ISF I(delta_k, t) = Tr[e^{i delta_k x} V(t) (rho e^{-i delta_k x})]
-    of the steady state rho is propagated in time, with adaptive steps, to the
-    increasing times from zero. The solver is deterministic, so the ISF has
-    no error.
+    of the steady state rho is propagated in time to the increasing times
+    from zero. The solver is deterministic, so the ISF has no error.
 
     The Lindblad operators couple to e^{+-i q x} in place of x, which keeps
     the equation periodic, with the spectral function of the universal
@@ -106,7 +112,10 @@ def solve_isf(
     times
         The times of the ISF, in the units of the system.
     config
-        The convergence parameters, see `CaldeiraLeggettConfig`.
+        The basis and linear solves of the steady state, see `CaldeiraLeggettConfig`.
+    step_config
+        The time steps of the propagation, in the natural units of the solver,
+        in which hbar = m = k_B T = 1.
 
     Raises
     ------
@@ -128,7 +137,7 @@ def solve_isf(
     # the operators of the Bloch states on the offset grid,
     # e^{-i theta x} O e^{i theta x} (`get_offset_operators`). The ISF is then
     # Tr[e^{i (dK - theta) x} X(t)], so any dK is reached with the same cell.
-    scaled = np.asarray(delta_k) * model.length
+    scaled = np.asarray(delta_k) / system.units.length_into(1.0, model.units)
     n = np.rint(np.linalg.solve(model.cell_reciprocal.T, scaled)).astype(int)
     shift = tuple(-int(i) for i in n)
     offset = scaled - n @ model.cell_reciprocal
@@ -136,15 +145,16 @@ def solve_isf(
     shifted_kappa = get_shifted_kappa(model, shift)
     # S[kappa] = <kappa - dK, m| e^{-i dK x} |kappa, n>, and the block
     # (kappa - dK, kappa) of rho e^{-i dK x} is rho[kappa - dK] S[kappa]
-    scattering = get_shift_operator(bands, shift)
-    isf = get_isf(
+    scattering = get_shift_operator(model, bands, shift)
+    return get_isf(
         get_liouvillian(operators, bra, shifted_kappa),
         rho[shifted_kappa] @ scattering,
         scattering,
-        times / model.time,
-        config,
-    )
-    return IsfResult(times=times, isf=isf, delta_k=delta_k, units=system.units)
+        system.units.time_into(times, model.units),
+        delta_k=tuple(scaled),
+        units=model.units,
+        step_config=step_config,
+    ).with_units(system.units)
 
 
 @timed
@@ -169,7 +179,7 @@ def get_diffusion_constant(
     direction
         The direction along which to find D, by default the first axis.
     config
-        The convergence parameters, see `CaldeiraLeggettConfig`.
+        The basis and linear solves, see `CaldeiraLeggettConfig`.
 
     Returns
     -------
@@ -180,7 +190,9 @@ def get_diffusion_constant(
     couplings = get_couplings(model, bands)
     operators = get_operators(bands.energies, couplings)
     unit = np.eye(model.n_dim)[0] if direction is None else np.asarray(direction, float)
-    velocity = get_velocity(bands, model, unit / np.linalg.norm(unit))
+    velocity = get_velocity(model, bands, unit / np.linalg.norm(unit))
     derivative = get_twist_derivative(bands.energies, couplings, operators, velocity)
     diffusion = get_diffusion_coefficient(operators, derivative, rho, config)
-    return diffusion * model.length**2 / model.time
+    # D has units of length^2 / time
+    length = model.units.length_into(1.0, system.units)
+    return diffusion * length**2 / model.units.time_into(1.0, system.units)

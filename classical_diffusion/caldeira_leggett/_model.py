@@ -8,14 +8,16 @@ import scipy.linalg
 import scipy.ndimage
 import scipy.optimize
 
+from classical_diffusion.system import unit_with_trajectory_scale
+
 if TYPE_CHECKING:
     from classical_diffusion.caldeira_leggett._config import CaldeiraLeggettConfig
     from classical_diffusion.langevin._system import PeriodicSystem
+    from classical_diffusion.system import UnitSystem
 
 type IntVector = tuple[int, ...]
 type FloatArray = np.ndarray[Any, np.dtype[np.float64]]
 type IntArray = np.ndarray[Any, np.dtype[np.int64]]
-type BoolArray = np.ndarray[Any, np.dtype[np.bool_]]
 type ComplexArray = np.ndarray[Any, np.dtype[np.complex128]]
 type Terms = tuple[tuple[IntVector, float], ...]
 """Integer vectors, each with a weight: the Fourier components of a potential, or the directions of the couplings."""
@@ -30,12 +32,15 @@ class Model:
     thermal state has the coherence <x + s| rho |x> ~ e^{-s^2 / 2}.
 
     The simulation cell holds n_periods periods of the potential along each
-    lattice vector. Wavevectors are stored as integer vectors n on the
-    reciprocal lattice of the cell, k = n @ cell_reciprocal. The crystal
-    momentum of n is n mod n_periods, and n // n_periods is the reciprocal
-    lattice vector G of the potential.
+    lattice vector, so its crystal momenta are the integer vectors kappa of
+    the reciprocal lattice of the cell, modulo n_periods. Every crystal
+    momentum has the plane waves k = kappa @ cell_reciprocal + G @ reciprocal,
+    for the same reciprocal lattice vectors G of the potential, in the same
+    order.
     """
 
+    units: UnitSystem
+    """The natural units, in which hbar = m = k_B T = 1."""
     cell_reciprocal: FloatArray
     """The primitive reciprocal lattice vectors of the simulation cell, as rows."""
     n_periods: int
@@ -44,16 +49,12 @@ class Model:
     friction: float
     couplings: Terms
     """The direction c and weight w of each pair of Lindblad operators e^{+-i q x}, q = c @ cell_reciprocal."""
-    plane_wave_energy: float
-    """The kinetic energy cutoff of the plane wave basis."""
+    reciprocal_vectors: IntArray
+    """The reciprocal lattice vectors G of the potential in the plane wave basis, (n_plane_waves, n_dim)."""
     max_energy: float
     """Every band whose lowest energy is within this of the saddle, or the ground state if it is higher, is kept."""
     saddle_energy: float
     """The energy at which the classically allowed region first connects a site to its periodic images (`get_saddle_energy`)."""
-    length: float
-    """The natural unit of length, in the units of the system."""
-    time: float
-    """The natural unit of time, in the units of the system."""
 
     @property
     def n_dim(self) -> int:
@@ -65,32 +66,54 @@ class Model:
         """The number of crystal momenta of the cell."""
         return self.n_periods**self.n_dim
 
+    @property
+    def reciprocal(self) -> FloatArray:
+        """The primitive reciprocal lattice vectors of the potential, as rows."""
+        return self.cell_reciprocal * self.n_periods
 
-def get_plane_waves(cell_reciprocal: FloatArray, energy: float) -> IntArray:
-    """Get the integer vectors n of every plane wave with a kinetic energy up to energy."""
-    n_dim = cell_reciprocal.shape[0]
-    # |k| >= s_min |n|, where s_min is the smallest singular value
-    s_min = np.linalg.svd(cell_reciprocal, compute_uv=False).min()
-    n_max = int(np.ceil(np.sqrt(2 * energy) / s_min))
+    @property
+    def kappa(self) -> IntArray:
+        """The crystal momenta, (n_kappa, n_dim) (`get_kappa`)."""
+        return get_kappa(self.n_periods, self.n_dim)
+
+
+def get_kappa(n_periods: int, n_dim: int) -> IntArray:
+    """Get the crystal momenta of a cell of n_periods along each axis, (n_kappa, n_dim), each in the range closest to zero.
+
+    They are in the order of their flat index, the C order of kappa mod n_periods.
+    """
+    index = np.unravel_index(np.arange(n_periods**n_dim), (n_periods,) * n_dim)
+    return np.mod(np.stack(index, axis=-1) + n_periods // 2, n_periods) - n_periods // 2
+
+
+def get_reciprocal_vectors(reciprocal: FloatArray, radius: float) -> IntArray:
+    """Get the integer vectors G of every reciprocal lattice vector with |G @ reciprocal| up to radius."""
+    n_dim = reciprocal.shape[0]
+    # |k| >= s_min |G|, where s_min is the smallest singular value
+    s_min = np.linalg.svd(reciprocal, compute_uv=False).min()
+    n_max = int(np.ceil(radius / s_min))
     grid = np.array(list(itertools.product(range(-n_max, n_max + 1), repeat=n_dim)))
-    k = grid @ cell_reciprocal
-    return grid[0.5 * np.sum(k**2, axis=-1) <= energy]
+    return grid[np.linalg.norm(grid @ reciprocal, axis=-1) <= radius]
 
 
 def get_hamiltonian(
-    plane_waves: IntArray,
-    cell_reciprocal: FloatArray,
-    n_periods: int,
+    wavevectors: FloatArray,
+    reciprocal_vectors: IntArray,
+    reciprocal: FloatArray,
     potential: Terms,
 ) -> ComplexArray:
-    """Get the Hamiltonian in the plane waves of one crystal momentum."""
-    k = plane_waves @ cell_reciprocal
-    hamiltonian = np.diag(0.5 * np.sum(k**2, axis=-1)).astype(np.complex128)
-    # The difference between two plane waves at the same kappa is n_periods * G
-    g_difference = (plane_waves[:, None, :] - plane_waves[None, :, :]) // n_periods
+    """Get the Hamiltonian in the plane waves k + G of each crystal momentum k, (n_kappa, n_plane_waves, n_plane_waves).
+
+    The potential couples plane waves which differ by a reciprocal lattice
+    vector, so it is the same at every crystal momentum.
+    """
+    difference = reciprocal_vectors[:, None, :] - reciprocal_vectors[None, :, :]
+    coupling = np.zeros(difference.shape[:2], dtype=np.complex128)
     for g, v_g in potential:
-        hamiltonian[np.all(g_difference == np.array(g), axis=-1)] += v_g
-    return hamiltonian
+        coupling[np.all(difference == np.array(g), axis=-1)] += v_g
+    k = wavevectors[:, None, :] + reciprocal_vectors @ reciprocal
+    kinetic = 0.5 * np.sum(k**2, axis=-1)
+    return coupling + kinetic[..., None] * np.eye(len(reciprocal_vectors))
 
 
 def _get_candidate_directions(reciprocal: FloatArray, radius: float) -> IntArray:
@@ -277,8 +300,11 @@ def get_plane_wave_energy(
     cutoff = _PLANE_WAVE_FACTOR * max_energy
     for _ in range(20):
         hamiltonian = get_hamiltonian(
-            get_plane_waves(reciprocal, cutoff), reciprocal, 1, potential
-        )
+            np.zeros((1, len(reciprocal))),
+            get_reciprocal_vectors(reciprocal, np.sqrt(2 * cutoff)),
+            reciprocal,
+            potential,
+        )[0]
         ground = scipy.linalg.eigvalsh(hamiltonian, subset_by_index=(0, 0))[0]
         previous, cutoff = (
             cutoff,
@@ -297,6 +323,9 @@ def build_model(system: PeriodicSystem, config: CaldeiraLeggettConfig) -> Model:
     kbt = system.kbt
     time = system.units.hbar / kbt
     length = system.units.hbar / np.sqrt(system.m * kbt)
+    units = unit_with_trajectory_scale(
+        system.units, length=length, time=time, momentum=system.m * length / time
+    )
 
     # The rows g_i satisfy a_i . g_j = 2 pi delta_ij
     reciprocal = 2 * np.pi * np.linalg.inv(system.lattice_vectors).T * length
@@ -322,15 +351,25 @@ def build_model(system: PeriodicSystem, config: CaldeiraLeggettConfig) -> Model:
         if config.plane_wave_energy is None
         else config.plane_wave_energy
     )
+    # Every crystal momentum shares the vectors G, so they reach the kinetic
+    # energy cutoff around the crystal momentum furthest from zero. A shift
+    # across the edge of the zone of the cell maps G to G + dG, with dG one of
+    # the primitive vectors, so one more is added for every plane wave within
+    # the cutoff to stay in the basis after a shift
+    kappa = get_kappa(n_periods, len(reciprocal)) @ (reciprocal / n_periods)
+    radius = (
+        np.sqrt(2 * plane_wave_energy)
+        + np.linalg.norm(kappa, axis=-1).max()
+        + np.linalg.norm(reciprocal, axis=-1).max()
+    )
     return Model(
+        units=units,
         cell_reciprocal=reciprocal / n_periods,
         n_periods=n_periods,
         potential=tuple(potential),
-        friction=system.gamma * time,
+        friction=system.units.frequency_into(system.gamma, units),
         couplings=couplings,
-        plane_wave_energy=plane_wave_energy,
+        reciprocal_vectors=get_reciprocal_vectors(reciprocal, radius),
         max_energy=config.max_energy,
         saddle_energy=saddle_energy,
-        length=float(length),
-        time=float(time),
     )

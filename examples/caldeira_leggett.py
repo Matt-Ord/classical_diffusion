@@ -3,10 +3,10 @@ from pathlib import Path
 
 import jax
 import numpy as np
-import scipy.special
 
 from classical_diffusion.analysis import get_isf, plot_isf
 from classical_diffusion.caldeira_leggett import get_diffusion_constant, solve_isf
+from classical_diffusion.hopping import get_lifson_jackson_diffusion
 from classical_diffusion.langevin import (
     HYDROGEN_COPPER_SYSTEM_1D,
     LITHIUM_COPPER_SYSTEM_1D,
@@ -42,17 +42,6 @@ def _plot_isf() -> None:
     fig.savefig("examples/caldeira_leggett.isf.pdf")
 
 
-def _get_lifson_jackson_diffusion(system: CosineSystem1D) -> float:
-    """Get the overdamped classical diffusion constant of Lifson and Jackson.
-
-    D = (k_B T / m gamma) / (<e^{V / k_B T}> <e^{-V / k_B T}>), where <> is
-    the average over a period. For V = (E_b / 2) (1 - cos(2 pi x / a)) each
-    average is e^{+-E_b / 2 k_B T} I_0(E_b / 2 k_B T).
-    """
-    free = system.kbt / (system.m * system.gamma)
-    return free / scipy.special.i0(system.barrier_energy / (2 * system.kbt)) ** 2
-
-
 def _plot_diffusion_against_mass() -> None:
     base = HYDROGEN_COPPER_SYSTEM_1D
     # From hydrogen to about the mass of the heaviest adsorbates, such as xenon
@@ -69,7 +58,9 @@ def _plot_diffusion_against_mass() -> None:
             barrier_energy=base.barrier_energy,
         )
         diffusion = get_diffusion_constant(system)
-        ratios.append(diffusion / _get_lifson_jackson_diffusion(system))
+        ratios.append(
+            diffusion / get_lifson_jackson_diffusion(system, delta_x=system.delta_x)
+        )
 
     fig, ax = get_fancy_figure()
     (line,) = ax.plot(masses / base.m, ratios, marker="o")
