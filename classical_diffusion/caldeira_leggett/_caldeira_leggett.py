@@ -1,10 +1,8 @@
 import dataclasses
-import functools
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import jax
 import numpy as np
 
 from classical_diffusion.caldeira_leggett._bands import (
@@ -32,8 +30,6 @@ from classical_diffusion.simulation import IsfResult
 from classical_diffusion.util import cached, timed
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from classical_diffusion.caldeira_leggett._model import ComplexArray, FloatArray
     from classical_diffusion.langevin._system import PeriodicSystem
 
@@ -50,17 +46,6 @@ class SteadyState:
 
     density: tuple[ComplexArray, ...]
     """The density matrix at each crystal momentum, shape (n_plane_waves, n_plane_waves)."""
-
-
-def _with_x64[**P, R](f: Callable[P, R]) -> Callable[P, R]:
-    """Run f with 64 bit floats in jax, which the tolerances of the solver need."""
-
-    @functools.wraps(f)
-    def wrap(*args: P.args, **kw: P.kwargs) -> R:
-        with jax.enable_x64(new_val=True):
-            return f(*args, **kw)
-
-    return wrap
 
 
 def _get_model(system: PeriodicSystem, config: CaldeiraLeggettConfig) -> BlochModel:
@@ -94,7 +79,6 @@ def _get_steady_state_path(
 
 @cached(_get_steady_state_path, default_call="load_or_call_uncached")
 @timed
-@_with_x64
 def get_steady_state(
     system: PeriodicSystem, *, config: CaldeiraLeggettConfig = DEFAULT_CONFIG
 ) -> SteadyState:
@@ -125,7 +109,6 @@ def _in_bands(bands: BlochBands, steady_state: SteadyState) -> ComplexArray:
 
 
 @timed
-@_with_x64
 def solve_isf(
     system: PeriodicSystem,
     delta_k: tuple[float, ...],
@@ -178,7 +161,6 @@ def solve_isf(
 
 
 @timed
-@_with_x64
 def get_diffusion_constant(
     system: PeriodicSystem,
     *,

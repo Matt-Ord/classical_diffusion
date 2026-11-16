@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import jax
 import numpy as np
 import scipy.special
 
@@ -82,6 +83,8 @@ def _plot_diffusion_against_mass() -> None:
 
 
 if __name__ == "__main__":
+    # The tolerances of the master equation need 64 bit floats
+    jax.config.update("jax_enable_x64", True)  # ruff: ignore[boolean-positional-value-in-call]
     with cache_base_path(Path("./examples/data")):
         _plot_isf()
         _plot_diffusion_against_mass()

@@ -1,4 +1,7 @@
-"""Simulations of a periodic system using the Caldeira-Leggett master equation."""
+"""Simulations of a periodic system using the Caldeira-Leggett master equation.
+
+The solver needs 64 bit floats in jax, `jax.config.update("jax_enable_x64", True)`.
+"""
 
 from classical_diffusion.caldeira_leggett._caldeira_leggett import (
     SteadyState,
