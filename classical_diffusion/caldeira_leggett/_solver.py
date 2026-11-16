@@ -78,7 +78,7 @@ def _gmres(  # ruff:ignore[too-many-arguments]
 def _solve(
     liouvillian: Liouvillian,
     inverse: _NoJumpInverse,
-    target: jax.Array,
+    rhs: jax.Array,
     config: CaldeiraLeggettConfig,
 ) -> jax.Array:
     """Solve L X = rhs with GMRES, preconditioned on the right by the inverse of the no-jump part of L.
@@ -95,28 +95,22 @@ def _solve(
     RuntimeError
         If the residual is still falling after linear_refinements passes.
     """
-    norm = float(jnp.linalg.norm(target))
-    solution, best = jnp.zeros_like(target), 1.0
+    norm = float(jnp.linalg.norm(rhs))
+    solution, residual, best = jnp.zeros_like(rhs), rhs, 1.0
     for _ in range(config.linear_refinements):
-        correction = _gmres(
+        update = solution + _gmres(
             liouvillian,
             inverse,
-            target - apply_liouvillian(liouvillian, solution),
+            residual,
             jnp.asarray(max(config.linear_inner_rtol, config.linear_rtol / best)),
             restart=config.linear_restart,
             maxiter=config.linear_maxiter,
         )
-        relative = (
-            float(
-                jnp.linalg.norm(
-                    target - apply_liouvillian(liouvillian, solution + correction)
-                )
-            )
-            / norm
-        )
+        update_residual = rhs - apply_liouvillian(liouvillian, update)
+        relative = float(jnp.linalg.norm(update_residual)) / norm
         if relative > best / 2:
             return solution
-        solution, best = solution + correction, relative
+        solution, residual, best = update, update_residual, relative
         if best <= config.linear_rtol:
             return solution
     msg = (
@@ -139,16 +133,13 @@ def get_steady_state(
     correction only changes the normalization, which is restored after.
     """
     liouvillian = get_liouvillian(operators, operators)
-    n_kappa, n_bands = energies.shape
-    gibbs = np.zeros((n_kappa, n_bands, n_bands), dtype=np.complex128)
-    diagonal = np.arange(n_bands)
-    gibbs[:, diagonal, diagonal] = np.exp(-(energies - energies.min()))
-    gibbs /= np.sum(gibbs[:, diagonal, diagonal])
+    weights = np.exp(-(energies - energies.min()))
+    gibbs = (weights / weights.sum())[..., None] * np.eye(energies.shape[1])
     rhs = -apply_liouvillian(liouvillian, jnp.asarray(gibbs))
     rho = gibbs + np.asarray(
         _solve(liouvillian, _get_no_jump_inverse(operators), rhs, config)
     )
-    rho /= np.sum(rho[:, diagonal, diagonal])
+    rho /= np.einsum("kaa->", rho)
     return 0.5 * (rho + rho.conj().swapaxes(-1, -2))
 
 
