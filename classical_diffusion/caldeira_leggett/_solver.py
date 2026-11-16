@@ -16,8 +16,8 @@ from classical_diffusion.caldeira_leggett._liouvillian import (
     get_liouvillian,
 )
 
-# jax.jit reads the annotations of _propagate, which needs StepConfig at run time
-from classical_diffusion.jax.langevin import StepConfig  # ruff: ignore[typing-only-first-party-import]
+# jax.jit reads the annotations of _propagate, which needs Adaptive at run time
+from classical_diffusion.jax.langevin import Adaptive  # ruff: ignore[typing-only-first-party-import]
 from classical_diffusion.simulation import IsfResult
 
 if TYPE_CHECKING:
@@ -156,7 +156,7 @@ def _propagate(
     observable: jax.Array,
     times: jax.Array,
     *,
-    step_config: StepConfig,
+    step_config: Adaptive,
 ) -> jax.Array:
     def vector_field(
         _t: Any,  # ruff:ignore[any-type]
@@ -183,7 +183,11 @@ def _propagate(
         dt0=step_config.initial_step(times),
         y0=jnp.stack([initial.real, initial.imag]),
         saveat=dfx.SaveAt(ts=times, fn=measure),
-        stepsize_controller=step_config.controller(times),
+        # The steps need not end on the times, which are found within a step
+        # exactly (`KrylovInterpolation`)
+        stepsize_controller=dfx.PIDController(
+            rtol=step_config.rtol, atol=step_config.atol
+        ),
         # Nothing is differentiated, so the number of steps need not be bounded
         adjoint=dfx.ForwardMode(),
         max_steps=None,
@@ -198,12 +202,13 @@ def get_isf(  # ruff:ignore[too-many-arguments]
     *,
     delta_k: tuple[float, ...],
     units: UnitSystem,
-    step_config: StepConfig,
+    step_config: Adaptive,
 ) -> IsfResult:
     """Get the ISF Tr[O^dagger X(t)], where X(t) is propagated from the initial state, at the times and scattering vector in the units.
 
     Each step is an exponential exp(h L) in a Krylov basis
-    (`KrylovExponential`), whose length is set by its error alone.
+    (`KrylovExponential`), whose length is set by its error alone, to the
+    tolerances of step_config, and not by the spacing of the times.
     """
     isf = _propagate(
         liouvillian,

@@ -10,14 +10,56 @@ import jax.scipy.linalg
 type _State = Any
 
 
+def _krylov_coefficients(
+    beta: jax.Array, hessenberg: jax.Array, h: jax.Array
+) -> jax.Array:
+    """Get the coefficients of exp(h L) y on the m + 1 vectors of the basis, from the (m + 1, m + 1) Hessenberg matrix with a column of zeros appended."""
+    return beta * jax.scipy.linalg.expm(h * hessenberg)[:, 0]
+
+
+class KrylovInterpolation(dfx.AbstractLocalInterpolation):
+    """The exact solution exp((t - t0) L) y(t0) within a step of `KrylovExponential`.
+
+    The Krylov basis of the step gives the solution at any time in it, to the
+    same error as at its end, so the ISF is as accurate between steps as at
+    them, however long the steps are.
+    """
+
+    # diffrax declares the times as abstract fields (equinox AbstractVar)
+    t0: Any  # ty: ignore[invalid-attribute-override]
+    t1: Any  # ty: ignore[invalid-attribute-override]
+    beta: jax.Array
+    hessenberg: jax.Array
+    """The Hessenberg matrix of L in the basis, with a column of zeros appended, (m + 1, m + 1)."""
+    basis: jax.Array
+    """The vectors V of the basis, flattened, (m + 1, n)."""
+    y0: _State
+    """The state at t0, whose structure the solution takes."""
+
+    @override
+    def evaluate(self, t0: Any, t1: Any = None, left: bool = True) -> _State:
+        del left
+        unravel = jax.flatten_util.ravel_pytree(self.y0)[1]
+        c0 = _krylov_coefficients(self.beta, self.hessenberg, t0 - self.t0)
+        if t1 is None:
+            return unravel(c0 @ self.basis)
+        c1 = _krylov_coefficients(self.beta, self.hessenberg, t1 - self.t0)
+        return unravel((c1 - c0) @ self.basis)
+
+
 class KrylovExponential(dfx.AbstractAdaptiveSolver):
     """A step y(t + h) = exp(h L) y(t), for a linear and time independent vector field L, in a Krylov basis.
 
     The basis of the m vectors y, L y, ..., L^{m-1} y is orthogonalized as
     it is built (the Arnoldi method), which gives L in it as an upper
-    Hessenberg matrix H, and exp(h L) y = |y| V exp(h H) e_1. Its error is the
-    leading term beta h_{m+1,m} [exp(h H)]_{m,0} v_{m+1} (Saad 1992), which
-    the step size controller uses as for a method of order m.
+    Hessenberg matrix H, and exp(h L) y = |y| V exp(h H) e_1. With the row
+    h_{m+1,m} of the next vector, and a column of zeros, H is square, and its
+    exponential also gives the leading error h h_{m+1,m} [phi_1(h H)]_{m,0}
+    on v_{m+1} (Sidje 1998, Expokit), which is added to the step as a
+    correction and used by the step size controller as for a method of
+    order m. Unlike the term in exp(h H) of Saad (1992), it does not fall
+    off on long steps, which would leave their error unchecked. Within a step
+    the same basis gives the solution at any time (`KrylovInterpolation`).
 
     An explicit Runge-Kutta method is limited to steps of about 1 / |lambda|,
     for the largest eigenvalue lambda of L, the coherence between the highest
@@ -29,7 +71,7 @@ class KrylovExponential(dfx.AbstractAdaptiveSolver):
     dimension: int = 12
     """The number of vectors m of the Krylov basis."""
     term_structure: ClassVar = dfx.AbstractTerm
-    interpolation_cls: ClassVar = dfx.LocalLinearInterpolation
+    interpolation_cls: ClassVar = KrylovInterpolation
 
     @override
     def order(self, terms: Any) -> int:
@@ -88,7 +130,9 @@ class KrylovExponential(dfx.AbstractAdaptiveSolver):
             return basis.at[j + 1].set(next_vector), hessenberg.at[j + 1, j].set(norm)
 
         basis, hessenberg = jax.lax.fori_loop(0, m, arnoldi, (basis, hessenberg))
-        exponential = jax.scipy.linalg.expm((t1 - t0) * hessenberg[:m])[:, 0]
-        y1 = unravel(beta * (exponential @ basis[:m]))
-        error = unravel(beta * hessenberg[m, m - 1] * exponential[m - 1] * basis[m])
-        return y1, error, {"y0": y0, "y1": y1}, None, dfx.RESULTS.successful
+        square = jnp.zeros((m + 1, m + 1), hessenberg.dtype).at[:, :m].set(hessenberg)
+        coefficients = _krylov_coefficients(beta, square, t1 - t0)
+        y1 = unravel(coefficients @ basis)
+        error = unravel(coefficients[m] * basis[m])
+        dense = {"beta": beta, "hessenberg": square, "basis": basis, "y0": y0}
+        return y1, error, dense, None, dfx.RESULTS.successful

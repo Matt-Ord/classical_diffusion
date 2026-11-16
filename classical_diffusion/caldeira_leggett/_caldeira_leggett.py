@@ -36,7 +36,6 @@ from classical_diffusion.util import cached, timed
 
 if TYPE_CHECKING:
     from classical_diffusion.caldeira_leggett._model import ComplexArray, FloatArray
-    from classical_diffusion.jax.langevin import StepConfig
     from classical_diffusion.langevin._system import PeriodicSystem
 
 
@@ -90,7 +89,7 @@ def solve_isf(
     times: FloatArray,
     *,
     config: CaldeiraLeggettConfig = DEFAULT_CONFIG,
-    step_config: StepConfig = DEFAULT_ISF_STEP_CONFIG,
+    step_config: Adaptive = DEFAULT_ISF_STEP_CONFIG,
 ) -> IsfResult:
     """Solve the Caldeira-Leggett master equation of a periodic system, and get its ISF.
 
@@ -114,8 +113,9 @@ def solve_isf(
     config
         The basis and linear solves of the steady state, see `CaldeiraLeggettConfig`.
     step_config
-        The time steps of the propagation, in the natural units of the solver,
-        in which hbar = m = k_B T = 1.
+        The tolerances of the adaptive time steps of the propagation. The
+        times need not be resolved by the steps, as the ISF is exact within
+        a step.
 
     Raises
     ------
