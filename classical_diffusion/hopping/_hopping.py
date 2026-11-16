@@ -57,7 +57,8 @@ def solve_ensemble[L: Lattice = Lattice](
     return HoppingSimulationResult[L](
         system=system,
         times=np.array(times),
-        x_indices=np.array(jnp.transpose(x_indices, (0, 2, 1))),
+        # The lattice is 1D: each trajectory is one site index at each time
+        x_indices=np.array(x_indices)[:, np.newaxis, :],
     )
 
 
