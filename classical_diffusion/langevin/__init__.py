@@ -1,5 +1,6 @@
 """Langevin Simulations of a Physical System."""
 
+from classical_diffusion._isf import get_isf
 from classical_diffusion.jax.langevin import Adaptive, FixedStep, StepConfig
 from classical_diffusion.langevin._analysis import (
     breakdown_ballistic_trajectory,
@@ -30,7 +31,6 @@ from classical_diffusion.langevin._experimental_systems import (
     XENON_PLATINUM_SYSTEM_1D,
     XENON_PLATINUM_SYSTEM_2D,
 )
-from classical_diffusion._isf import get_isf
 from classical_diffusion.langevin._langevin import (
     LangevinSimulationResult,
     SingleLangevinSimulationResult,
