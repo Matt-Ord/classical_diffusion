@@ -262,18 +262,6 @@ class SectorLiouvillian:
         """The shape of a state in this sector."""
         return (self.bands.n_kappa, self.bands.n_bands, self.bands.n_bands)
 
-    def apply(self, x: ComplexArray) -> ComplexArray:
-        """Apply the Liouvillian to a state."""
-        k_ket = self.ket.effective_hamiltonian[self.ket_index]
-        k_bra = self.bra.effective_hamiltonian
-        out = -1j * (k_ket @ x - x @ k_bra.conj().swapaxes(-1, -2))
-        for j in range(self.jump_targets.shape[0]):
-            jump_ket = self.ket.jumps[j, self.ket_index]
-            jump_bra = self.bra.jumps[j].conj().swapaxes(-1, -2)
-            # L rho L^dagger maps the block at kappa to kappa + q
-            out[self.jump_targets[j]] += jump_ket @ x @ jump_bra
-        return out
-
 
 def get_sector_liouvillian(bands: BlochBands) -> SectorLiouvillian:
     """Build the Liouvillian of the sector of the steady state, rho_{kappa, kappa}."""

@@ -156,10 +156,10 @@ def get_plane_wave_energy(model: BlochModel) -> float:
 
     A state of energy E has a kinetic energy of at most E - V_min where it is
     classically allowed, and its plane wave components fall off beyond that.
-    The highest band kept is max_energy above the ground state, which is its
-    zero point energy above V_min, so the cutoff is a multiple of their sum.
-    How high the potential rises does not matter: a band below the top of the
-    potential never reaches it.
+    The highest band kept is max_energy above the higher of the ground state
+    and the saddle energy (`get_bloch_bands`), so the cutoff is a multiple of
+    its height above V_min. How high the potential rises beyond that does not
+    matter: a band below the top of the potential never reaches it.
 
     With a factor of 2.5 the diffusion constant of lithium on Cu(111) at
     140 K is converged to 1e-8 and that of hydrogen at 150 K to 0.2%, where
@@ -180,7 +180,11 @@ def get_plane_wave_energy(model: BlochModel) -> float:
         previous, cutoff = (
             cutoff,
             _PLANE_WAVE_FACTOR
-            * (model.max_energy + float(ground) - model.potential_minimum),
+            * (
+                max(float(ground), model.saddle_energy)
+                + model.max_energy
+                - model.potential_minimum
+            ),
         )
         if abs(cutoff - previous) < _PLANE_WAVE_TOL * cutoff:
             break
@@ -193,7 +197,12 @@ def get_bloch_bands(model: BlochModel) -> BlochBands:
     """Diagonalize the Hamiltonian at each crystal momentum of the cell.
 
     Every band whose lowest energy, over the crystal momenta, is within
-    model.max_energy of the ground state is kept. The lowest energy of band b
+    model.max_energy of the higher of the ground state and the saddle energy
+    is kept. Diffusion is carried by the states near the saddle, which a
+    particle crosses to hop between sites, so the cutoff is measured from it:
+    for hydrogen on Cu(111) in 1D at 10 times its mass, bands to 12 k_B T
+    above the ground state, only 2 k_B T above the saddle, give D 30% low.
+    The lowest energy of band b
     is below a cutoff exactly when some crystal momentum has more than b
     energies below it, so the number of bands is the most energies below the
     cutoff at any crystal momentum. Each crystal momentum has the same number
@@ -204,7 +213,8 @@ def get_bloch_bands(model: BlochModel) -> BlochBands:
     plane_waves = [all_plane_waves[kappa == i] for i in range(model.n_kappa)]
     eigenstates = [scipy.linalg.eigh(_get_hamiltonian(model, pw)) for pw in plane_waves]
 
-    cutoff = min(e[0] for e, _ in eigenstates) + model.max_energy
+    ground = min(e[0] for e, _ in eigenstates)
+    cutoff = max(ground, model.saddle_energy) + model.max_energy
     n_bands = min(
         max(int(np.count_nonzero(e < cutoff)) for e, _ in eigenstates),
         *(e.size for e, _ in eigenstates),

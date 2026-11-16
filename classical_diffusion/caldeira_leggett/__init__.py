@@ -6,5 +6,16 @@ from classical_diffusion.caldeira_leggett._caldeira_leggett import (
     get_steady_state,
     solve_isf,
 )
+from classical_diffusion.caldeira_leggett._config import (
+    DEFAULT_CONFIG,
+    CaldeiraLeggettConfig,
+)
 
-__all__ = ["SteadyState", "get_diffusion_constant", "get_steady_state", "solve_isf"]
+__all__ = [
+    "DEFAULT_CONFIG",
+    "CaldeiraLeggettConfig",
+    "SteadyState",
+    "get_diffusion_constant",
+    "get_steady_state",
+    "solve_isf",
+]

@@ -1,14 +1,20 @@
 import dataclasses
+import functools
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import jax
 import numpy as np
 
 from classical_diffusion.caldeira_leggett._bands import (
     BlochBands,
     get_bloch_bands,
     get_plane_wave_energy,
+)
+from classical_diffusion.caldeira_leggett._config import (
+    DEFAULT_CONFIG,
+    CaldeiraLeggettConfig,
 )
 from classical_diffusion.caldeira_leggett._liouvillian import (
     get_scattering_sector,
@@ -26,11 +32,10 @@ from classical_diffusion.simulation import IsfResult
 from classical_diffusion.util import cached, timed
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from classical_diffusion.caldeira_leggett._model import ComplexArray, FloatArray
     from classical_diffusion.langevin._system import PeriodicSystem
-
-DEFAULT_FRICTION_TOL = 5e-3
-DEFAULT_MAX_ENERGY = 12.0
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -47,84 +52,61 @@ class SteadyState:
     """The density matrix at each crystal momentum, shape (n_plane_waves, n_plane_waves)."""
 
 
-def _get_model(
-    system: PeriodicSystem,
-    *,
-    friction_tol: float,
-    max_energy: float,
-    plane_wave_energy: float | None,
-) -> BlochModel:
+def _with_x64[**P, R](f: Callable[P, R]) -> Callable[P, R]:
+    """Run f with 64 bit floats in jax, which the tolerances of the solver need."""
+
+    @functools.wraps(f)
+    def wrap(*args: P.args, **kw: P.kwargs) -> R:
+        with jax.enable_x64(new_val=True):
+            return f(*args, **kw)
+
+    return wrap
+
+
+def _get_model(system: PeriodicSystem, config: CaldeiraLeggettConfig) -> BlochModel:
     model = build_model(
         system,
-        friction_tol=friction_tol,
-        max_energy=max_energy,
-        plane_wave_energy=max_energy
-        if plane_wave_energy is None
-        else plane_wave_energy,
+        friction_tol=config.friction_tol,
+        max_energy=config.max_energy,
+        plane_wave_energy=config.max_energy
+        if config.plane_wave_energy is None
+        else config.plane_wave_energy,
     )
-    if plane_wave_energy is None:
+    if config.plane_wave_energy is None:
         return dataclasses.replace(
             model, plane_wave_energy=get_plane_wave_energy(model)
         )
     return model
 
 
-def _get_bands(
-    system: PeriodicSystem,
-    *,
-    friction_tol: float,
-    max_energy: float,
-    plane_wave_energy: float | None,
-) -> BlochBands:
-    return get_bloch_bands(
-        _get_model(
-            system,
-            friction_tol=friction_tol,
-            max_energy=max_energy,
-            plane_wave_energy=plane_wave_energy,
-        )
-    )
+def _get_bands(system: PeriodicSystem, config: CaldeiraLeggettConfig) -> BlochBands:
+    return get_bloch_bands(_get_model(system, config))
 
 
 def _get_steady_state_path(
-    system: PeriodicSystem,
-    *,
-    friction_tol: float = DEFAULT_FRICTION_TOL,
-    max_energy: float = DEFAULT_MAX_ENERGY,
-    plane_wave_energy: float | None = None,
+    system: PeriodicSystem, *, config: CaldeiraLeggettConfig = DEFAULT_CONFIG
 ) -> Path:
-    model = _get_model(
-        system,
-        friction_tol=friction_tol,
-        max_energy=max_energy,
-        plane_wave_energy=plane_wave_energy,
+    model = _get_model(system, config)
+    return Path(
+        f"caldeira_leggett_steady_state_{model.get_hash()}_{config.linear_rtol:.1e}.npz"
     )
-    return Path(f"caldeira_leggett_steady_state_{model.get_hash()}.npz")
 
 
 @cached(_get_steady_state_path, default_call="load_or_call_uncached")
 @timed
+@_with_x64
 def get_steady_state(
-    system: PeriodicSystem,
-    *,
-    friction_tol: float = DEFAULT_FRICTION_TOL,
-    max_energy: float = DEFAULT_MAX_ENERGY,
-    plane_wave_energy: float | None = None,
+    system: PeriodicSystem, *, config: CaldeiraLeggettConfig = DEFAULT_CONFIG
 ) -> SteadyState:
     """Get the steady state of the master equation of a periodic system.
 
     Every ISF, and the diffusion constant, starts from the steady state. By
     default they load it from the cache, if it is there, but do not save it.
-    Call ``get_steady_state.call_cached`` once, with the same parameters, to
-    save it for them.
+    Call ``get_steady_state.call_cached`` once, with the same configuration,
+    to save it for them.
     """
-    bands = _get_bands(
-        system,
-        friction_tol=friction_tol,
-        max_energy=max_energy,
-        plane_wave_energy=plane_wave_energy,
-    )
-    rho = get_sector_steady_state(get_sector_liouvillian(bands))
+    bands = _get_bands(system, config)
+    rho = get_sector_steady_state(get_sector_liouvillian(bands), config)
     return SteadyState(
         density=tuple(
             u @ x @ u.conj().T for u, x in zip(bands.vectors, rho, strict=True)
@@ -143,20 +125,20 @@ def _in_bands(bands: BlochBands, steady_state: SteadyState) -> ComplexArray:
 
 
 @timed
-def solve_isf(  # ruff:ignore[too-many-arguments]
+@_with_x64
+def solve_isf(
     system: PeriodicSystem,
     delta_k: tuple[float, ...],
     times: FloatArray,
     *,
-    friction_tol: float = DEFAULT_FRICTION_TOL,
-    max_energy: float = DEFAULT_MAX_ENERGY,
-    plane_wave_energy: float | None = None,
+    config: CaldeiraLeggettConfig = DEFAULT_CONFIG,
 ) -> IsfResult:
     """Solve the Caldeira-Leggett master equation of a periodic system, and get its ISF.
 
     The ISF I(delta_k, t) = Tr[e^{i delta_k x} V(t) (rho e^{-i delta_k x})]
-    of the steady state rho is propagated in time, at the increasing times
-    from zero. The solver is deterministic, so the ISF has no error.
+    of the steady state rho is propagated in time, with adaptive steps, to the
+    increasing times from zero. The solver is deterministic, so the ISF has
+    no error.
 
     The Lindblad operators couple to e^{+-i q x} in place of x, which keeps
     the equation periodic, with the spectral function of the universal
@@ -171,20 +153,8 @@ def solve_isf(  # ruff:ignore[too-many-arguments]
         The scattering wavevector, in the units of the system.
     times
         The times of the ISF, in the units of the system.
-    friction_tol
-        The relative error allowed in the friction, which sets the number of
-        periods of the potential in the simulation cell. The smallest q is a
-        reciprocal lattice vector of the cell, and e^{+-i q x} / q stands in
-        for x only where q x is small. The error is taken at the coherence
-        length of a free particle, hbar / sqrt(m k_B T).
-    max_energy
-        The energy, in units of k_B T, above the ground state up to which
-        bands are kept.
-    plane_wave_energy
-        The kinetic energy, in units of k_B T, up to which plane waves are
-        kept to build the bands. By default, 2.5 times the largest kinetic
-        energy that the highest band can classically have: max_energy plus
-        the zero point energy of the ground state.
+    config
+        The convergence parameters, see `CaldeiraLeggettConfig`.
 
     Raises
     ------
@@ -195,34 +165,25 @@ def solve_isf(  # ruff:ignore[too-many-arguments]
     if times[0] != 0 or np.any(np.diff(times) <= 0):
         msg = "The times must increase from zero"
         raise ValueError(msg)
-    bands = _get_bands(
-        system,
-        friction_tol=friction_tol,
-        max_energy=max_energy,
-        plane_wave_energy=plane_wave_energy,
-    )
+    bands = _get_bands(system, config)
     model = bands.model
-    steady_state = get_steady_state.load_or_call_uncached(
-        system,
-        friction_tol=friction_tol,
-        max_energy=max_energy,
-        plane_wave_energy=plane_wave_energy,
-    )
+    steady_state = get_steady_state.load_or_call_uncached(system, config=config)
     sector = get_scattering_sector(
         get_sector_liouvillian(bands), np.asarray(delta_k) * model.length
     )
-    isf = get_sector_isf(sector, _in_bands(bands, steady_state), times / model.time)
+    isf = get_sector_isf(
+        sector, _in_bands(bands, steady_state), times / model.time, config
+    )
     return IsfResult(times=times, isf=isf, delta_k=delta_k, units=system.units)
 
 
 @timed
+@_with_x64
 def get_diffusion_constant(
     system: PeriodicSystem,
     *,
     direction: tuple[float, ...] | None = None,
-    friction_tol: float = DEFAULT_FRICTION_TOL,
-    max_energy: float = DEFAULT_MAX_ENERGY,
-    plane_wave_energy: float | None = None,
+    config: CaldeiraLeggettConfig = DEFAULT_CONFIG,
 ) -> float:
     """Get the diffusion constant of a periodic system under the Caldeira-Leggett master equation.
 
@@ -238,31 +199,22 @@ def get_diffusion_constant(
         The periodic system. Its friction is isotropic.
     direction
         The direction along which to find D, by default the first axis.
-    friction_tol, max_energy, plane_wave_energy
-        The parameters of the basis, see `solve_isf`.
+    config
+        The convergence parameters, see `CaldeiraLeggettConfig`.
 
     Returns
     -------
     float
         The diffusion constant, in the units of the system.
     """
-    bands = _get_bands(
-        system,
-        friction_tol=friction_tol,
-        max_energy=max_energy,
-        plane_wave_energy=plane_wave_energy,
-    )
+    bands = _get_bands(system, config)
     model = bands.model
-    steady_state = get_steady_state.load_or_call_uncached(
-        system,
-        friction_tol=friction_tol,
-        max_energy=max_energy,
-        plane_wave_energy=plane_wave_energy,
-    )
+    steady_state = get_steady_state.load_or_call_uncached(system, config=config)
     unit = np.eye(model.n_dim)[0] if direction is None else np.asarray(direction, float)
     diffusion = get_diffusion_coefficient(
         get_sector_liouvillian(bands),
         _in_bands(bands, steady_state),
         unit / np.linalg.norm(unit),
+        config,
     )
     return diffusion * model.length**2 / model.time

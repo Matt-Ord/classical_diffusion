@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import scipy.ndimage
+import scipy.optimize
 
 if TYPE_CHECKING:
     from classical_diffusion.langevin._system import PeriodicSystem
@@ -12,8 +14,6 @@ type IntVector = tuple[int, ...]
 type FloatArray = np.ndarray[Any, np.dtype[np.float64]]
 type IntArray = np.ndarray[Any, np.dtype[np.int64]]
 type ComplexArray = np.ndarray[Any, np.dtype[np.complex128]]
-
-_MAX_DIM = 2
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -45,6 +45,8 @@ class BlochModel:
     """Every band whose lowest energy is within this of the ground state is kept."""
     potential_minimum: float
     """The minimum of the potential, which has no constant term."""
+    saddle_energy: float
+    """The energy at which the classically allowed region first connects a site to its periodic images (`get_saddle_energy`)."""
     length: float
     """The natural unit of length, in the units of the system."""
     time: float
@@ -98,53 +100,69 @@ class BlochModel:
         return grid[0.5 * np.sum(k**2, axis=-1) <= self.plane_wave_energy]
 
 
-def _get_coupling_directions(reciprocal: FloatArray) -> tuple[IntVector, ...]:
-    """Get the directions of the Lindblad operators, on the reciprocal lattice.
-
-    In 2D these are the two primitive vectors and the shorter of their sum and
-    difference, which are the three shortest vectors of a reduced lattice.
-    """
-    if reciprocal.shape[0] == 1:
-        return ((1,),)
-    diagonal = min(
-        ((1, 1), (1, -1)), key=lambda c: float(np.linalg.norm(c @ reciprocal))
-    )
-    return ((1, 0), (0, 1), diagonal)
+def _get_candidate_directions(reciprocal: FloatArray, radius: float) -> IntArray:
+    """Get the integer vectors c, up to sign, with |c @ reciprocal| <= radius."""
+    n_dim = reciprocal.shape[0]
+    # |c @ reciprocal| >= s_min |c|, where s_min is the smallest singular value
+    s_min = np.linalg.svd(reciprocal, compute_uv=False).min()
+    n_max = int(np.ceil(radius / s_min))
+    grid = np.array(list(itertools.product(range(-n_max, n_max + 1), repeat=n_dim)))
+    grid = grid[np.linalg.norm(grid @ reciprocal, axis=1) <= radius]
+    # Keep one of each pair c, -c: the first non-zero component is positive
+    first = np.array([row[np.flatnonzero(row)[0]] if row.any() else 0 for row in grid])
+    return grid[first > 0]
 
 
 def get_couplings(reciprocal: FloatArray) -> tuple[tuple[IntVector, float], ...]:
     """Get the direction c and weight w of each pair of Lindblad operators.
 
-    The operators e^{+-i q x} of the direction q damp only the momentum along
-    q. The weights are those for which sum_j w_j q_j q_j^T / |q_j|^2 is the
-    identity, so that the friction is isotropic: 2 / 3 for each of the three
-    directions of a hexagonal lattice, and 1 for each axis of a rectangular one.
+    The operators e^{+-i q x} of the direction q = c @ reciprocal damp only
+    the momentum along q, and for small displacements the friction acts
+    through W = sum_j w_j n_j n_j^T, with n_j = q_j / |q_j|. It is isotropic
+    when W is the identity. Each direction also adds an error in the friction
+    which grows as |q_j|^2 (`get_friction_error`), so among the weights
+    w_j >= 0 with W = 1 those of least sum_j w_j |q_j|^2 are chosen, a linear
+    program over the reciprocal lattice vectors up to a radius, which is
+    increased until the program has a solution. This gives the
+    two axes, each with weight 1, of a square or rectangular lattice, and the
+    three shortest directions, each with weight 2 / 3, of a hexagonal one, in
+    any number of dimensions.
 
     Raises
     ------
-    NotImplementedError
-        If the system has more than two dimensions.
     ValueError
-        If no positive weights make the friction isotropic, which happens when
-        the lattice vectors are far from the shortest of the lattice.
+        If no reciprocal lattice vectors up to 1.5^8 times the longest basis
+        vector give isotropic friction.
     """
     n_dim = reciprocal.shape[0]
-    if n_dim > _MAX_DIM:
-        msg = "Only 1D and 2D systems are supported"
-        raise NotImplementedError(msg)
-    directions = _get_coupling_directions(reciprocal)
-    unit = np.array([c @ reciprocal for c in directions], dtype=np.float64)
-    unit /= np.linalg.norm(unit, axis=1)[:, None]
     upper = np.triu_indices(n_dim)
-    projectors = np.array([np.outer(u, u)[upper] for u in unit]).T
-    weights = np.linalg.solve(projectors, np.eye(n_dim)[upper])
-    if np.any(weights < -1e-9):  # ruff:ignore[magic-value-comparison]
-        msg = "The friction cannot be made isotropic on these lattice vectors"
+    radius = 1.01 * float(np.linalg.norm(reciprocal, axis=1).max())
+    # Every direction is close to some lattice vector, so a large enough
+    # radius always admits isotropic weights
+    for _ in range(8):
+        candidates = _get_candidate_directions(reciprocal, radius)
+        q = candidates @ reciprocal
+        lengths = np.linalg.norm(q, axis=1)
+        unit = q / lengths[:, None]
+        projectors = np.array([np.outer(n, n)[upper] for n in unit]).T
+        result = scipy.optimize.linprog(
+            lengths**2,
+            A_eq=projectors,
+            b_eq=np.eye(n_dim)[upper],
+            bounds=(0, None),
+            method="highs",
+        )
+        if result.success:
+            break
+        radius *= 1.5
+    else:
+        msg = "No short reciprocal lattice vectors give isotropic friction"
         raise ValueError(msg)
+    weights = result.x
+    keep = weights > 1e-9 * weights.max()
     return tuple(
-        (c, float(w))
-        for c, w in zip(directions, weights, strict=True)
-        if w > 1e-9  # ruff:ignore[magic-value-comparison]
+        (tuple(int(i) for i in c), float(w))
+        for c, w in zip(candidates[keep], weights[keep], strict=True)
     )
 
 
@@ -181,6 +199,63 @@ def get_period_count(
     return n_periods
 
 
+def _get_potential_on_grid(
+    potential: tuple[tuple[IntVector, complex], ...], n_dim: int
+) -> FloatArray:
+    """Get V(u) = sum_G V_G e^{2 pi i G . u} on a grid of the fractional coordinates u of one unit cell."""
+    largest = max((max(abs(c) for c in g) for g, _ in potential), default=1)
+    n_grid = max(64 if n_dim < 3 else 24, 8 * largest)  # ruff:ignore[magic-value-comparison]
+    u = np.stack(
+        np.meshgrid(*[np.arange(n_grid) / n_grid] * n_dim, indexing="ij"), axis=-1
+    )
+    out = np.zeros(u.shape[:-1], dtype=np.complex128)
+    for g, v_g in potential:
+        out += v_g * np.exp(2j * np.pi * (u @ np.array(g, dtype=float)))
+    return out.real
+
+
+def _is_percolating(allowed: np.ndarray) -> bool:
+    """Get whether the region connects a point of the unit cell to its periodic image along some lattice vector.
+
+    The region is tiled over 3 cells along each axis and labelled, and a
+    point in the central cell is connected to its image when both have the
+    same label.
+    """
+    n_dim, n_grid = allowed.ndim, allowed.shape[0]
+    labels, _ = scipy.ndimage.label(np.tile(allowed, (3,) * n_dim))
+    centre = tuple(slice(n_grid, 2 * n_grid) for _ in range(n_dim))
+    for axis in range(n_dim):
+        image = tuple(
+            slice(2 * n_grid, 3 * n_grid) if i == axis else slice(n_grid, 2 * n_grid)
+            for i in range(n_dim)
+        )
+        if ((labels[centre] == labels[image]) & allowed).any():
+            return True
+    return False
+
+
+def get_saddle_energy(
+    potential: tuple[tuple[IntVector, complex], ...], n_dim: int
+) -> float:
+    """Get the lowest energy E at which the region V < E connects a site to its periodic image along some lattice vector.
+
+    This is the energy of the saddle a particle must cross to diffuse along
+    its easiest direction, found by bisection between the minimum and maximum
+    of the potential on a grid of one unit cell, in any number of dimensions.
+    Diffusion in a harder direction, such as across the troughs of an fcc(110)
+    surface, is exponentially slower.
+    """
+    values = _get_potential_on_grid(potential, n_dim)
+    low, high = float(values.min()), float(values.max())
+    for _ in range(40):
+        middle = 0.5 * (low + high)
+        if _is_percolating(values <= middle):
+            high = middle
+        else:
+            low = middle
+    return high
+
+
 def build_model(
     system: PeriodicSystem,
     *,
@@ -213,6 +288,7 @@ def build_model(
         max_energy=max_energy,
         # The constant of the system puts the minimum of its potential at zero
         potential_minimum=-system.params[-1] / kbt,
+        saddle_energy=get_saddle_energy(tuple(potential), len(system.lattice_vectors)),
         length=float(length),
         time=float(time),
     )

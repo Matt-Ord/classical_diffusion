@@ -1,14 +1,16 @@
 from pathlib import Path
 
 import numpy as np
+import scipy.special
 
 from classical_diffusion.analysis import get_isf, plot_isf
-from classical_diffusion.caldeira_leggett import (
-    get_diffusion_constant,
-    get_steady_state,
-    solve_isf,
+from classical_diffusion.caldeira_leggett import get_diffusion_constant, solve_isf
+from classical_diffusion.langevin import (
+    HYDROGEN_COPPER_SYSTEM_1D,
+    LITHIUM_COPPER_SYSTEM_1D,
+    CosineSystem1D,
+    solve_ensemble,
 )
-from classical_diffusion.langevin import LITHIUM_COPPER_SYSTEM_1D, solve_ensemble
 from classical_diffusion.plot import get_fancy_figure
 from classical_diffusion.simulation import TimeSpan
 from classical_diffusion.util import cache_base_path
@@ -38,23 +40,48 @@ def _plot_isf() -> None:
     fig.savefig("examples/caldeira_leggett.isf.pdf")
 
 
-def _print_diffusion_constant() -> None:
-    system = LITHIUM_COPPER_SYSTEM_1D
-    # The diffusion constant is the limit of the dephasing rate over delta_k^2
-    # as delta_k -> 0, found without simulating an ISF
-    diffusion = get_diffusion_constant(system)
-    print(f"D = {diffusion:.3e} m^2 / s")
+def _get_lifson_jackson_diffusion(system: CosineSystem1D) -> float:
+    """Get the overdamped classical diffusion constant of Lifson and Jackson.
 
-    # A looser tolerance on the friction uses fewer periods of the potential
-    # in the simulation cell, and a lower energy fewer bands
-    diffusion = get_diffusion_constant(system, friction_tol=2e-2, max_energy=10.0)
-    print(f"D = {diffusion:.3e} m^2 / s, in a smaller basis")
+    D = (k_B T / m gamma) / (<e^{V / k_B T}> <e^{-V / k_B T}>), where <> is
+    the average over a period. For V = (E_b / 2) (1 - cos(2 pi x / a)) each
+    average is e^{+-E_b / 2 k_B T} I_0(E_b / 2 k_B T).
+    """
+    free = system.kbt / (system.m * system.gamma)
+    return free / scipy.special.i0(system.barrier_energy / (2 * system.kbt)) ** 2
+
+
+def _plot_diffusion_against_mass() -> None:
+    base = HYDROGEN_COPPER_SYSTEM_1D
+    # From hydrogen to about the mass of the heaviest adsorbates, such as xenon
+    masses = base.m * np.geomspace(1, 100, 9)
+
+    ratios = []
+    for m in masses:
+        # Only the mass changes: the potential, friction and temperature are those of H
+        system = CosineSystem1D(
+            gamma=base.gamma,
+            temperature=base.temperature,
+            m=m,
+            delta_x=base.delta_x,
+            barrier_energy=base.barrier_energy,
+        )
+        diffusion = get_diffusion_constant(system)
+        ratios.append(diffusion / _get_lifson_jackson_diffusion(system))
+
+    fig, ax = get_fancy_figure()
+    (line,) = ax.plot(masses / base.m, ratios, marker="o")
+    line.set_label("Caldeira-Leggett")
+    ax.axhline(1, color="black", linestyle="--", label="Lifson-Jackson")
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlabel("Mass / mass of H")
+    ax.set_ylabel(r"$D / D_\mathrm{LJ}$")
+    ax.legend()
+    fig.savefig("examples/caldeira_leggett.diffusion_mass.pdf")
 
 
 if __name__ == "__main__":
     with cache_base_path(Path("./examples/data")):
-        # Every ISF, and the diffusion constant, starts from the steady state.
-        # They load it from the cache, but only this call saves it
-        get_steady_state.call_cached(LITHIUM_COPPER_SYSTEM_1D)
         _plot_isf()
-        _print_diffusion_constant()
+        _plot_diffusion_against_mass()
