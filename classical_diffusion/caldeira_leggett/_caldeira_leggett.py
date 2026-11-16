@@ -1,15 +1,20 @@
+import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
 
-from classical_diffusion.caldeira_leggett._bands import BlochBands, get_bloch_bands
+from classical_diffusion.caldeira_leggett._bands import (
+    BlochBands,
+    get_bloch_bands,
+    get_plane_wave_energy,
+)
 from classical_diffusion.caldeira_leggett._liouvillian import (
     get_scattering_sector,
     get_sector_liouvillian,
 )
-from classical_diffusion.caldeira_leggett._model import build_model
+from classical_diffusion.caldeira_leggett._model import BlochModel, build_model
 from classical_diffusion.caldeira_leggett._solver import (
     get_diffusion_coefficient,
 )
@@ -26,7 +31,6 @@ if TYPE_CHECKING:
 
 DEFAULT_FRICTION_TOL = 5e-3
 DEFAULT_MAX_ENERGY = 12.0
-DEFAULT_PLANE_WAVE_ENERGY = 14.0
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -43,15 +47,37 @@ class SteadyState:
     """The density matrix at each crystal momentum, shape (n_plane_waves, n_plane_waves)."""
 
 
+def _get_model(
+    system: PeriodicSystem,
+    *,
+    friction_tol: float,
+    max_energy: float,
+    plane_wave_energy: float | None,
+) -> BlochModel:
+    model = build_model(
+        system,
+        friction_tol=friction_tol,
+        max_energy=max_energy,
+        plane_wave_energy=max_energy
+        if plane_wave_energy is None
+        else plane_wave_energy,
+    )
+    if plane_wave_energy is None:
+        return dataclasses.replace(
+            model, plane_wave_energy=get_plane_wave_energy(model)
+        )
+    return model
+
+
 def _get_bands(
     system: PeriodicSystem,
     *,
     friction_tol: float,
     max_energy: float,
-    plane_wave_energy: float,
+    plane_wave_energy: float | None,
 ) -> BlochBands:
     return get_bloch_bands(
-        build_model(
+        _get_model(
             system,
             friction_tol=friction_tol,
             max_energy=max_energy,
@@ -65,9 +91,9 @@ def _get_steady_state_path(
     *,
     friction_tol: float = DEFAULT_FRICTION_TOL,
     max_energy: float = DEFAULT_MAX_ENERGY,
-    plane_wave_energy: float = DEFAULT_PLANE_WAVE_ENERGY,
+    plane_wave_energy: float | None = None,
 ) -> Path:
-    model = build_model(
+    model = _get_model(
         system,
         friction_tol=friction_tol,
         max_energy=max_energy,
@@ -83,7 +109,7 @@ def get_steady_state(
     *,
     friction_tol: float = DEFAULT_FRICTION_TOL,
     max_energy: float = DEFAULT_MAX_ENERGY,
-    plane_wave_energy: float = DEFAULT_PLANE_WAVE_ENERGY,
+    plane_wave_energy: float | None = None,
 ) -> SteadyState:
     """Get the steady state of the master equation of a periodic system.
 
@@ -124,7 +150,7 @@ def solve_isf(  # ruff:ignore[too-many-arguments]
     *,
     friction_tol: float = DEFAULT_FRICTION_TOL,
     max_energy: float = DEFAULT_MAX_ENERGY,
-    plane_wave_energy: float = DEFAULT_PLANE_WAVE_ENERGY,
+    plane_wave_energy: float | None = None,
 ) -> IsfResult:
     """Solve the Caldeira-Leggett master equation of a periodic system, and get its ISF.
 
@@ -156,7 +182,9 @@ def solve_isf(  # ruff:ignore[too-many-arguments]
         bands are kept.
     plane_wave_energy
         The kinetic energy, in units of k_B T, up to which plane waves are
-        kept to build the bands.
+        kept to build the bands. By default, 2.5 times the largest kinetic
+        energy that the highest band can classically have: max_energy plus
+        the zero point energy of the ground state.
 
     Raises
     ------
@@ -194,7 +222,7 @@ def get_diffusion_constant(
     direction: tuple[float, ...] | None = None,
     friction_tol: float = DEFAULT_FRICTION_TOL,
     max_energy: float = DEFAULT_MAX_ENERGY,
-    plane_wave_energy: float = DEFAULT_PLANE_WAVE_ENERGY,
+    plane_wave_energy: float | None = None,
 ) -> float:
     """Get the diffusion constant of a periodic system under the Caldeira-Leggett master equation.
 

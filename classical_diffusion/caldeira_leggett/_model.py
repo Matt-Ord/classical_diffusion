@@ -43,6 +43,8 @@ class BlochModel:
     """The kinetic energy cutoff of the plane wave basis."""
     max_energy: float
     """Every band whose lowest energy is within this of the ground state is kept."""
+    potential_minimum: float
+    """The minimum of the potential, which has no constant term."""
     length: float
     """The natural unit of length, in the units of the system."""
     time: float
@@ -209,6 +211,8 @@ def build_model(
         couplings=couplings,
         plane_wave_energy=plane_wave_energy,
         max_energy=max_energy,
+        # The constant of the system puts the minimum of its potential at zero
+        potential_minimum=-system.params[-1] / kbt,
         length=float(length),
         time=float(time),
     )
