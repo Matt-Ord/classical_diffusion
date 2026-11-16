@@ -131,16 +131,7 @@ def solve_isf(
     n = np.rint(np.linalg.solve(model.cell_reciprocal.T, scaled)).astype(int)
     shift = tuple(-int(i) for i in n)
     offset = scaled - n @ model.cell_reciprocal
-    bra = (
-        get_offset_operators(
-            bands.energies,
-            couplings,
-            get_velocity(bands, model, offset)
-            + 0.5 * offset @ offset * np.eye(bands.energies.shape[1]),
-        )
-        if np.any(offset)
-        else operators
-    )
+    bra = get_offset_operators(model, bands, couplings, offset)
     shifted_kappa = get_shifted_kappa(model, shift)
     # S[kappa] = <kappa - dK, m| e^{-i dK x} |kappa, n>, and the block
     # (kappa - dK, kappa) of rho e^{-i dK x} is rho[kappa - dK] S[kappa]

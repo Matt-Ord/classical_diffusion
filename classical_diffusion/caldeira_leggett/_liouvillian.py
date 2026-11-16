@@ -9,6 +9,7 @@ import scipy.special
 from classical_diffusion.caldeira_leggett._bands import (
     get_shift_operator,
     get_shifted_kappa,
+    get_velocity,
 )
 
 if TYPE_CHECKING:
@@ -146,7 +147,7 @@ def get_operators(energies: FloatArray, couplings: Couplings) -> Operators:
 
 
 def get_offset_operators(
-    energies: FloatArray, couplings: Couplings, perturbation: ComplexArray
+    model: Model, bands: Bands, couplings: Couplings, offset: FloatArray
 ) -> Operators:
     """Get the operators e^{-i theta x} O e^{i theta x}, in the basis of the bands.
 
@@ -160,7 +161,10 @@ def get_offset_operators(
     and where the truncation splits a degenerate set of bands an arbitrarily
     different one.
     """
-    offset_energies, w = np.linalg.eigh(_diagonal(energies) + perturbation)
+    perturbation = get_velocity(bands, model, offset) + 0.5 * offset @ offset * np.eye(
+        bands.energies.shape[1]
+    )
+    offset_energies, w = np.linalg.eigh(_diagonal(bands.energies) + perturbation)
     # The band m on the offset grid is sum_n w[kappa, n, m] |kappa, n>
     w_target = w[couplings.targets]
     operators = get_operators(
