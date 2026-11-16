@@ -273,8 +273,8 @@ class Liouvillian(NamedTuple):
     jumps_ket: jax.Array
     """(n_ops, n_kappa, n_bands, n_bands), indexed by the kappa of the bra."""
     jumps_bra_dagger: jax.Array
-    targets: jax.Array
-    """(n_ops * n_kappa,), the index of kappa + q_j for each jump and kappa."""
+    sources: jax.Array
+    """(n_ops, n_kappa), the index of kappa - q_j for each jump and kappa, from which the jump reaches kappa."""
 
 
 def get_liouvillian(
@@ -287,14 +287,30 @@ def get_liouvillian(
         hamiltonian_bra_dagger=jnp.asarray(_dagger(bra.hamiltonian)),
         jumps_ket=jnp.asarray(ket.jumps[:, index]),
         jumps_bra_dagger=jnp.asarray(_dagger(bra.jumps)),
-        targets=jnp.asarray(bra.targets.reshape(-1)),
+        # Each jump permutes the crystal momenta, so its sources are the inverse
+        sources=jnp.asarray(np.argsort(bra.targets, axis=-1)),
     )
 
 
 def apply_liouvillian(liouvillian: Liouvillian, x: jax.Array) -> jax.Array:
-    """Apply the Liouvillian to the state x."""
+    """Apply the Liouvillian to the state x.
+
+    The jumps are added one at a time, which holds a few states at once
+    rather than one for each jump, at no cost in speed.
+    """
     out = -1j * (
         liouvillian.hamiltonian_ket @ x - x @ liouvillian.hamiltonian_bra_dagger
     )
-    jumped = liouvillian.jumps_ket @ x[None] @ liouvillian.jumps_bra_dagger
-    return out.at[liouvillian.targets].add(jumped.reshape(-1, *x.shape[1:]))
+
+    def add_jump(
+        out: jax.Array, jump: tuple[jax.Array, jax.Array, jax.Array]
+    ) -> tuple[jax.Array, None]:
+        ket, bra_dagger, sources = jump
+        return out + (ket @ x @ bra_dagger)[sources], None
+
+    out, _ = jax.lax.scan(
+        add_jump,
+        out,
+        (liouvillian.jumps_ket, liouvillian.jumps_bra_dagger, liouvillian.sources),
+    )
+    return out
