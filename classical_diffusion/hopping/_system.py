@@ -71,7 +71,11 @@ class Lattice1D(Lattice):
     ) -> None:
         self._lattice_spacing = lattice_spacing
         self._hop_time = hop_time
-        object.__setattr__(self, "units", units or UnitSystem())
+        self._units = units or UnitSystem()
+
+    @property
+    def units(self) -> UnitSystem:
+        return self._units
 
     @property
     def hop_time(self) -> float:
