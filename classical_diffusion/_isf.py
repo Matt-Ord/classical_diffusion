@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from classical_diffusion.jax.analysis import get_pairwise_isf as get_pairwise_isf_jax
-from classical_diffusion.simulation import IsfResult, SimulationResult, TimeSpan
+from classical_diffusion.simulation import IsfResult, SimulationResult
 
 
 def _get_origin_isf(
@@ -55,23 +55,5 @@ def get_isf(
         isf=np.mean(isf, axis=0),
         error=np.std(isf, axis=0) / np.sqrt(isf.shape[0]),
         delta_k=delta_k,
-        units=result.units,
-    )
-
-
-def with_span_times(result: IsfResult, time_span: TimeSpan) -> IsfResult:
-    """Return the ISF of a simulation over a time span, at exactly the times of the span since its start.
-
-    A solver returns the times it sampled, after a round trip through its own
-    units and the precision of jax, so they differ from the times of the span
-    in the last digits (by 1 part in 10^7 in single precision).
-    """
-    return IsfResult(
-        times=np.linspace(
-            0, time_span.t_end - time_span.t_start, time_span.n_steps + 1
-        ),
-        isf=result.isf,
-        error=result.error,
-        delta_k=result.delta_k,
         units=result.units,
     )
