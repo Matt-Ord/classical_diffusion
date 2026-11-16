@@ -1,23 +1,27 @@
-import hashlib
 import itertools
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import scipy.linalg
 import scipy.ndimage
 import scipy.optimize
 
 if TYPE_CHECKING:
+    from classical_diffusion.caldeira_leggett._config import CaldeiraLeggettConfig
     from classical_diffusion.langevin._system import PeriodicSystem
 
 type IntVector = tuple[int, ...]
 type FloatArray = np.ndarray[Any, np.dtype[np.float64]]
 type IntArray = np.ndarray[Any, np.dtype[np.int64]]
+type BoolArray = np.ndarray[Any, np.dtype[np.bool_]]
 type ComplexArray = np.ndarray[Any, np.dtype[np.complex128]]
+type Terms = tuple[tuple[IntVector, float], ...]
+"""Integer vectors, each with a weight: the Fourier components of a potential, or the directions of the couplings."""
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
-class BlochModel:
+class Model:
     """A periodic Caldeira-Leggett model, in natural units.
 
     The units are those in which hbar = m = k_B T = 1. The unit of length is
@@ -31,20 +35,18 @@ class BlochModel:
     lattice vector G of the potential.
     """
 
-    reciprocal: FloatArray
-    """The primitive reciprocal lattice vectors g_i of the potential, as rows."""
+    cell_reciprocal: FloatArray
+    """The primitive reciprocal lattice vectors of the simulation cell, as rows."""
     n_periods: int
-    potential: tuple[tuple[IntVector, float], ...]
+    potential: Terms
     """The Fourier components V_G of the potential, for G = sum_i c_i g_i."""
     friction: float
-    couplings: tuple[tuple[IntVector, float], ...]
+    couplings: Terms
     """The direction c and weight w of each pair of Lindblad operators e^{+-i q x}, q = c @ cell_reciprocal."""
     plane_wave_energy: float
     """The kinetic energy cutoff of the plane wave basis."""
     max_energy: float
-    """Every band whose lowest energy is within this of the ground state is kept."""
-    potential_minimum: float
-    """The minimum of the potential, which has no constant term."""
+    """Every band whose lowest energy is within this of the saddle, or the ground state if it is higher, is kept."""
     saddle_energy: float
     """The energy at which the classically allowed region first connects a site to its periodic images (`get_saddle_energy`)."""
     length: float
@@ -52,52 +54,42 @@ class BlochModel:
     time: float
     """The natural unit of time, in the units of the system."""
 
-    def get_hash(self) -> str:
-        """Get a hash of the model, which is the same in every process and unit system."""
-
-        def rounded(values: Any) -> list[Any]:  # ruff:ignore[any-type]
-            return [float(f"{v:.12e}") for v in np.ravel(values).tolist()]
-
-        key = (
-            rounded(self.reciprocal),
-            self.n_periods,
-            [(c, *rounded(v)) for c, v in self.potential],
-            rounded(self.friction),
-            [(c, *rounded(w)) for c, w in self.couplings],
-            rounded([self.plane_wave_energy, self.max_energy]),
-        )
-        return hashlib.sha256(repr(key).encode()).hexdigest()[:24]
-
     @property
     def n_dim(self) -> int:
         """The number of spatial dimensions."""
-        return self.reciprocal.shape[0]
+        return self.cell_reciprocal.shape[0]
 
     @property
     def n_kappa(self) -> int:
         """The number of crystal momenta of the cell."""
         return self.n_periods**self.n_dim
 
-    @property
-    def cell_reciprocal(self) -> FloatArray:
-        """The reciprocal lattice vectors of the simulation cell, as rows."""
-        return self.reciprocal / self.n_periods
 
-    def wavevector(self, n: IntArray) -> FloatArray:
-        """Get the cartesian wavevector of the integer vectors n."""
-        return n @ self.cell_reciprocal
+def get_plane_waves(cell_reciprocal: FloatArray, energy: float) -> IntArray:
+    """Get the integer vectors n of every plane wave with a kinetic energy up to energy."""
+    n_dim = cell_reciprocal.shape[0]
+    # |k| >= s_min |n|, where s_min is the smallest singular value
+    s_min = np.linalg.svd(cell_reciprocal, compute_uv=False).min()
+    n_max = int(np.ceil(np.sqrt(2 * energy) / s_min))
+    grid = np.array(list(itertools.product(range(-n_max, n_max + 1), repeat=n_dim)))
+    k = grid @ cell_reciprocal
+    return grid[0.5 * np.sum(k**2, axis=-1) <= energy]
 
-    def plane_waves(self) -> IntArray:
-        """Get the integer vectors n of every plane wave in the basis."""
-        k_max = np.sqrt(2 * self.plane_wave_energy)
-        # |k| >= s_min |n|, where s_min is the smallest singular value
-        s_min = np.linalg.svd(self.cell_reciprocal, compute_uv=False).min()
-        n_max = int(np.ceil(k_max / s_min))
-        grid = np.array(
-            list(itertools.product(range(-n_max, n_max + 1), repeat=self.n_dim))
-        )
-        k = self.wavevector(grid)
-        return grid[0.5 * np.sum(k**2, axis=-1) <= self.plane_wave_energy]
+
+def get_hamiltonian(
+    plane_waves: IntArray,
+    cell_reciprocal: FloatArray,
+    n_periods: int,
+    potential: Terms,
+) -> ComplexArray:
+    """Get the Hamiltonian in the plane waves of one crystal momentum."""
+    k = plane_waves @ cell_reciprocal
+    hamiltonian = np.diag(0.5 * np.sum(k**2, axis=-1)).astype(np.complex128)
+    # The difference between two plane waves at the same kappa is n_periods * G
+    g_difference = (plane_waves[:, None, :] - plane_waves[None, :, :]) // n_periods
+    for g, v_g in potential:
+        hamiltonian[np.all(g_difference == np.array(g), axis=-1)] += v_g
+    return hamiltonian
 
 
 def _get_candidate_directions(reciprocal: FloatArray, radius: float) -> IntArray:
@@ -113,7 +105,7 @@ def _get_candidate_directions(reciprocal: FloatArray, radius: float) -> IntArray
     return grid[first > 0]
 
 
-def get_couplings(reciprocal: FloatArray) -> tuple[tuple[IntVector, float], ...]:
+def get_couplings(reciprocal: FloatArray) -> Terms:
     """Get the direction c and weight w of each pair of Lindblad operators.
 
     The operators e^{+-i q x} of the direction q = c @ reciprocal damp only
@@ -180,7 +172,7 @@ def get_friction_error(q: float) -> float:
 
 def get_period_count(
     reciprocal: FloatArray,
-    couplings: tuple[tuple[IntVector, float], ...],
+    couplings: Terms,
     friction_tol: float,
 ) -> int:
     """Get the fewest periods of the potential for which the friction error is below friction_tol.
@@ -199,9 +191,7 @@ def get_period_count(
     return n_periods
 
 
-def _get_potential_on_grid(
-    potential: tuple[tuple[IntVector, complex], ...], n_dim: int
-) -> FloatArray:
+def _get_potential_on_grid(potential: Terms, n_dim: int) -> FloatArray:
     """Get V(u) = sum_G V_G e^{2 pi i G . u} on a grid of the fractional coordinates u of one unit cell."""
     largest = max((max(abs(c) for c in g) for g, _ in potential), default=1)
     n_grid = max(64 if n_dim < 3 else 24, 8 * largest)  # ruff:ignore[magic-value-comparison]
@@ -234,9 +224,7 @@ def _is_percolating(allowed: np.ndarray) -> bool:
     return False
 
 
-def get_saddle_energy(
-    potential: tuple[tuple[IntVector, complex], ...], n_dim: int
-) -> float:
+def get_saddle_energy(potential: Terms, n_dim: int) -> float:
     """Get the lowest energy E at which the region V < E connects a site to its periodic image along some lattice vector.
 
     This is the energy of the saddle a particle must cross to diffuse along
@@ -256,13 +244,54 @@ def get_saddle_energy(
     return high
 
 
-def build_model(
-    system: PeriodicSystem,
+_PLANE_WAVE_FACTOR = 2.5
+_PLANE_WAVE_TOL = 1e-3
+
+
+def get_plane_wave_energy(
+    reciprocal: FloatArray,
+    potential: Terms,
     *,
-    friction_tol: float,
     max_energy: float,
-    plane_wave_energy: float,
-) -> BlochModel:
+    saddle_energy: float,
+    potential_minimum: float,
+) -> float:
+    """Get the kinetic energy cutoff of the plane waves which resolves the bands up to max_energy.
+
+    A state of energy E has a kinetic energy of at most E - V_min where it is
+    classically allowed, and its plane wave components fall off beyond that.
+    The highest band kept is max_energy above the higher of the ground state
+    and the saddle energy (`get_bands`), so the cutoff is a multiple of its
+    height above V_min. How high the potential rises beyond that does not
+    matter: a band below the top of the potential never reaches it.
+
+    With a factor of 2.5 the diffusion constant of lithium on Cu(111) at
+    140 K is converged to 1e-8 and that of hydrogen at 150 K to 0.2%, where
+    a cutoff of max_energy + 2 k_B T is wrong by 3e-4 and by a factor of 11.
+
+    The zero point energy is that of the lowest band at zero crystal momentum,
+    found in the plane waves of a single period of the potential, with a cutoff
+    which is raised until it is consistent.
+    """
+    cutoff = _PLANE_WAVE_FACTOR * max_energy
+    for _ in range(20):
+        hamiltonian = get_hamiltonian(
+            get_plane_waves(reciprocal, cutoff), reciprocal, 1, potential
+        )
+        ground = scipy.linalg.eigvalsh(hamiltonian, subset_by_index=(0, 0))[0]
+        previous, cutoff = (
+            cutoff,
+            _PLANE_WAVE_FACTOR
+            * (max(float(ground), saddle_energy) + max_energy - potential_minimum),
+        )
+        if abs(cutoff - previous) < _PLANE_WAVE_TOL * cutoff:
+            break
+    # Rounded, so that the basis does not depend on the last digits of the
+    # zero point energy, which can change with the number of threads
+    return round(cutoff, 6)
+
+
+def build_model(system: PeriodicSystem, config: CaldeiraLeggettConfig) -> Model:
     """Build the model of a periodic system, in natural units."""
     kbt = system.kbt
     time = system.units.hbar / kbt
@@ -278,17 +307,29 @@ def build_model(
             [(term.miller, amplitude), (tuple(-n for n in term.miller), amplitude)]
         )
     couplings = get_couplings(reciprocal)
-    return BlochModel(
-        reciprocal=reciprocal,
-        n_periods=get_period_count(reciprocal, couplings, friction_tol),
+    n_periods = get_period_count(reciprocal, couplings, config.friction_tol)
+    saddle_energy = get_saddle_energy(tuple(potential), len(system.lattice_vectors))
+    plane_wave_energy = (
+        get_plane_wave_energy(
+            reciprocal,
+            tuple(potential),
+            max_energy=config.max_energy,
+            saddle_energy=saddle_energy,
+            # The constant of the system puts the minimum of its potential at zero
+            potential_minimum=-system.params[-1] / kbt,
+        )
+        if config.plane_wave_energy is None
+        else config.plane_wave_energy
+    )
+    return Model(
+        cell_reciprocal=reciprocal / n_periods,
+        n_periods=n_periods,
         potential=tuple(potential),
         friction=system.gamma * time,
         couplings=couplings,
         plane_wave_energy=plane_wave_energy,
-        max_energy=max_energy,
-        # The constant of the system puts the minimum of its potential at zero
-        potential_minimum=-system.params[-1] / kbt,
-        saddle_energy=get_saddle_energy(tuple(potential), len(system.lattice_vectors)),
+        max_energy=config.max_energy,
+        saddle_energy=saddle_energy,
         length=float(length),
         time=float(time),
     )

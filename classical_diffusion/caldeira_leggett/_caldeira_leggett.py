@@ -1,30 +1,33 @@
-import dataclasses
-from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 
 from classical_diffusion.caldeira_leggett._bands import (
-    BlochBands,
-    get_bloch_bands,
-    get_plane_wave_energy,
+    Bands,
+    get_bands,
+    get_shift_operator,
+    get_shifted_kappa,
+    get_velocity,
 )
 from classical_diffusion.caldeira_leggett._config import (
     DEFAULT_CONFIG,
     CaldeiraLeggettConfig,
 )
 from classical_diffusion.caldeira_leggett._liouvillian import (
-    get_scattering_sector,
-    get_sector_liouvillian,
+    get_couplings,
+    get_liouvillian,
+    get_offset_operators,
+    get_operators,
+    get_twist_derivative,
 )
-from classical_diffusion.caldeira_leggett._model import BlochModel, build_model
+from classical_diffusion.caldeira_leggett._model import Model, build_model
 from classical_diffusion.caldeira_leggett._solver import (
     get_diffusion_coefficient,
+    get_isf,
 )
-from classical_diffusion.caldeira_leggett._solver import get_isf as get_sector_isf
 from classical_diffusion.caldeira_leggett._solver import (
-    get_steady_state as get_sector_steady_state,
+    get_steady_state as get_band_steady_state,
 )
 from classical_diffusion.simulation import IsfResult
 from classical_diffusion.util import cached, timed
@@ -34,47 +37,24 @@ if TYPE_CHECKING:
     from classical_diffusion.langevin._system import PeriodicSystem
 
 
-@dataclass(frozen=True, kw_only=True)
-class SteadyState:
-    """The steady state of the master equation of a periodic system.
+class SteadyState(NamedTuple):
+    """The steady state of the master equation of a periodic system, with the bands it is found in.
 
-    The state is diagonal in the crystal momentum. It is stored in the basis
-    of the plane waves, rather than of the bands, since the bands are only
-    defined up to a phase, and up to a rotation where they are degenerate,
-    which can differ each time they are found.
+    The state is diagonal in the crystal momentum. The bands are only defined
+    up to a phase, and up to a rotation where they are degenerate, which can
+    differ each time they are found, so the state keeps its own.
     """
 
-    density: tuple[ComplexArray, ...]
-    """The density matrix at each crystal momentum, shape (n_plane_waves, n_plane_waves)."""
-
-
-def _get_model(system: PeriodicSystem, config: CaldeiraLeggettConfig) -> BlochModel:
-    model = build_model(
-        system,
-        friction_tol=config.friction_tol,
-        max_energy=config.max_energy,
-        plane_wave_energy=config.max_energy
-        if config.plane_wave_energy is None
-        else config.plane_wave_energy,
-    )
-    if config.plane_wave_energy is None:
-        return dataclasses.replace(
-            model, plane_wave_energy=get_plane_wave_energy(model)
-        )
-    return model
-
-
-def _get_bands(system: PeriodicSystem, config: CaldeiraLeggettConfig) -> BlochBands:
-    return get_bloch_bands(_get_model(system, config))
+    model: Model
+    bands: Bands
+    density: ComplexArray
+    """The density matrix in the basis of the bands, (n_kappa, n_bands, n_bands)."""
 
 
 def _get_steady_state_path(
     system: PeriodicSystem, *, config: CaldeiraLeggettConfig = DEFAULT_CONFIG
 ) -> Path:
-    model = _get_model(system, config)
-    return Path(
-        f"caldeira_leggett_steady_state_{model.get_hash()}_{config.linear_rtol:.1e}.npz"
-    )
+    return Path(f"caldeira_leggett_steady_state_{hash(system)}_{hash(config)}.npz")
 
 
 @cached(_get_steady_state_path, default_call="load_or_call_uncached")
@@ -89,23 +69,11 @@ def get_steady_state(
     Call ``get_steady_state.call_cached`` once, with the same configuration,
     to save it for them.
     """
-    bands = _get_bands(system, config)
-    rho = get_sector_steady_state(get_sector_liouvillian(bands), config)
-    return SteadyState(
-        density=tuple(
-            u @ x @ u.conj().T for u, x in zip(bands.vectors, rho, strict=True)
-        )
-    )
-
-
-def _in_bands(bands: BlochBands, steady_state: SteadyState) -> ComplexArray:
-    """Get the steady state in the basis of the bands, shape (n_kappa, n_bands, n_bands)."""
-    return np.array(
-        [
-            u.conj().T @ x @ u
-            for u, x in zip(bands.vectors, steady_state.density, strict=True)
-        ]
-    )
+    model = build_model(system, config)
+    bands = get_bands(model)
+    operators = get_operators(bands.energies, get_couplings(model, bands))
+    density = get_band_steady_state(operators, bands.energies, config)
+    return SteadyState(model=model, bands=bands, density=density)
 
 
 @timed
@@ -148,14 +116,41 @@ def solve_isf(
     if times[0] != 0 or np.any(np.diff(times) <= 0):
         msg = "The times must increase from zero"
         raise ValueError(msg)
-    bands = _get_bands(system, config)
-    model = bands.model
-    steady_state = get_steady_state.load_or_call_uncached(system, config=config)
-    sector = get_scattering_sector(
-        get_sector_liouvillian(bands), np.asarray(delta_k) * model.length
+    model, bands, rho = get_steady_state.load_or_call_uncached(system, config=config)
+    couplings = get_couplings(model, bands)
+    operators = get_operators(bands.energies, couplings)
+    # dK is split into the nearest point n @ cell_reciprocal and an offset
+    # theta. Every operator shifts k by a multiple of cell_reciprocal, so k mod
+    # cell_reciprocal is conserved, and rho e^{-i dK x} is in the sector of
+    # crystal momentum transfer s = -n. The offset is removed by the gauge
+    # transformation X -> X e^{i theta x}, after which the bra evolves under
+    # the operators of the Bloch states on the offset grid,
+    # e^{-i theta x} O e^{i theta x} (`get_offset_operators`). The ISF is then
+    # Tr[e^{i (dK - theta) x} X(t)], so any dK is reached with the same cell.
+    scaled = np.asarray(delta_k) * model.length
+    n = np.rint(np.linalg.solve(model.cell_reciprocal.T, scaled)).astype(int)
+    shift = tuple(-int(i) for i in n)
+    offset = scaled - n @ model.cell_reciprocal
+    bra = (
+        get_offset_operators(
+            bands.energies,
+            couplings,
+            get_velocity(bands, model, offset)
+            + 0.5 * offset @ offset * np.eye(bands.energies.shape[1]),
+        )
+        if np.any(offset)
+        else operators
     )
-    isf = get_sector_isf(
-        sector, _in_bands(bands, steady_state), times / model.time, config
+    shifted_kappa = get_shifted_kappa(model, shift)
+    # S[kappa] = <kappa - dK, m| e^{-i dK x} |kappa, n>, and the block
+    # (kappa - dK, kappa) of rho e^{-i dK x} is rho[kappa - dK] S[kappa]
+    scattering = get_shift_operator(bands, shift)
+    isf = get_isf(
+        get_liouvillian(operators, bra, shifted_kappa),
+        rho[shifted_kappa] @ scattering,
+        scattering,
+        times / model.time,
+        config,
     )
     return IsfResult(times=times, isf=isf, delta_k=delta_k, units=system.units)
 
@@ -189,14 +184,11 @@ def get_diffusion_constant(
     float
         The diffusion constant, in the units of the system.
     """
-    bands = _get_bands(system, config)
-    model = bands.model
-    steady_state = get_steady_state.load_or_call_uncached(system, config=config)
+    model, bands, rho = get_steady_state.load_or_call_uncached(system, config=config)
+    couplings = get_couplings(model, bands)
+    operators = get_operators(bands.energies, couplings)
     unit = np.eye(model.n_dim)[0] if direction is None else np.asarray(direction, float)
-    diffusion = get_diffusion_coefficient(
-        get_sector_liouvillian(bands),
-        _in_bands(bands, steady_state),
-        unit / np.linalg.norm(unit),
-        config,
-    )
+    velocity = get_velocity(bands, model, unit / np.linalg.norm(unit))
+    derivative = get_twist_derivative(bands.energies, couplings, operators, velocity)
+    diffusion = get_diffusion_coefficient(operators, derivative, rho, config)
     return diffusion * model.length**2 / model.time
