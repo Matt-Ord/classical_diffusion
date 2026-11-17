@@ -68,8 +68,14 @@ class KrylovExponential(dfx.AbstractAdaptiveSolver):
     Cu(111) the steps are 50 times longer, and the ISF is 17 times faster.
     """
 
-    dimension: int = 12
-    """The number of vectors m of the Krylov basis."""
+    dimension: int = 20
+    """The number of vectors m of the Krylov basis.
+
+    The cost hardly depends on m: the steps grow about as fast as the work in
+    each, so from m = 8 to 32 the ISF takes within 10% of the same time, for
+    lithium and hydrogen on Cu(111) at 0.2 to 5 times their friction. m = 20
+    is never more than 20% slower than the best m, in 21 states of memory.
+    """
     term_structure: ClassVar = dfx.AbstractTerm
     interpolation_cls: ClassVar = KrylovInterpolation
 
