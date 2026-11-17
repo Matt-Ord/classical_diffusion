@@ -23,8 +23,17 @@ class CaldeiraLeggettConfig:
     The error is taken at the coherence length of a free particle,
     hbar / sqrt(m k_B T).
     """
-    max_energy: float = 12.0
-    """The energy above the saddle of the potential, or the ground state if it is higher, up to which bands are kept."""
+    max_energy: float = 16.0
+    """The energy above the saddle of the potential, or the ground state if it is higher, up to which bands are kept.
+
+    The bands above are never occupied, but they are the intermediate states
+    of the Lamb shift and of the response to the twist which gives D: their
+    sum restores the bare mass (the f-sum rule), and D is the small difference
+    of two terms which each depend on it. For hydrogen on Cu(111) in 2D, D
+    with 12 k_B T is 12-25% too high, depending on the cell, and with 16
+    k_B T it is within 0.5% of 24 k_B T. The high bands cannot be eliminated
+    instead, as no gap separates them from those kept.
+    """
     plane_wave_energy: float | None = None
     """The kinetic energy up to which plane waves are kept to build the bands.
 
