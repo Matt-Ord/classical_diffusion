@@ -16,6 +16,7 @@ from classical_diffusion.caldeira_leggett._config import (
     CaldeiraLeggettConfig,
 )
 from classical_diffusion.caldeira_leggett._liouvillian import (
+    Operators,
     get_couplings,
     get_liouvillian,
     get_offset_operators,
@@ -24,8 +25,10 @@ from classical_diffusion.caldeira_leggett._liouvillian import (
 )
 from classical_diffusion.caldeira_leggett._model import Model, build_model
 from classical_diffusion.caldeira_leggett._solver import (
+    RmsResult,
     get_diffusion_coefficient,
     get_isf,
+    get_rms,
 )
 from classical_diffusion.caldeira_leggett._solver import (
     get_steady_state as get_band_steady_state,
@@ -190,12 +193,85 @@ def get_diffusion_constant(
         The diffusion constant, in the units of the system.
     """
     model, bands, rho = get_steady_state.load_or_call_uncached(system, config=config)
-    couplings = get_couplings(model, bands)
-    operators = get_operators(bands.energies, couplings)
-    unit = np.eye(model.n_dim)[0] if direction is None else np.asarray(direction, float)
-    velocity = get_velocity(model, bands, unit / np.linalg.norm(unit))
-    derivative = get_twist_derivative(bands.energies, couplings, operators, velocity)
+    operators, derivative, _ = _get_derivative(model, bands, direction)
     diffusion = get_diffusion_coefficient(operators, derivative, rho, config)
     # D has units of length^2 / time
     length = model.units.length_into(1.0, system.units)
     return diffusion * length**2 / model.units.time_into(1.0, system.units)
+
+
+def _get_derivative(
+    model: Model,
+    bands: Bands,
+    direction: tuple[float, ...] | None,
+) -> tuple[Operators, Operators, FloatArray]:
+    """Get the operators, their twist derivative along the direction (by default the first axis), and its unit vector."""
+    couplings = get_couplings(model, bands)
+    operators = get_operators(bands.energies, couplings)
+    unit = np.eye(model.n_dim)[0] if direction is None else np.asarray(direction, float)
+    unit /= np.linalg.norm(unit)
+    velocity = get_velocity(model, bands, unit)
+    derivative = get_twist_derivative(bands.energies, couplings, operators, velocity)
+    return operators, derivative, unit
+
+
+@timed
+def solve_rms(
+    system: PeriodicSystem,
+    times: FloatArray,
+    *,
+    direction: tuple[float, ...] | None = None,
+    config: CaldeiraLeggettConfig = DEFAULT_CONFIG,
+    step_config: Adaptive = DEFAULT_ISF_STEP_CONFIG,
+) -> RmsResult:
+    """Solve the Caldeira-Leggett master equation of a periodic system, and get its mean square displacement along a direction.
+
+    The mean square displacement <(x(t) - x(0))^2> is the limit dK -> 0 of
+    -2 ln I(dK, t) / dK^2, the width of the Gaussian <e^{i dK x}> =
+    e^{i dK <x>} e^{-dK^2 <dx^2> / 2}, but it is found exactly, from the
+    second derivative of the ISF at dK = 0, so it is that of the infinite
+    surface with no bias from a finite dK (`get_rms`). Its slope at long
+    times is 2 D (`get_diffusion_constant`). It costs two linear solves, as
+    for D, and one propagation, as for an ISF.
+
+    Parameters
+    ----------
+    system
+        The periodic system. Its friction is isotropic.
+    times
+        The times, in the units of the system, increasing from zero.
+    direction
+        The direction along which x is measured, by default the first axis.
+    config
+        The basis and linear solves of the steady state, see `CaldeiraLeggettConfig`.
+    step_config
+        The tolerances of the adaptive time steps of the propagation.
+
+    Raises
+    ------
+    ValueError
+        If the times do not increase from zero.
+    """
+    times = np.asarray(times, dtype=np.float64)
+    if times[0] != 0 or np.any(np.diff(times) <= 0):
+        msg = "The times must increase from zero"
+        raise ValueError(msg)
+    model, bands, rho = get_steady_state.load_or_call_uncached(system, config=config)
+    operators, derivative, unit = _get_derivative(model, bands, direction)
+    result = get_rms(
+        operators,
+        derivative,
+        rho,
+        system.units.time_into(times, model.units),
+        direction=tuple(unit),
+        units=model.units,
+        config=config,
+        step_config=step_config,
+    )
+    length = model.units.length_into(1.0, system.units)
+    return RmsResult(
+        times=times,
+        mean_square=result.mean_square * length**2,
+        direction=tuple(unit),
+        units=system.units,
+    )

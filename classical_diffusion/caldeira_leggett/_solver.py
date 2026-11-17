@@ -149,40 +149,41 @@ def get_steady_state(
     return 0.5 * (rho + rho.conj().swapaxes(-1, -2))
 
 
-@partial(jax.jit, static_argnames=("step_config",))
-def _propagate(
-    liouvillian: Liouvillian,
-    initial: jax.Array,
-    observable: jax.Array,
+def _complex_to_real(x: jax.Array) -> jax.Array:
+    return jnp.stack([x.real, x.imag])
+
+
+def _real_to_complex(y: jax.Array) -> jax.Array:
+    return y[0] + 1j * y[1]
+
+
+def _solve_linear[S](
+    vector_field: Any,  # ruff:ignore[any-type]
+    initial: S,
+    measure: Any,  # ruff:ignore[any-type]
     times: jax.Array,
-    *,
     step_config: Adaptive,
 ) -> jax.Array:
-    def vector_field(
-        _t: Any,  # ruff:ignore[any-type]
-        y: jax.Array,
-        _args: Any,  # ruff:ignore[any-type]
-    ) -> jax.Array:
-        dx = apply_liouvillian(liouvillian, y[0] + 1j * y[1])
-        return jnp.stack([dx.real, dx.imag])
+    """Propagate the linear equation dy/dt = vector_field(y) of complex arrays from y(0) = initial, and measure it at the times.
 
-    def measure(
-        _t: Any,  # ruff:ignore[any-type]
-        y: jax.Array,
-        _args: Any,  # ruff:ignore[any-type]
-    ) -> jax.Array:
-        return jnp.sum(observable.conj() * (y[0] + 1j * y[1]))
-
-    # The state is split into its real and imaginary parts, as diffrax
-    # supports complex states only experimentally
+    Each complex array is split into its real and imaginary parts, as
+    diffrax supports complex states only experimentally.
+    """
     return dfx.diffeqsolve(
-        dfx.ODETerm(vector_field),
+        dfx.ODETerm(
+            lambda _t, y, _args: jax.tree.map(
+                _complex_to_real, vector_field(jax.tree.map(_real_to_complex, y))
+            )
+        ),
         KrylovExponential(),
         t0=times[0],
         t1=times[-1],
         dt0=step_config.initial_step(times),
-        y0=jnp.stack([initial.real, initial.imag]),
-        saveat=dfx.SaveAt(ts=times, fn=measure),
+        y0=jax.tree.map(_complex_to_real, initial),
+        saveat=dfx.SaveAt(
+            ts=times,
+            fn=lambda _t, y, _args: measure(jax.tree.map(_real_to_complex, y)),
+        ),
         # The steps need not end on the times, which are found within a step
         # exactly (`KrylovInterpolation`)
         stepsize_controller=dfx.PIDController(
@@ -192,6 +193,24 @@ def _propagate(
         adjoint=dfx.ForwardMode(),
         max_steps=None,
     ).ys
+
+
+@partial(jax.jit, static_argnames=("step_config",))
+def _propagate(
+    liouvillian: Liouvillian,
+    initial: jax.Array,
+    observable: jax.Array,
+    times: jax.Array,
+    *,
+    step_config: Adaptive,
+) -> jax.Array:
+    return _solve_linear(
+        lambda x: apply_liouvillian(liouvillian, x),
+        initial,
+        lambda x: jnp.sum(observable.conj() * x),
+        times,
+        step_config,
+    )
 
 
 def get_isf(  # ruff:ignore[too-many-arguments]
@@ -220,6 +239,73 @@ def get_isf(  # ruff:ignore[too-many-arguments]
     return IsfResult(times=times, isf=np.asarray(isf), delta_k=delta_k, units=units)
 
 
+class _Twist(NamedTuple):
+    """The expansion L(theta) = L_0 + theta L_1 + theta^2 L_2 + ... of the Liouvillian of a bra offset by theta along a direction, about the steady state."""
+
+    liouvillian: Liouvillian
+    """L_0."""
+    first_derivative: Liouvillian
+    """L_1."""
+    second_derivative_trace: float
+    """Re Tr[L_2 rho_ss]."""
+    drift: jax.Array
+    """L_1 rho_ss - Tr[L_1 rho_ss] rho_ss."""
+
+
+def _get_twist(
+    operators: Operators, derivative: Operators, steady_state: ComplexArray
+) -> _Twist:
+    """Expand the Liouvillian of a bra offset by theta along a direction to second order in theta.
+
+    After the gauge transformation X -> X e^{i theta x}, the ISF at a small
+    dK = theta n is I(t) = Tr[exp(L(theta) t) rho_ss], where L(theta) is the
+    Liouvillian with a bra on the grid offset by theta n. With the derivatives
+    O' of the operators of the bra along n (`get_twist_derivative`),
+
+        L_1 X = i X K'^dagger + sum_j L_j X L_j'^dagger,
+
+    the Liouvillian of a ket with jumps L_j and no Hamiltonian, and a bra of
+    the derivatives. L_2 needs no second derivative: the Liouvillian with both
+    the ket and the bra on the offset grid preserves the trace for every
+    theta, so the second derivative of its trace vanishes, which gives
+    Re Tr[L_2 rho_ss] = -1/2 sum_j Tr[L_j' rho_ss L_j'^dagger].
+    Tr[L_1 rho_ss] is the first order rate, which vanishes without a net
+    drift, and is projected out of the drift.
+    """
+    first_derivative = get_liouvillian(
+        operators._replace(hamiltonian=np.zeros_like(derivative.hamiltonian)),
+        derivative,
+    )
+    rho = jnp.asarray(steady_state)
+    drift = apply_liouvillian(first_derivative, rho)
+    return _Twist(
+        liouvillian=get_liouvillian(operators, operators),
+        first_derivative=first_derivative,
+        second_derivative_trace=float(
+            -0.5
+            * np.einsum(
+                "jkab,kbc,jkac->",
+                derivative.jumps,
+                steady_state,
+                derivative.jumps.conj(),
+            ).real
+        ),
+        drift=drift - _trace(drift) * rho,
+    )
+
+
+def _get_response(
+    twist: _Twist,
+    inverse: _NoJumpInverse,
+    source: jax.Array,
+    steady_state: jax.Array,
+    config: CaldeiraLeggettConfig,
+) -> jax.Array:
+    """Solve L_0 X = source, for a source with no trace, with no component along the steady state (X has no trace)."""
+    response = _solve(twist.liouvillian, inverse, source, config)
+    return response - _trace(response) * steady_state
+
+
 def get_diffusion_coefficient(
     operators: Operators,
     derivative: Operators,
@@ -228,48 +314,111 @@ def get_diffusion_coefficient(
 ) -> float:
     """Get the diffusion coefficient D along a direction, from the curvature of the dephasing rate at dK = 0.
 
-    After the gauge transformation X -> X e^{i theta x}, the ISF at a small
-    dK = theta n is I(t) = Tr[exp(L(theta) t) rho_ss], where L(theta) is the
-    Liouvillian with a bra on the grid offset by theta n. Its slowest
-    eigenvalue is -D theta^2 + O(theta^4), and second order perturbation
-    theory around the steady state, with L(theta) = L_0 + theta L_1 +
-    theta^2 L_2 + ..., gives
+    The slowest eigenvalue of L(theta) (`_get_twist`) is -D theta^2 +
+    O(theta^4), and second order perturbation theory around the steady state
+    gives
 
         -D = Tr[L_2 rho_ss] - Tr[L_1 L_0^+ L_1 rho_ss].
 
     This is a Green-Kubo formula for the master equation, which needs a single
-    linear solve rather than an ISF which decays only slowly at small dK.
-
-    With the derivatives O' of the operators of the bra along n
-    (`get_twist_derivative`),
-
-        L_1 X = i X K'^dagger + sum_j L_j X L_j'^dagger,
-
-    the Liouvillian of a ket with jumps L_j and no Hamiltonian, and a bra of
-    the derivatives (first_derivative). L_2 needs no second derivative: the Liouvillian with both
-    the ket and the bra on the offset grid preserves the trace for every
-    theta, so the second derivative of its trace vanishes, which gives
-    Re Tr[L_2 rho_ss] = -1/2 sum_j Tr[L_j' rho_ss L_j'^dagger]
-    (second_derivative_trace).
+    linear solve rather than an ISF which decays only slowly at small dK. It
+    is the long time slope of the mean square displacement over 2
+    (`get_rms`).
     """
-    liouvillian = get_liouvillian(operators, operators)
-    first_derivative = get_liouvillian(
-        operators._replace(hamiltonian=np.zeros_like(derivative.hamiltonian)),
-        derivative,
-    )
-    second_derivative_trace = -0.5 * np.einsum(
-        "jkab,kbc,jkac->", derivative.jumps, steady_state, derivative.jumps.conj()
-    )
-    rho = jnp.asarray(steady_state)
-    drift = apply_liouvillian(first_derivative, rho)
-    # Tr[L_1 rho_ss] is the first order rate, which vanishes without a net drift
-    response = _solve(
-        liouvillian,
+    twist = _get_twist(operators, derivative, steady_state)
+    response = _get_response(
+        twist,
         _get_no_jump_inverse(operators),
-        drift - _trace(drift) * rho,
+        twist.drift,
+        jnp.asarray(steady_state),
         config,
     )
-    rate = second_derivative_trace - complex(
-        _trace(apply_liouvillian(first_derivative, response))
+    return _get_diffusion_from_response(twist, response)
+
+
+def _get_diffusion_from_response(twist: _Twist, response: jax.Array) -> float:
+    rate = twist.second_derivative_trace - complex(
+        _trace(apply_liouvillian(twist.first_derivative, response))
     )
     return -rate.real
+
+
+@partial(jax.jit, static_argnames=("step_config",))
+def _propagate_first_derivative(
+    twist: _Twist, initial: jax.Array, times: jax.Array, *, step_config: Adaptive
+) -> jax.Array:
+    """Re Tr[L_1 exp(L_0 t) initial] at the times."""
+    return _solve_linear(
+        lambda x: apply_liouvillian(twist.liouvillian, x),
+        initial,
+        lambda x: _trace(apply_liouvillian(twist.first_derivative, x)).real,
+        times,
+        step_config,
+    )
+
+
+class RmsResult(NamedTuple):
+    """The mean square displacement <(x(t) - x(0))^2> along a direction."""
+
+    times: FloatArray
+    mean_square: FloatArray
+    direction: tuple[float, ...]
+    """The unit vector along which x is measured."""
+    units: UnitSystem
+
+    @property
+    def rms(self) -> FloatArray:
+        """The root mean square displacement."""
+        return np.sqrt(self.mean_square)
+
+
+def get_rms(  # ruff:ignore[too-many-arguments]
+    operators: Operators,
+    derivative: Operators,
+    steady_state: ComplexArray,
+    times: FloatArray,
+    *,
+    direction: tuple[float, ...],
+    units: UnitSystem,
+    config: CaldeiraLeggettConfig,
+    step_config: Adaptive,
+) -> RmsResult:
+    """Get the mean square displacement <(x(t) - x(0))^2> along a direction, at the times from zero.
+
+    The ISF at dK = theta n is 1 - theta^2 <(x(t) - x(0))^2> / 2 + ..., with
+    no first order term without a net drift, so the mean square displacement
+    is -Re d^2/d theta^2 Tr[exp(L(theta) t) rho_ss] at theta = 0
+    (`_get_twist`). This is the limit dK -> 0 of the ISF, so it is that of
+    the infinite surface, with no approximation in dK. As exp(L_0 t)
+    preserves the trace, expanding the exponential to second order gives
+
+        <(x(t) - x(0))^2> = -2 t Re Tr[L_2 rho_ss]
+            - 2 Re int_0^t (t - tau) Tr[L_1 exp(L_0 tau) L_1 rho_ss] d tau.
+
+    With X_1 = L_0^+ L_1 rho_ss, the response which gives D
+    (`get_diffusion_coefficient`), and X_2 = L_0^+ X_1, the integral is done
+    exactly, which leaves
+
+        <(x(t) - x(0))^2> = 2 D t + 2 Re Tr[L_1 X_2]
+            - 2 Re Tr[L_1 exp(L_0 t) X_2].
+
+    Only the last term is propagated, from a state which decays, so the time
+    steps grow as it does, as for an ISF, rather than following the growing
+    integral. It costs two linear solves and one propagation.
+    """
+    twist = _get_twist(operators, derivative, steady_state)
+    inverse = _get_no_jump_inverse(operators)
+    rho = jnp.asarray(steady_state)
+    first = _get_response(twist, inverse, twist.drift, rho, config)
+    second = _get_response(twist, inverse, first, rho, config)
+    diffusion = _get_diffusion_from_response(twist, first)
+    decay = _propagate_first_derivative(
+        twist, second, jnp.asarray(times), step_config=step_config
+    )
+    mean_square = 2 * diffusion * times + 2 * (np.asarray(decay)[0] - np.asarray(decay))
+    return RmsResult(
+        times=times,
+        mean_square=mean_square,
+        direction=direction,
+        units=units,
+    )

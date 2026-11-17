@@ -9,18 +9,22 @@ from classical_diffusion.caldeira_leggett._caldeira_leggett import (
     get_diffusion_constant,
     get_steady_state,
     solve_isf,
+    solve_rms,
 )
 from classical_diffusion.caldeira_leggett._config import (
     DEFAULT_CONFIG,
     CaldeiraLeggettConfig,
 )
+from classical_diffusion.caldeira_leggett._solver import RmsResult
 
 __all__ = [
     "DEFAULT_CONFIG",
     "DEFAULT_ISF_STEP_CONFIG",
     "CaldeiraLeggettConfig",
+    "RmsResult",
     "SteadyState",
     "get_diffusion_constant",
     "get_steady_state",
     "solve_isf",
+    "solve_rms",
 ]
