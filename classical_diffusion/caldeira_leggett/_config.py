@@ -23,16 +23,24 @@ class CaldeiraLeggettConfig:
     The error is taken at the coherence length of a free particle,
     hbar / sqrt(m k_B T).
     """
-    max_energy: float = 16.0
-    """The energy above the saddle of the potential, or the ground state if it is higher, up to which bands are kept.
+    max_energy: float = 12.0
+    """The energy above the saddle of the potential, or the ground state if it is higher, up to which bands are kept: the states which are occupied."""
+    extra_bands: int = 6
+    """extra_bands**n_dim more bands are kept above max_energy: the states which complete the basis.
 
-    The bands above are never occupied, but they are the intermediate states
-    of the Lamb shift and of the response to the twist which gives D: their
-    sum restores the bare mass (the f-sum rule), and D is the small difference
-    of two terms which each depend on it. For hydrogen on Cu(111) in 2D, D
-    with 12 k_B T is 12-25% too high, depending on the cell, and with 16
-    k_B T it is within 0.5% of 24 k_B T. The high bands cannot be eliminated
-    instead, as no gap separates them from those kept.
+    The bands above the occupied ones are never occupied, but they are the
+    intermediate states of the Lamb shift and of the response to the twist
+    which gives D, whose sum restores the bare mass (the f-sum rule). D is the
+    small difference of two terms which each depend on it, so it needs a
+    number of them which grows with the dimension, not an energy: hydrogen on
+    Cu(111) needs about 8 bands in 1D and 43 in 2D. With bands to 12 k_B T and
+    6^2 more (52), D for hydrogen in 2D is within 1e-5 of converged, where
+    with 4^2 or 5^2 more it is 6e-4 and 9e-4 high, and with bands to 16 k_B T
+    and none more 0.5%: the error is erratic, as single bands enter. Lithium
+    in 2D has 139 bands within 12 k_B T, for D 1.6e-4 low, and 175 with
+    6^2 more; in 1D every system tested is within 1e-7 with 6 more. The high
+    bands cannot be eliminated instead, as no gap separates them from those
+    kept.
     """
     plane_wave_energy: float | None = None
     """The kinetic energy up to which plane waves are kept to build the bands.

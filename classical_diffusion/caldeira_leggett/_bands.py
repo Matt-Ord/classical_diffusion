@@ -61,7 +61,8 @@ def get_bands(model: Model) -> Bands:
     above the ground state, only 2 k_B T above the saddle, give D 30% low.
     The lowest energy of band b is below a cutoff exactly when some crystal
     momentum has more than b energies below it, so the number of bands is the
-    most energies below the cutoff at any crystal momentum.
+    most energies below the cutoff at any crystal momentum. extra_bands**n_dim
+    more bands are kept above them (`CaldeiraLeggettConfig.extra_bands`).
 
     The plane wave Hamiltonian is diagonalized one crystal momentum at a
     time, first for its energies, then for the vectors of the bands kept only,
@@ -81,7 +82,11 @@ def get_bands(model: Model) -> Bands:
         [scipy.linalg.eigvalsh(hamiltonian(i)) for i in range(model.n_kappa)]
     )
     cutoff = max(all_energies.min(), model.saddle_energy) + model.max_energy
-    n_bands = int(np.count_nonzero(all_energies < cutoff, axis=-1).max())
+    n_bands = min(
+        int(np.count_nonzero(all_energies < cutoff, axis=-1).max())
+        + model.extra_bands**model.n_dim,
+        all_energies.shape[-1],
+    )
     kept = [
         scipy.linalg.eigh(hamiltonian(i), subset_by_index=(0, n_bands - 1))
         for i in range(model.n_kappa)

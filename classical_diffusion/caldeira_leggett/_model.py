@@ -53,6 +53,8 @@ class Model:
     """The reciprocal lattice vectors G of the potential in the plane wave basis, (n_plane_waves, n_dim)."""
     max_energy: float
     """Every band whose lowest energy is within this of the saddle, or the ground state if it is higher, is kept."""
+    extra_bands: int
+    """extra_bands**n_dim more bands are kept above those within max_energy."""
     saddle_energy: float
     """The energy at which the classically allowed region first connects a site to its periodic images (`get_saddle_energy`)."""
 
@@ -272,15 +274,16 @@ _PLANE_WAVE_FACTOR = 2.5
 _PLANE_WAVE_TOL = 1e-3
 
 
-def get_plane_wave_energy(
+def get_plane_wave_energy(  # ruff:ignore[too-many-arguments]
     reciprocal: FloatArray,
     potential: Terms,
     *,
     max_energy: float,
+    extra_bands: int,
     saddle_energy: float,
     potential_minimum: float,
 ) -> float:
-    """Get the kinetic energy cutoff of the plane waves which resolves the bands up to max_energy.
+    """Get the kinetic energy cutoff of the plane waves which resolves the bands up to max_energy, and extra_bands more.
 
     A state of energy E has a kinetic energy of at most E - V_min where it is
     classically allowed, and its plane wave components fall off beyond that.
@@ -295,7 +298,8 @@ def get_plane_wave_energy(
 
     The zero point energy is that of the lowest band at zero crystal momentum,
     found in the plane waves of a single period of the potential, with a cutoff
-    which is raised until it is consistent.
+    which is raised until it is consistent. The highest band kept is taken
+    there too, extra_bands above the last within max_energy.
     """
     cutoff = _PLANE_WAVE_FACTOR * max_energy
     for _ in range(20):
@@ -305,12 +309,11 @@ def get_plane_wave_energy(
             reciprocal,
             potential,
         )[0]
-        ground = scipy.linalg.eigvalsh(hamiltonian, subset_by_index=(0, 0))[0]
-        previous, cutoff = (
-            cutoff,
-            _PLANE_WAVE_FACTOR
-            * (max(float(ground), saddle_energy) + max_energy - potential_minimum),
-        )
+        energies = scipy.linalg.eigvalsh(hamiltonian)
+        top = max(float(energies[0]), saddle_energy) + max_energy
+        index = int(np.count_nonzero(energies < top)) + extra_bands - 1
+        top = max(top, float(energies[min(index, len(energies) - 1)]))
+        previous, cutoff = cutoff, _PLANE_WAVE_FACTOR * (top - potential_minimum)
         if abs(cutoff - previous) < _PLANE_WAVE_TOL * cutoff:
             break
     # Rounded, so that the basis does not depend on the last digits of the
@@ -344,6 +347,7 @@ def build_model(system: PeriodicSystem, config: CaldeiraLeggettConfig) -> Model:
             reciprocal,
             tuple(potential),
             max_energy=config.max_energy,
+            extra_bands=config.extra_bands ** len(reciprocal),
             saddle_energy=saddle_energy,
             # The constant of the system puts the minimum of its potential at zero
             potential_minimum=-system.params[-1] / kbt,
@@ -371,5 +375,6 @@ def build_model(system: PeriodicSystem, config: CaldeiraLeggettConfig) -> Model:
         couplings=couplings,
         reciprocal_vectors=get_reciprocal_vectors(reciprocal, radius),
         max_energy=config.max_energy,
+        extra_bands=config.extra_bands,
         saddle_energy=saddle_energy,
     )
