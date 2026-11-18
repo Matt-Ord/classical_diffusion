@@ -24,6 +24,10 @@ from classical_diffusion.caldeira_leggett._liouvillian import (
     get_twist_derivative,
 )
 from classical_diffusion.caldeira_leggett._model import Model, build_model
+from classical_diffusion.caldeira_leggett._rational import (
+    DEFAULT_RATIONAL_KRYLOV_CONFIG,
+    RationalKrylovConfig,
+)
 from classical_diffusion.caldeira_leggett._solver import (
     RmsResult,
     get_diffusion_coefficient,
@@ -33,7 +37,6 @@ from classical_diffusion.caldeira_leggett._solver import (
 from classical_diffusion.caldeira_leggett._solver import (
     get_steady_state as get_band_steady_state,
 )
-from classical_diffusion.jax.langevin import Adaptive
 from classical_diffusion.simulation import IsfResult
 from classical_diffusion.util import cached, timed
 
@@ -81,10 +84,6 @@ def get_steady_state(
     return SteadyState(model=model, bands=bands, density=density)
 
 
-DEFAULT_ISF_STEP_CONFIG = Adaptive(rtol=1e-8, atol=1e-10)
-"""The default time steps of an ISF, adaptive to a relative error of 1e-8."""
-
-
 @timed
 def solve_isf(
     system: PeriodicSystem,
@@ -92,13 +91,14 @@ def solve_isf(
     times: FloatArray,
     *,
     config: CaldeiraLeggettConfig = DEFAULT_CONFIG,
-    step_config: Adaptive = DEFAULT_ISF_STEP_CONFIG,
+    isf_config: RationalKrylovConfig = DEFAULT_RATIONAL_KRYLOV_CONFIG,
 ) -> IsfResult:
     """Solve the Caldeira-Leggett master equation of a periodic system, and get its ISF.
 
     The ISF I(delta_k, t) = Tr[e^{i delta_k x} V(t) (rho e^{-i delta_k x})]
-    of the steady state rho is propagated in time to the increasing times
-    from zero. The solver is deterministic, so the ISF has no error.
+    of the steady state rho is found at every time at once, from a reduced
+    model of the Liouvillian (`get_reduced_evolution`). The solver is
+    deterministic, so the ISF has no error.
 
     The Lindblad operators couple to e^{+-i q x} in place of x, which keeps
     the equation periodic, with the spectral function of the universal
@@ -114,11 +114,9 @@ def solve_isf(
     times
         The times of the ISF, in the units of the system.
     config
-        The basis and linear solves of the steady state, see `CaldeiraLeggettConfig`.
-    step_config
-        The tolerances of the adaptive time steps of the propagation. The
-        times need not be resolved by the steps, as the ISF is exact within
-        a step.
+        The basis and linear solves, see `CaldeiraLeggettConfig`.
+    isf_config
+        The convergence of the reduced model, see `RationalKrylovConfig`.
 
     Raises
     ------
@@ -156,7 +154,8 @@ def solve_isf(
         system.units.time_into(times, model.units),
         delta_k=tuple(scaled),
         units=model.units,
-        step_config=step_config,
+        config=config,
+        isf_config=isf_config,
     )
     # The ISF at exactly the given times, rather than at their round trip
     # through the natural units
@@ -222,7 +221,7 @@ def solve_rms(
     *,
     direction: tuple[float, ...] | None = None,
     config: CaldeiraLeggettConfig = DEFAULT_CONFIG,
-    step_config: Adaptive = DEFAULT_ISF_STEP_CONFIG,
+    isf_config: RationalKrylovConfig = DEFAULT_RATIONAL_KRYLOV_CONFIG,
 ) -> RmsResult:
     """Solve the Caldeira-Leggett master equation of a periodic system, and get its mean square displacement along a direction.
 
@@ -232,7 +231,7 @@ def solve_rms(
     second derivative of the ISF at dK = 0, so it is that of the infinite
     surface with no bias from a finite dK (`get_rms`). Its slope at long
     times is 2 D (`get_diffusion_constant`). It costs two linear solves, as
-    for D, and one propagation, as for an ISF.
+    for D, and one evolution, as for an ISF.
 
     Parameters
     ----------
@@ -243,9 +242,9 @@ def solve_rms(
     direction
         The direction along which x is measured, by default the first axis.
     config
-        The basis and linear solves of the steady state, see `CaldeiraLeggettConfig`.
-    step_config
-        The tolerances of the adaptive time steps of the propagation.
+        The basis and linear solves, see `CaldeiraLeggettConfig`.
+    isf_config
+        The convergence of the reduced model, see `RationalKrylovConfig`.
 
     Raises
     ------
@@ -266,7 +265,7 @@ def solve_rms(
         direction=tuple(unit),
         units=model.units,
         config=config,
-        step_config=step_config,
+        isf_config=isf_config,
     )
     length = model.units.length_into(1.0, system.units)
     return RmsResult(

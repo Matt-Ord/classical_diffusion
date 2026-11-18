@@ -1,129 +1,29 @@
-# cspell: ignore jkab jkac maxiter bicgstab
-from functools import partial
-from typing import TYPE_CHECKING, Any, NamedTuple
+# cspell: ignore jkab jkac
+from typing import TYPE_CHECKING, NamedTuple
 
-import diffrax as dfx
 import jax
 import jax.numpy as jnp
-import jax.scipy.sparse.linalg
 import numpy as np
 
-from classical_diffusion.caldeira_leggett._krylov import KrylovExponential
+from classical_diffusion.caldeira_leggett._linear import (
+    EigenLiouvillian,
+    get_eigen_liouvillian,
+    solve,
+)
 from classical_diffusion.caldeira_leggett._liouvillian import (
     Liouvillian,
     Operators,
     apply_liouvillian,
     get_liouvillian,
 )
-
-# jax.jit reads the annotations of _propagate, which needs Adaptive at run time
-from classical_diffusion.jax.langevin import Adaptive  # ruff: ignore[typing-only-first-party-import]
+from classical_diffusion.caldeira_leggett._rational import get_reduced_evolution
 from classical_diffusion.simulation import IsfResult
 
 if TYPE_CHECKING:
     from classical_diffusion.caldeira_leggett._config import CaldeiraLeggettConfig
     from classical_diffusion.caldeira_leggett._model import ComplexArray, FloatArray
+    from classical_diffusion.caldeira_leggett._rational import RationalKrylovConfig
     from classical_diffusion.system import UnitSystem
-
-
-class _NoJumpInverse(NamedTuple):
-    """The inverse of the no-jump part -i (K X - X K^dagger) of the Liouvillian of the steady state, from the eigenvectors of K = V diag(mu) V^-1.
-
-    Writing X = V Y V^dagger, the no-jump part is elementwise,
-    Y -> Z * Y with Z = -i (mu[a] - mu[b]^*). It preconditions the linear solves.
-    """
-
-    vectors: jax.Array
-    inverse: jax.Array
-    vectors_dagger: jax.Array
-    inverse_dagger: jax.Array
-    inverse_rates: jax.Array
-
-
-def _get_no_jump_inverse(operators: Operators) -> _NoJumpInverse:
-    mu, v = np.linalg.eig(operators.hamiltonian)
-    rates = -1j * (mu[:, :, None] - mu.conj()[:, None, :])
-    inverse = np.linalg.inv(v)
-    return _NoJumpInverse(
-        vectors=jnp.asarray(v),
-        inverse=jnp.asarray(inverse),
-        vectors_dagger=jnp.asarray(v.conj().swapaxes(-1, -2)),
-        inverse_dagger=jnp.asarray(inverse.conj().swapaxes(-1, -2)),
-        inverse_rates=jnp.asarray(1 / rates),
-    )
-
-
-def _apply_no_jump_inverse(inverse: _NoJumpInverse, x: jax.Array) -> jax.Array:
-    y = inverse.inverse @ x @ inverse.inverse_dagger
-    return inverse.vectors @ (inverse.inverse_rates * y) @ inverse.vectors_dagger
-
-
-@partial(jax.jit, static_argnames=("maxiter",))
-def _bicgstab(
-    liouvillian: Liouvillian,
-    inverse: _NoJumpInverse,
-    residual: jax.Array,
-    rtol: jax.Array,
-    *,
-    maxiter: int,
-) -> jax.Array:
-    # Preconditioned on the right, L M y = residual with x = M y, so that the
-    # tolerance applies to the true residual rather than to M (b - L x)
-    y, _ = jax.scipy.sparse.linalg.bicgstab(
-        lambda y: apply_liouvillian(liouvillian, _apply_no_jump_inverse(inverse, y)),
-        residual,
-        tol=rtol,
-        atol=0.0,
-        maxiter=maxiter,
-    )
-    return _apply_no_jump_inverse(inverse, y)
-
-
-def _solve(
-    liouvillian: Liouvillian,
-    inverse: _NoJumpInverse,
-    rhs: jax.Array,
-    config: CaldeiraLeggettConfig,
-) -> jax.Array:
-    """Solve L X = rhs with BiCGSTAB, preconditioned on the right by the inverse of the no-jump part of L.
-
-    BiCGSTAB keeps a fixed handful of vectors, where GMRES keeps a basis
-    which grows until it restarts, and a short restart can stall: for
-    hydrogen on Cu(111) in 2D, GMRES(30) takes 18 times longer to find D, in 4
-    times the memory. Its residual is not monotonic, so each pass of BiCGSTAB
-    only reduces the true residual by linear_inner_rtol, and the next pass
-    starts afresh from that residual (iterative refinement), which also
-    recovers from a breakdown. The passes stop once the residual is below
-    linear_rtol of |rhs|, or once it no longer halves, when round off has set
-    its floor.
-
-    Raises
-    ------
-    RuntimeError
-        If the residual is still falling after linear_refinements passes.
-    """
-    norm = float(jnp.linalg.norm(rhs))
-    solution, residual, best = jnp.zeros_like(rhs), rhs, 1.0
-    for _ in range(config.linear_refinements):
-        update = solution + _bicgstab(
-            liouvillian,
-            inverse,
-            residual,
-            jnp.asarray(max(config.linear_inner_rtol, config.linear_rtol / best)),
-            maxiter=config.linear_maxiter,
-        )
-        update_residual = rhs - apply_liouvillian(liouvillian, update)
-        relative = float(jnp.linalg.norm(update_residual)) / norm
-        if relative > best / 2:
-            return solution
-        solution, residual, best = update, update_residual, relative
-        if best <= config.linear_rtol:
-            return solution
-    msg = (
-        f"BiCGSTAB reached a residual of {best:.1e}, above {config.linear_rtol:.1e}, "
-        f"after {config.linear_refinements} passes"
-    )
-    raise RuntimeError(msg)
 
 
 def _trace(x: jax.Array) -> jax.Array:
@@ -142,75 +42,9 @@ def get_steady_state(
     weights = np.exp(-(energies - energies.min()))
     gibbs = (weights / weights.sum())[..., None] * np.eye(energies.shape[1])
     rhs = -apply_liouvillian(liouvillian, jnp.asarray(gibbs))
-    rho = gibbs + np.asarray(
-        _solve(liouvillian, _get_no_jump_inverse(operators), rhs, config)
-    )
+    rho = gibbs + np.asarray(solve(get_eigen_liouvillian(liouvillian), rhs, config))
     rho /= np.einsum("kaa->", rho)
     return 0.5 * (rho + rho.conj().swapaxes(-1, -2))
-
-
-def _complex_to_real(x: jax.Array) -> jax.Array:
-    return jnp.stack([x.real, x.imag])
-
-
-def _real_to_complex(y: jax.Array) -> jax.Array:
-    return y[0] + 1j * y[1]
-
-
-def _solve_linear[S](
-    vector_field: Any,  # ruff:ignore[any-type]
-    initial: S,
-    measure: Any,  # ruff:ignore[any-type]
-    times: jax.Array,
-    step_config: Adaptive,
-) -> jax.Array:
-    """Propagate the linear equation dy/dt = vector_field(y) of complex arrays from y(0) = initial, and measure it at the times.
-
-    Each complex array is split into its real and imaginary parts, as
-    diffrax supports complex states only experimentally.
-    """
-    return dfx.diffeqsolve(
-        dfx.ODETerm(
-            lambda _t, y, _args: jax.tree.map(
-                _complex_to_real, vector_field(jax.tree.map(_real_to_complex, y))
-            )
-        ),
-        KrylovExponential(),
-        t0=times[0],
-        t1=times[-1],
-        dt0=step_config.initial_step(times),
-        y0=jax.tree.map(_complex_to_real, initial),
-        saveat=dfx.SaveAt(
-            ts=times,
-            fn=lambda _t, y, _args: measure(jax.tree.map(_real_to_complex, y)),
-        ),
-        # The steps need not end on the times, which are found within a step
-        # exactly (`KrylovInterpolation`)
-        stepsize_controller=dfx.PIDController(
-            rtol=step_config.rtol, atol=step_config.atol
-        ),
-        # Nothing is differentiated, so the number of steps need not be bounded
-        adjoint=dfx.ForwardMode(),
-        max_steps=None,
-    ).ys
-
-
-@partial(jax.jit, static_argnames=("step_config",))
-def _propagate(
-    liouvillian: Liouvillian,
-    initial: jax.Array,
-    observable: jax.Array,
-    times: jax.Array,
-    *,
-    step_config: Adaptive,
-) -> jax.Array:
-    return _solve_linear(
-        lambda x: apply_liouvillian(liouvillian, x),
-        initial,
-        lambda x: jnp.sum(observable.conj() * x),
-        times,
-        step_config,
-    )
 
 
 def get_isf(  # ruff:ignore[too-many-arguments]
@@ -221,22 +55,24 @@ def get_isf(  # ruff:ignore[too-many-arguments]
     *,
     delta_k: tuple[float, ...],
     units: UnitSystem,
-    step_config: Adaptive,
+    config: CaldeiraLeggettConfig,
+    isf_config: RationalKrylovConfig,
 ) -> IsfResult:
-    """Get the ISF Tr[O^dagger X(t)], where X(t) is propagated from the initial state, at the times and scattering vector in the units.
+    """Get the ISF Tr[O^dagger X(t)], where X(t) evolves from the initial state, at the times and scattering vector in the units.
 
-    Each step is an exponential exp(h L) in a Krylov basis
-    (`KrylovExponential`), whose length is set by its error alone, to the
-    tolerances of step_config, and not by the spacing of the times.
+    The evolution is from a rational Krylov reduced model of L
+    (`get_reduced_evolution`), which gives every time at once.
     """
-    isf = _propagate(
+    o = jnp.asarray(observable)
+    isf = get_reduced_evolution(
         liouvillian,
         jnp.asarray(initial),
-        jnp.asarray(observable),
-        jnp.asarray(times),
-        step_config=step_config,
+        lambda x: jnp.sum(o.conj() * x),
+        times,
+        config=isf_config,
+        linear_config=config,
     )
-    return IsfResult(times=times, isf=np.asarray(isf), delta_k=delta_k, units=units)
+    return IsfResult(times=times, isf=isf, delta_k=delta_k, units=units)
 
 
 class _Twist(NamedTuple):
@@ -295,14 +131,13 @@ def _get_twist(
 
 
 def _get_response(
-    twist: _Twist,
-    inverse: _NoJumpInverse,
+    eigen: EigenLiouvillian,
     source: jax.Array,
     steady_state: jax.Array,
     config: CaldeiraLeggettConfig,
 ) -> jax.Array:
-    """Solve L_0 X = source, for a source with no trace, with no component along the steady state (X has no trace)."""
-    response = _solve(twist.liouvillian, inverse, source, config)
+    """Solve L_0 X = source (eigen is L_0), for a source with no trace, with no component along the steady state (X has no trace)."""
+    response = solve(eigen, source, config)
     return response - _trace(response) * steady_state
 
 
@@ -327,8 +162,7 @@ def get_diffusion_coefficient(
     """
     twist = _get_twist(operators, derivative, steady_state)
     response = _get_response(
-        twist,
-        _get_no_jump_inverse(operators),
+        get_eigen_liouvillian(twist.liouvillian),
         twist.drift,
         jnp.asarray(steady_state),
         config,
@@ -341,20 +175,6 @@ def _get_diffusion_from_response(twist: _Twist, response: jax.Array) -> float:
         _trace(apply_liouvillian(twist.first_derivative, response))
     )
     return -rate.real
-
-
-@partial(jax.jit, static_argnames=("step_config",))
-def _propagate_first_derivative(
-    twist: _Twist, initial: jax.Array, times: jax.Array, *, step_config: Adaptive
-) -> jax.Array:
-    """Re Tr[L_1 exp(L_0 t) initial] at the times."""
-    return _solve_linear(
-        lambda x: apply_liouvillian(twist.liouvillian, x),
-        initial,
-        lambda x: _trace(apply_liouvillian(twist.first_derivative, x)).real,
-        times,
-        step_config,
-    )
 
 
 class RmsResult(NamedTuple):
@@ -381,7 +201,7 @@ def get_rms(  # ruff:ignore[too-many-arguments]
     direction: tuple[float, ...],
     units: UnitSystem,
     config: CaldeiraLeggettConfig,
-    step_config: Adaptive,
+    isf_config: RationalKrylovConfig,
 ) -> RmsResult:
     """Get the mean square displacement <(x(t) - x(0))^2> along a direction, at the times from zero.
 
@@ -402,20 +222,25 @@ def get_rms(  # ruff:ignore[too-many-arguments]
         <(x(t) - x(0))^2> = 2 D t + 2 Re Tr[L_1 X_2]
             - 2 Re Tr[L_1 exp(L_0 t) X_2].
 
-    Only the last term is propagated, from a state which decays, so the time
-    steps grow as it does, as for an ISF, rather than following the growing
-    integral. It costs two linear solves and one propagation.
+    Only the last term evolves, from a state which decays, as for an ISF
+    (`get_reduced_evolution`), rather than the growing integral. It costs two
+    linear solves and one evolution.
     """
     twist = _get_twist(operators, derivative, steady_state)
-    inverse = _get_no_jump_inverse(operators)
+    eigen = get_eigen_liouvillian(twist.liouvillian)
     rho = jnp.asarray(steady_state)
-    first = _get_response(twist, inverse, twist.drift, rho, config)
-    second = _get_response(twist, inverse, first, rho, config)
+    first = _get_response(eigen, twist.drift, rho, config)
+    second = _get_response(eigen, first, rho, config)
     diffusion = _get_diffusion_from_response(twist, first)
-    decay = _propagate_first_derivative(
-        twist, second, jnp.asarray(times), step_config=step_config
-    )
-    mean_square = 2 * diffusion * times + 2 * (np.asarray(decay)[0] - np.asarray(decay))
+    decay = get_reduced_evolution(
+        twist.liouvillian,
+        second,
+        lambda x: _trace(apply_liouvillian(twist.first_derivative, x)),
+        times,
+        config=isf_config,
+        linear_config=config,
+    ).real
+    mean_square = 2 * diffusion * times + 2 * (decay[0] - decay)
     return RmsResult(
         times=times,
         mean_square=mean_square,
