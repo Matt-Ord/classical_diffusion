@@ -100,6 +100,11 @@ def _dot(a: jax.Array, b: jax.Array) -> jax.Array:
     return jnp.tensordot(a.conj(), b, axes=(axes, axes))
 
 
+def _project_out(q: jax.Array, x: jax.Array) -> jax.Array:
+    """(1 - Q Q^dagger) x for an orthonormal stack Q."""
+    return x - jnp.tensordot(_dot(q, x[None])[:, 0], q, axes=1)
+
+
 @partial(jax.jit, static_argnames=("maxiter",))
 def _projected_solve(  # ruff:ignore[too-many-arguments]
     eigen: EigenLiouvillian,
@@ -128,7 +133,7 @@ def _projected_solve(  # ruff:ignore[too-many-arguments]
     def operator(z: jax.Array) -> jax.Array:
         t = precondition(z)
         out = apply_eigen(eigen, t, theta)
-        return out - jnp.tensordot(_dot(locked, out[None])[:, 0], locked, axes=1)
+        return _project_out(locked, out)
 
     z, iterations = bicgstab(operator, rhs, rtol, maxiter)
     return precondition(z), iterations
@@ -204,8 +209,7 @@ class _Search:
         for _ in range(2):
             stack = self.locked + self.basis
             if stack:
-                s = jnp.stack(stack)
-                x -= jnp.tensordot(_dot(s, x[None])[:, 0], s, axes=1)
+                x = _project_out(jnp.stack(stack), x)
         size = float(jnp.linalg.norm(x))
         if size < _STAGNATION:
             msg = "Jacobi-Davidson stagnated"
@@ -214,8 +218,7 @@ class _Search:
         image = apply_eigen(self.eigen, x, jnp.asarray(0j))
         self.applications += 1
         if self.locked:
-            q = jnp.stack(self.locked)
-            image -= jnp.tensordot(_dot(q, image[None])[:, 0], q, axes=1)
+            image = _project_out(jnp.stack(self.locked), image)
         self.basis.append(x)
         self.images.append(image)
 
@@ -312,8 +315,7 @@ class _CostState:
     """The progress of a `CostCut`, in applications of L."""
 
     rule: CostCut
-    begin: int
-    since: int
+    since: int = 0
     """The count at the last mode found."""
     per_mode: float = 0.0
     best_saving: float = 0.0
@@ -360,7 +362,7 @@ class _CostState:
 
     def found(self, count: int, n_locked: int) -> None:
         self.since, self.best_saving = count, 0.0
-        self.per_mode = (count - self.begin) / n_locked
+        self.per_mode = count / n_locked
 
 
 def find_slow_modes(
@@ -397,11 +399,7 @@ def find_slow_modes(
     search = _Search(eigen=eigen, start=start, measurement=measurement)
     floor = 1e3 * np.finfo(float).eps * float(jnp.abs(eigen.rates).max())
     target = selection.n_modes if isinstance(selection, ModeCount) else _MAX_MODES
-    cost = (
-        _CostState(rule=selection, begin=0, since=0)
-        if isinstance(selection, CostCut)
-        else None
-    )
+    cost = _CostState(rule=selection) if isinstance(selection, CostCut) else None
     search.expand(start)
     iterations = 0
     while len(search.locked) < target:
