@@ -11,11 +11,15 @@ import jax.numpy as jnp
 import numpy as np
 import scipy.linalg
 
-from classical_diffusion.caldeira_leggett._linear import EigenLiouvillian, apply_eigen
+from classical_diffusion.caldeira_leggett._linear import (
+    EigenLiouvillian,
+    apply_eigen,
+    bicgstab,
+    refine,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
+    from classical_diffusion.caldeira_leggett._config import EvolutionConfig
     from classical_diffusion.caldeira_leggett._model import ComplexArray
 
 
@@ -96,47 +100,6 @@ def _dot(a: jax.Array, b: jax.Array) -> jax.Array:
     return jnp.tensordot(a.conj(), b, axes=(axes, axes))
 
 
-def _bicgstab(
-    operator: Callable[[jax.Array], jax.Array],
-    rhs: jax.Array,
-    rtol: jax.Array,
-    maxiter: int,
-) -> tuple[jax.Array, jax.Array]:
-    """Solve A x = rhs from x = 0 by BiCGSTAB, and get the number of iterations, each two applications of A."""
-    target = rtol * jnp.linalg.norm(rhs)
-    zero = jnp.zeros_like(rhs)
-    one = jnp.asarray(1.0 + 0j)
-
-    def proceed(carry: tuple) -> jax.Array:
-        _x, r, _p, _v, rho, _alpha, _omega, k = carry
-        return (k < maxiter) & (jnp.linalg.norm(r) > target) & (rho != 0)
-
-    def iterate(carry: tuple) -> tuple:
-        x, r, p, v, rho, alpha, omega, k = carry
-        rho_new = jnp.vdot(rhs, r)
-        p = r + (rho_new / rho) * (alpha / omega) * (p - omega * v)
-        v = operator(p)
-        alpha = rho_new / jnp.vdot(rhs, v)
-        s = r - alpha * v
-        t = operator(s)
-        omega = jnp.vdot(t, s) / jnp.vdot(t, t)
-        return (
-            x + alpha * p + omega * s,
-            s - omega * t,
-            p,
-            v,
-            rho_new,
-            alpha,
-            omega,
-            k + 1,
-        )
-
-    x, *_, k = jax.lax.while_loop(
-        proceed, iterate, (zero, rhs, zero, zero, one, one, one, jnp.asarray(0))
-    )
-    return x, k
-
-
 @partial(jax.jit, static_argnames=("maxiter",))
 def _projected_solve(  # ruff:ignore[too-many-arguments]
     eigen: EigenLiouvillian,
@@ -167,7 +130,7 @@ def _projected_solve(  # ruff:ignore[too-many-arguments]
         out = apply_eigen(eigen, t, theta)
         return out - jnp.tensordot(_dot(locked, out[None])[:, 0], locked, axes=1)
 
-    z, iterations = _bicgstab(operator, rhs, rtol, maxiter)
+    z, iterations = bicgstab(operator, rhs, rtol, maxiter)
     return precondition(z), iterations
 
 
@@ -185,36 +148,28 @@ def _get_amplitude(  # ruff:ignore[too-many-arguments]
     The system (L - lambda) y + c r = X, r^dagger y = 0 has
     c = <l|X> / <l|r>, for l the left eigenvector, without needing l: with
     P = 1 - r r^dagger, P (L - lambda) P y = P X is well conditioned, as
-    lambda is projected out, and then c = r^dagger (X - (L - lambda) y).
+    lambda is projected out, and then c = r^dagger (X - (L - lambda) y). It
+    is solved to rtol by passes of BiCGSTAB (`refine`).
     """
     shift = jnp.asarray(rate)
-    rhs = state - jnp.vdot(vector, state) * vector
-    norm = float(jnp.linalg.norm(rhs))
-    y, residual, best = jnp.zeros_like(state), rhs, 1.0
-    applications = 1
-    # Restarted until the residual is below rtol, or stops halving
-    for _ in range(10):
-        step, iterations = _projected_solve(
-            eigen,
-            vector[None],
-            residual,
-            shift,
-            jnp.asarray(max(1e-4, rtol / best)),
-            maxiter=1000,
-        )
-        update = y + step
-        applications += 2 * int(iterations) + 1
-        out = apply_eigen(eigen, update, shift)
-        new_residual = rhs - (out - jnp.vdot(vector, out) * vector)
-        relative = float(jnp.linalg.norm(new_residual)) / max(norm, 1e-300)
-        if relative > best / 2:
-            break
-        y, residual, best = update, new_residual, relative
-        if best <= rtol:
-            break
+
+    def apply(y: jax.Array) -> jax.Array:
+        out = apply_eigen(eigen, y, shift)
+        return out - jnp.vdot(vector, out) * vector
+
+    y, applications = refine(
+        apply,
+        lambda residual, inner_rtol: _projected_solve(
+            eigen, vector[None], residual, shift, inner_rtol, maxiter=1000
+        ),
+        state - jnp.vdot(vector, state) * vector,
+        rtol=rtol,
+        inner_rtol=1e-4,
+        passes=10,
+    )
     coefficient = complex(jnp.vdot(vector, state - apply_eigen(eigen, y, shift)))
     amplitude = complex(jnp.vdot(measurement, vector)) * coefficient
-    return amplitude, coefficient, applications
+    return amplitude, coefficient, applications + 1
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -317,7 +272,7 @@ class _Search:
     def modes(self, rtol: float) -> list[Mode]:
         """Get the modes from the Schur form, slowest first, with their coefficients to rtol of |X_0|.
 
-        Each eigenvector is only accurate to its residual, |r| ~ rtol |lambda|,
+        Each eigenvector is only accurate to its residual, |r| ~ mode_rtol |lambda|,
         which leaks a little of it onto the slower modes. The coefficients are
         taken on what remains of X_0 as each mode is removed, fastest first, so
         the slowest, which would take longest to step through, are removed
@@ -408,14 +363,13 @@ class _CostState:
         self.per_mode = (count - self.begin) / n_locked
 
 
-def find_slow_modes(  # ruff:ignore[too-many-arguments]
+def find_slow_modes(
     eigen: EigenLiouvillian,
     start: jax.Array,
     measurement: jax.Array,
     selection: Selection,
     *,
-    rtol: float,
-    coefficient_rtol: float,
+    config: EvolutionConfig,
 ) -> tuple[list[Mode], dict[str, int]]:
     """Get the slowest modes of <measurement, exp(L t) start>, slowest first, by Jacobi-Davidson, and the applications of L to find them and their coefficients.
 
@@ -425,9 +379,9 @@ def find_slow_modes(  # ruff:ignore[too-many-arguments]
     BiCGSTAB iterations, preconditioned by the exact inverse of the no-jump
     part (`_projected_solve`). The mode itself is projected out, so the
     equation stays well conditioned as theta converges. A mode is locked once
-    |r| <= rtol |theta|, or round off, into a partial Schur form, and the
-    search continues outside it. Modes the measurement does not see are
-    skipped, and the selection decides when to stop.
+    |r| <= config.mode_rtol |theta|, or round off, into a partial Schur form,
+    and the search continues outside it. Modes the measurement does not see
+    are skipped, and the selection decides when to stop.
 
     The coefficients are one bordered solve per mode (`_get_amplitude`),
     counted apart. It needs no time steps, and no solve near a slow
@@ -468,7 +422,7 @@ def find_slow_modes(  # ruff:ignore[too-many-arguments]
             search, ritz, j, search.applications, rough=rough
         ):
             break
-        if norm <= max(rtol * abs(theta), floor):
+        if norm <= max(config.mode_rtol * abs(theta), floor):
             search.lock(u, ritz)
             if cost is not None:
                 cost.found(search.applications, len(search.locked))
@@ -488,7 +442,8 @@ def find_slow_modes(  # ruff:ignore[too-many-arguments]
         )
         search.applications += 2 * int(inner)
         search.expand(correction)
-    return search.modes(coefficient_rtol), {
+    # The coefficients to well below the stop of the stepping
+    return search.modes(0.1 * config.stop), {
         "modes": search.applications,
         "coefficients": search.coefficient_applications,
     }

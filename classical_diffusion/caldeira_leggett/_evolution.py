@@ -2,7 +2,6 @@
 # cspell: ignore vdot
 
 from dataclasses import dataclass
-from functools import partial
 from typing import TYPE_CHECKING
 
 import diffrax as dfx
@@ -15,7 +14,6 @@ from classical_diffusion.caldeira_leggett._linear import (
     EigenLiouvillian,
     apply_eigen,
     from_eigen,
-    get_eigen_liouvillian,
     to_eigen,
 )
 from classical_diffusion.caldeira_leggett._slow_modes import CostCut, find_slow_modes
@@ -23,29 +21,8 @@ from classical_diffusion.caldeira_leggett._slow_modes import CostCut, find_slow_
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from classical_diffusion.caldeira_leggett._liouvillian import Liouvillian
+    from classical_diffusion.caldeira_leggett._config import EvolutionConfig
     from classical_diffusion.caldeira_leggett._model import ComplexArray, FloatArray
-
-
-@dataclass(frozen=True, kw_only=True)
-class EvolutionConfig:
-    """The convergence of an ISF or mean square displacement (`get_reduced_evolution`)."""
-
-    stop: float = 1e-6
-    """The norm of what is left of X_0, relative to |X_0|, below which it is no longer stepped."""
-    step_rtol: float = 1e-8
-    """The relative tolerance of each step of the Krylov exponential stepper."""
-    step_atol: float = 1e-10
-    """The absolute tolerance of each step."""
-    mode_rtol: float = 1e-6
-    """The relative residual |L r - lambda r| / |lambda| of each slow mode."""
-    probe: float = 2.0
-    """The time stepped before the slow modes are found, in units of 1 / friction."""
-    cost_factor: float = 3.0
-    """The cost of a slow mode over that of its Jacobi-Davidson iterations (`CostCut`)."""
-
-
-DEFAULT_EVOLUTION_CONFIG = EvolutionConfig()
 
 
 def _to_real(x: jax.Array) -> jax.Array:
@@ -56,7 +33,7 @@ def _to_complex(y: jax.Array) -> jax.Array:
     return y[0] + 1j * y[1]
 
 
-@partial(jax.jit, static_argnames=("stopping",))
+@jax.jit
 def _step(  # ruff:ignore[too-many-arguments]
     eigen: EigenLiouvillian,
     initial: jax.Array,
@@ -65,12 +42,12 @@ def _step(  # ruff:ignore[too-many-arguments]
     *,
     threshold: jax.Array,
     tolerances: tuple[jax.Array, jax.Array],
-    stopping: bool,
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
     """Step <measurement, exp(L (t - t_0)) initial> from t_0 = times[0] to times[-1], or until the state is below the threshold.
 
     Get the measurement at the times (non finite after a stop), the state and
-    time at the end, and the number of applications of L.
+    time at the end, and the number of applications of L. A threshold of zero
+    never stops, so the probe and the stepping share one compiled solve.
 
     Each complex state is split into its real and imaginary parts, as diffrax
     supports complex states only experimentally.
@@ -100,9 +77,7 @@ def _step(  # ruff:ignore[too-many-arguments]
         # The steps need not end on the times, which are found within a step
         # exactly (`KrylovInterpolation`)
         stepsize_controller=dfx.PIDController(rtol=rtol, atol=atol),
-        event=dfx.Event(lambda _t, y, _args, **_: jnp.linalg.norm(y) < threshold)
-        if stopping
-        else None,
+        event=dfx.Event(lambda _t, y, _args, **_: jnp.linalg.norm(y) < threshold),
         # Nothing is differentiated, so the number of steps need not be bounded
         adjoint=dfx.ForwardMode(),
         max_steps=None,
@@ -138,7 +113,7 @@ class Evolution:
 
 
 def get_reduced_evolution(  # ruff:ignore[too-many-arguments, too-many-locals]
-    liouvillian: Liouvillian,
+    eigen: EigenLiouvillian,
     initial: jax.Array,
     measure: Callable[[jax.Array], jax.Array],
     times: FloatArray,
@@ -149,8 +124,10 @@ def get_reduced_evolution(  # ruff:ignore[too-many-arguments, too-many-locals]
 ) -> Evolution:
     """Get measure(exp(L t) initial) at the times, exactly, as its slow modes plus a stepper on the rest.
 
-    measure must be linear over the complex numbers. With the slow modes
-    (lambda_j, r_j) of L, and the weight c_j of each in X_0 (`find_slow_modes`),
+    L is given in the eigenvectors of K (`get_eigen_liouvillian`), and
+    initial in the bands. measure must be linear over the complex numbers.
+    With the slow modes (lambda_j, r_j) of L, and the weight c_j of each in
+    X_0 (`find_slow_modes`),
 
         measure(exp(L t) X_0) = sum_j measure(r_j) c_j exp(lambda_j t)
             + measure(exp(L t) (X_0 - sum_j c_j r_j)).
@@ -176,7 +153,6 @@ def get_reduced_evolution(  # ruff:ignore[too-many-arguments, too-many-locals]
     steady state, which never decays. It is removed exactly, and its constant
     measurement added back.
     """
-    eigen = get_eigen_liouvillian(liouvillian)
     start = to_eigen(eigen, initial)
     measurement = get_measurement(eigen, measure, start)
     times = np.asarray(times, dtype=np.float64)
@@ -189,7 +165,6 @@ def get_reduced_evolution(  # ruff:ignore[too-many-arguments, too-many-locals]
         jnp.minimum(jnp.asarray(times), probe),
         threshold=jnp.asarray(0.0),
         tolerances=tolerances,
-        stopping=False,
     )
     applications = {
         "probe": int(probe_applications),
@@ -214,8 +189,7 @@ def get_reduced_evolution(  # ruff:ignore[too-many-arguments, too-many-locals]
             stop=config.stop,
             cost_factor=config.cost_factor,
         ),
-        rtol=config.mode_rtol,
-        coefficient_rtol=0.1 * config.stop,
+        config=config,
     )
     applications.update(counts)
     # exp(L t) X_0 = sum_j c_j exp(lambda_j t) r_j + exp(L (t - probe)) R, with
@@ -237,7 +211,6 @@ def get_reduced_evolution(  # ruff:ignore[too-many-arguments, too-many-locals]
         jnp.maximum(jnp.asarray(times), probe),
         threshold=jnp.asarray(config.stop * float(jnp.linalg.norm(start))),
         tolerances=tolerances,
-        stopping=True,
     )
     slow = sum(
         (m.amplitude * np.exp(m.rate * times) for m in modes),

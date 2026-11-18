@@ -10,7 +10,7 @@ class CaldeiraLeggettConfig:
     The basis is set by friction_tol, max_energy and plane_wave_energy, and the
     linear solves by the rest. Every function starts from the steady state, so
     every function takes these, and the steady state is cached by them. The
-    time steps of an ISF are set separately (`solve_isf`). Energies are in
+    time steps of an ISF are set separately (`EvolutionConfig`). Energies are in
     units of k_B T.
     """
 
@@ -70,3 +70,24 @@ class CaldeiraLeggettConfig:
 
 
 DEFAULT_CONFIG = CaldeiraLeggettConfig()
+
+
+@dataclass(frozen=True, kw_only=True)
+class EvolutionConfig:
+    """The convergence of an ISF or mean square displacement (`get_reduced_evolution`)."""
+
+    stop: float = 1e-6
+    """The norm of what is left of X_0, relative to |X_0|, below which it is no longer stepped."""
+    step_rtol: float = 1e-8
+    """The relative tolerance of each step of the Krylov exponential stepper."""
+    step_atol: float = 1e-10
+    """The absolute tolerance of each step."""
+    mode_rtol: float = 1e-6
+    """The relative residual |L r - lambda r| / |lambda| of each slow mode."""
+    probe: float = 2.0
+    """The time stepped before the slow modes are found, in units of 1 / friction."""
+    cost_factor: float = 3.0
+    """The cost of a slow mode over that of its Jacobi-Davidson iterations (`CostCut`)."""
+
+
+DEFAULT_EVOLUTION_CONFIG = EvolutionConfig()

@@ -16,10 +16,8 @@ from classical_diffusion.caldeira_leggett._caldeira_leggett import (
 )
 from classical_diffusion.caldeira_leggett._config import (
     DEFAULT_CONFIG,
-    CaldeiraLeggettConfig,
-)
-from classical_diffusion.caldeira_leggett._evolution import (
     DEFAULT_EVOLUTION_CONFIG,
+    CaldeiraLeggettConfig,
     EvolutionConfig,
 )
 from classical_diffusion.caldeira_leggett._solver import RmsResult

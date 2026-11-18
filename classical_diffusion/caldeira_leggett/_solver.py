@@ -22,8 +22,10 @@ from classical_diffusion.caldeira_leggett._liouvillian import (
 from classical_diffusion.simulation import IsfResult
 
 if TYPE_CHECKING:
-    from classical_diffusion.caldeira_leggett._config import CaldeiraLeggettConfig
-    from classical_diffusion.caldeira_leggett._evolution import EvolutionConfig
+    from classical_diffusion.caldeira_leggett._config import (
+        CaldeiraLeggettConfig,
+        EvolutionConfig,
+    )
     from classical_diffusion.caldeira_leggett._model import ComplexArray, FloatArray
     from classical_diffusion.system import UnitSystem
 
@@ -67,7 +69,7 @@ def get_isf(  # ruff:ignore[too-many-arguments]
     """
     o = jnp.asarray(observable)
     evolution = get_reduced_evolution(
-        liouvillian,
+        get_eigen_liouvillian(liouvillian),
         jnp.asarray(initial),
         lambda x: jnp.sum(o.conj() * x),
         times,
@@ -240,7 +242,7 @@ def get_rms(  # ruff:ignore[too-many-arguments]
     second = _get_response(eigen, first, rho, config)
     diffusion = _get_diffusion_from_response(twist, first)
     decay = get_reduced_evolution(
-        twist.liouvillian,
+        eigen,
         second,
         lambda x: _trace(apply_liouvillian(twist.first_derivative, x)),
         times,

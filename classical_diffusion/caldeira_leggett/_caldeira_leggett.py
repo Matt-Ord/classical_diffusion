@@ -15,13 +15,11 @@ from classical_diffusion.caldeira_leggett._bands import (
 )
 from classical_diffusion.caldeira_leggett._config import (
     DEFAULT_CONFIG,
-    CaldeiraLeggettConfig,
-)
-from classical_diffusion.caldeira_leggett._evolution import (
     DEFAULT_EVOLUTION_CONFIG,
+    CaldeiraLeggettConfig,
     EvolutionConfig,
-    get_measurement,
 )
+from classical_diffusion.caldeira_leggett._evolution import get_measurement
 from classical_diffusion.caldeira_leggett._linear import get_eigen_liouvillian, to_eigen
 from classical_diffusion.caldeira_leggett._liouvillian import (
     Operators,
@@ -278,8 +276,7 @@ def get_slow_modes(
         RateCut(rate=SLOW_RATE * friction)
         if n_modes is None
         else ModeCount(n_modes=n_modes),
-        rtol=isf_config.mode_rtol,
-        coefficient_rtol=0.1 * isf_config.stop,
+        config=isf_config,
     )
     # A rate in the natural units, over the natural unit of time in the system's
     natural = sector.model.units.time_into(1.0, system.units)

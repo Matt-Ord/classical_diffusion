@@ -1,16 +1,19 @@
 """Linear solves of a Liouvillian, (L - s) X = rhs, in the eigenvectors of its effective Hamiltonians, preconditioned by the exact inverse of its no-jump part."""
 
-# cspell: ignore maxiter bicgstab Hamiltonians
+# cspell: ignore maxiter bicgstab Hamiltonians vdot
 from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
-import jax.scipy.sparse.linalg
 import numpy as np
 
+from classical_diffusion.caldeira_leggett._liouvillian import add_jumps
+
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from classical_diffusion.caldeira_leggett._config import CaldeiraLeggettConfig
     from classical_diffusion.caldeira_leggett._liouvillian import Liouvillian
 
@@ -90,19 +93,11 @@ def from_eigen(eigen: EigenLiouvillian, y: jax.Array) -> jax.Array:
 @jax.jit
 def apply_eigen(eigen: EigenLiouvillian, y: jax.Array, shift: jax.Array) -> jax.Array:
     """Apply L - shift to a state in the eigenvectors, adding the jumps one at a time."""
-
-    def add_jump(
-        out: jax.Array, jump: tuple[jax.Array, jax.Array, jax.Array]
-    ) -> tuple[jax.Array, None]:
-        ket, bra_dagger, sources = jump
-        return out + (ket @ y @ bra_dagger)[sources], None
-
-    out, _ = jax.lax.scan(
-        add_jump,
+    return add_jumps(
         (eigen.rates - shift) * y,
+        y,
         (eigen.jumps_ket, eigen.jumps_bra_dagger, eigen.sources),
     )
-    return out
 
 
 def _remove_trace(eigen: EigenLiouvillian, y: jax.Array) -> jax.Array:
@@ -111,100 +106,137 @@ def _remove_trace(eigen: EigenLiouvillian, y: jax.Array) -> jax.Array:
     return y - w * (jnp.sum(eigen.trace * y) / jnp.sum(eigen.trace * w))
 
 
-@partial(jax.jit, static_argnames=("maxiter", "singular"))
-def _bicgstab(  # ruff:ignore[too-many-arguments]
-    eigen: EigenLiouvillian,
-    residual: jax.Array,
-    rtol: jax.Array,
-    shift: jax.Array,
-    *,
-    maxiter: int,
-    singular: bool,
-) -> jax.Array:
-    # Preconditioned on the right, (L - s) M y = residual with x = M y and
-    # M = (N - s)^-1, so that the tolerance applies to the true residual rather
-    # than to M (b - L x)
-    rates = eigen.rates - shift
-
-    def operator(y: jax.Array) -> jax.Array:
-        out = apply_eigen(eigen, y / rates, shift)
-        # L conserves the trace, so L X has none, but the eigenvectors of K
-        # are not orthogonal and the round off of the trace of L X is then
-        # larger than in the bands. At s = 0, where L is singular, BiCGSTAB
-        # amplifies it once the residual nears it, so it is removed
-        return _remove_trace(eigen, out) if singular else out
-
-    y, _ = jax.scipy.sparse.linalg.bicgstab(
-        operator,
-        _remove_trace(eigen, residual) if singular else residual,
-        tol=rtol,
-        atol=0.0,
-        maxiter=maxiter,
-    )
-    return y / rates
-
-
-def solve_eigen(
-    eigen: EigenLiouvillian,
+def bicgstab(
+    operator: Callable[[jax.Array], jax.Array],
     rhs: jax.Array,
-    config: CaldeiraLeggettConfig,
+    rtol: jax.Array,
+    maxiter: int,
+) -> tuple[jax.Array, jax.Array]:
+    """Solve A x = rhs from x = 0 by BiCGSTAB, and get the number of iterations, each two applications of A.
+
+    It stops once |rhs - A x| <= rtol |rhs|, after maxiter iterations, or on
+    a breakdown, which the next pass of `refine` recovers from.
+    """
+    target = rtol * jnp.linalg.norm(rhs)
+    zero = jnp.zeros_like(rhs)
+    one = jnp.asarray(1.0 + 0j)
+
+    def proceed(carry: tuple) -> jax.Array:
+        _x, r, _p, _v, rho, _alpha, omega, k = carry
+        return (k < maxiter) & (jnp.linalg.norm(r) > target) & (rho != 0) & (omega != 0)
+
+    def iterate(carry: tuple) -> tuple:
+        x, r, p, v, rho, alpha, omega, k = carry
+        rho_new = jnp.vdot(rhs, r)
+        p = r + (rho_new / rho) * (alpha / omega) * (p - omega * v)
+        v = operator(p)
+        alpha = rho_new / jnp.vdot(rhs, v)
+        s = r - alpha * v
+        t = operator(s)
+        tt = jnp.vdot(t, t)
+        # s = 0 once the half step has converged, and then so is t
+        omega = jnp.where(tt != 0, jnp.vdot(t, s) / jnp.where(tt != 0, tt, 1), 0)
+        return (
+            x + alpha * p + omega * s,
+            s - omega * t,
+            p,
+            v,
+            rho_new,
+            alpha,
+            omega,
+            k + 1,
+        )
+
+    x, *_, k = jax.lax.while_loop(
+        proceed, iterate, (zero, rhs, zero, zero, one, one, one, jnp.asarray(0))
+    )
+    return x, k
+
+
+def refine(  # ruff:ignore[too-many-arguments]
+    apply: Callable[[jax.Array], jax.Array],
+    solve_pass: Callable[[jax.Array, jax.Array], tuple[jax.Array, jax.Array]],
+    rhs: jax.Array,
     *,
-    shift: complex = 0.0,
-    guess: jax.Array | None = None,
-) -> jax.Array:
-    """Solve (L - shift) Y = rhs in the eigenvectors with BiCGSTAB, preconditioned on the right by (N - shift)^-1, N the no-jump part of L.
+    rtol: float,
+    inner_rtol: float,
+    passes: int,
+) -> tuple[jax.Array, int]:
+    """Solve A x = rhs by passes of an inner solver, each from the true residual (iterative refinement), and get the applications of A.
 
-    The solve starts from the guess, if there is one and its residual is
-    below |rhs|, and from zero otherwise.
-
-    BiCGSTAB keeps a fixed handful of vectors, where GMRES keeps a basis
-    which grows until it restarts, and a short restart can stall: for
-    hydrogen on Cu(111) in 2D, GMRES(30) takes 18 times longer to find D, in 4
-    times the memory. Its residual is not monotonic, so each pass of BiCGSTAB
-    only reduces the true residual by linear_inner_rtol, and the next pass
-    starts afresh from that residual (iterative refinement), which also
-    recovers from a breakdown. The passes stop once the residual is below
-    linear_rtol of |rhs|, or once it no longer halves, when round off has set
-    its floor.
+    solve_pass(residual, rtol) gives an approximate solution and its BiCGSTAB
+    iterations. Its residual is not monotonic, so each pass only reduces the
+    true residual by inner_rtol (or to rtol), and the next starts afresh from
+    that residual, which also recovers from a breakdown. The passes stop once
+    the residual is below rtol of |rhs|, or once it no longer halves, when
+    round off has set its floor.
 
     Raises
     ------
     RuntimeError
-        If the residual is still falling after linear_refinements passes.
+        If the residual is still falling after the passes.
     """
-    s = jnp.asarray(shift, dtype=complex)
-    norm = float(jnp.linalg.norm(rhs))
+    norm = max(float(jnp.linalg.norm(rhs)), 1e-300)
     solution, residual, best = jnp.zeros_like(rhs), rhs, 1.0
-    if guess is not None:
-        guess_residual = rhs - apply_eigen(eigen, guess, s)
-        relative = float(jnp.linalg.norm(guess_residual)) / norm
-        if relative < best:
-            solution, residual, best = guess, guess_residual, relative
-    for _ in range(config.linear_refinements):
-        update = solution + _bicgstab(
-            eigen,
-            residual,
-            jnp.asarray(max(config.linear_inner_rtol, config.linear_rtol / best)),
-            s,
-            maxiter=config.linear_maxiter,
-            singular=shift == 0,
+    applications = 0
+    for _ in range(passes):
+        step, iterations = solve_pass(
+            residual, jnp.asarray(max(inner_rtol, rtol / best))
         )
-        update_residual = rhs - apply_eigen(eigen, update, s)
+        update = solution + step
+        update_residual = rhs - apply(update)
+        applications += 2 * int(iterations) + 1
         relative = float(jnp.linalg.norm(update_residual)) / norm
         if relative > best / 2:
-            return solution
+            return solution, applications
         solution, residual, best = update, update_residual, relative
-        if best <= config.linear_rtol:
-            return solution
-    msg = (
-        f"BiCGSTAB reached a residual of {best:.1e}, above {config.linear_rtol:.1e}, "
-        f"after {config.linear_refinements} passes"
-    )
+        if best <= rtol:
+            return solution, applications
+    msg = f"BiCGSTAB reached a residual of {best:.1e}, above {rtol:.1e}, after {passes} passes"
     raise RuntimeError(msg)
+
+
+@partial(jax.jit, static_argnames=("maxiter",))
+def _singular_pass(
+    eigen: EigenLiouvillian, residual: jax.Array, rtol: jax.Array, *, maxiter: int
+) -> tuple[jax.Array, jax.Array]:
+    # Preconditioned on the right, L M y = residual with x = M y and M = N^-1,
+    # so that the tolerance applies to the true residual rather than to
+    # M (b - L x)
+    def operator(y: jax.Array) -> jax.Array:
+        # L conserves the trace, so L X has none, but the eigenvectors of K
+        # are not orthogonal and the round off of the trace of L X is then
+        # larger than in the bands. L is singular, and BiCGSTAB amplifies it
+        # once the residual nears it, so it is removed
+        return _remove_trace(
+            eigen, apply_eigen(eigen, y / eigen.rates, jnp.asarray(0j))
+        )
+
+    y, iterations = bicgstab(operator, _remove_trace(eigen, residual), rtol, maxiter)
+    return y / eigen.rates, iterations
 
 
 def solve(
     eigen: EigenLiouvillian, rhs: jax.Array, config: CaldeiraLeggettConfig
 ) -> jax.Array:
-    """Solve L X = rhs for a state X in the basis of the bands (`solve_eigen`)."""
-    return from_eigen(eigen, solve_eigen(eigen, to_eigen(eigen, rhs), config))
+    """Solve L X = rhs for a state X in the basis of the bands, for a rhs in the range of L.
+
+    BiCGSTAB in the eigenvectors of K, preconditioned on the right by N^-1, N
+    the no-jump part of L, with iterative refinement (`refine`). BiCGSTAB
+    keeps a fixed handful of vectors, where GMRES keeps a basis which grows
+    until it restarts, and a short restart can stall: for hydrogen on
+    Cu(111) in 2D, GMRES(30) takes 18 times longer to find D, in 4 times the
+    memory. It raises a RuntimeError if the residual is still falling after
+    linear_refinements passes.
+    """
+    y, _ = refine(
+        lambda y: apply_eigen(eigen, y, jnp.asarray(0j)),
+        lambda residual, rtol: _singular_pass(
+            eigen, residual, rtol, maxiter=config.linear_maxiter
+        ),
+        to_eigen(eigen, rhs),
+        rtol=config.linear_rtol,
+        inner_rtol=config.linear_inner_rtol,
+        passes=config.linear_refinements,
+    )
+    return from_eigen(eigen, y)

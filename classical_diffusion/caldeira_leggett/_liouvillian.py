@@ -298,14 +298,23 @@ def get_liouvillian(
 
 
 def apply_liouvillian(liouvillian: Liouvillian, x: jax.Array) -> jax.Array:
-    """Apply the Liouvillian to the state x.
+    """Apply the Liouvillian to the state x."""
+    return add_jumps(
+        -1j
+        * (liouvillian.hamiltonian_ket @ x - x @ liouvillian.hamiltonian_bra_dagger),
+        x,
+        (liouvillian.jumps_ket, liouvillian.jumps_bra_dagger, liouvillian.sources),
+    )
+
+
+def add_jumps(
+    out: jax.Array, x: jax.Array, jumps: tuple[jax.Array, jax.Array, jax.Array]
+) -> jax.Array:
+    """Add the jumps J X J'^dagger of a state to out, for the jumps (J, J'^dagger, sources) of a Liouvillian.
 
     The jumps are added one at a time, which holds a few states at once
     rather than one for each jump, at no cost in speed.
     """
-    out = -1j * (
-        liouvillian.hamiltonian_ket @ x - x @ liouvillian.hamiltonian_bra_dagger
-    )
 
     def add_jump(
         out: jax.Array, jump: tuple[jax.Array, jax.Array, jax.Array]
@@ -313,9 +322,4 @@ def apply_liouvillian(liouvillian: Liouvillian, x: jax.Array) -> jax.Array:
         ket, bra_dagger, sources = jump
         return out + (ket @ x @ bra_dagger)[sources], None
 
-    out, _ = jax.lax.scan(
-        add_jump,
-        out,
-        (liouvillian.jumps_ket, liouvillian.jumps_bra_dagger, liouvillian.sources),
-    )
-    return out
+    return jax.lax.scan(add_jump, out, jumps)[0]
