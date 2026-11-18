@@ -222,7 +222,7 @@ def solve(
     L is singular, and the round off of the trace of L X is larger in the
     eigenvectors of K, which are not orthogonal, than in the bands. Removing
     it in each iteration changes neither the applications of L (within 3%)
-    nor D (within 3e-10) for H, Li and Na on Cu(111), as the refinement stops
+    nor D (within 5e-10) for H, Li and Na on Cu(111), as the refinement stops
     once the residual no longer halves.
     """
     y, _ = refine(
