@@ -1,5 +1,6 @@
 # cspell: ignore Daleckii Krein Davidovic digamma jkab jkac eigh
-from typing import TYPE_CHECKING, NamedTuple
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
@@ -75,7 +76,8 @@ def _lamb_amplitude(omega: FloatArray) -> ComplexArray:
     )
 
 
-class Couplings(NamedTuple):
+@dataclass(frozen=True, kw_only=True)
+class Couplings:
     """The operators sqrt(4 lambda w) e^{i q x} / (2 |q|) of each Lindblad operator, in the basis of the bands."""
 
     matrices: ComplexArray
@@ -84,7 +86,8 @@ class Couplings(NamedTuple):
     """The index of kappa + q, (n_ops, n_kappa)."""
 
 
-class Operators(NamedTuple):
+@dataclass(frozen=True, kw_only=True)
+class Operators:
     """The Lindblad operators and effective Hamiltonian, in the basis of the bands."""
 
     jumps: ComplexArray
@@ -255,7 +258,9 @@ def get_twist_derivative(
     return Operators(jumps=jumps, targets=couplings.targets, hamiltonian=hamiltonian)
 
 
-class Liouvillian(NamedTuple):
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True, kw_only=True)
+class Liouvillian:
     """The Liouvillian of a sector rho_{kappa + s, kappa}, as a pytree of jax arrays.
 
     A state X has shape (n_kappa, n_bands, n_bands), where X[kappa] is the

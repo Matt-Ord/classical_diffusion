@@ -1,7 +1,9 @@
 # cspell: ignore rint
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 
+import jax.numpy as jnp
 import numpy as np
 
 from classical_diffusion.caldeira_leggett._bands import (
@@ -15,6 +17,12 @@ from classical_diffusion.caldeira_leggett._config import (
     DEFAULT_CONFIG,
     CaldeiraLeggettConfig,
 )
+from classical_diffusion.caldeira_leggett._evolution import (
+    DEFAULT_EVOLUTION_CONFIG,
+    EvolutionConfig,
+    get_measurement,
+)
+from classical_diffusion.caldeira_leggett._linear import get_eigen_liouvillian, to_eigen
 from classical_diffusion.caldeira_leggett._liouvillian import (
     Operators,
     get_couplings,
@@ -24,9 +32,10 @@ from classical_diffusion.caldeira_leggett._liouvillian import (
     get_twist_derivative,
 )
 from classical_diffusion.caldeira_leggett._model import Model, build_model
-from classical_diffusion.caldeira_leggett._rational import (
-    DEFAULT_RATIONAL_KRYLOV_CONFIG,
-    RationalKrylovConfig,
+from classical_diffusion.caldeira_leggett._slow_modes import (
+    ModeCount,
+    RateCut,
+    find_slow_modes,
 )
 from classical_diffusion.caldeira_leggett._solver import (
     RmsResult,
@@ -41,11 +50,13 @@ from classical_diffusion.simulation import IsfResult
 from classical_diffusion.util import cached, timed
 
 if TYPE_CHECKING:
+    from classical_diffusion.caldeira_leggett._liouvillian import Liouvillian
     from classical_diffusion.caldeira_leggett._model import ComplexArray, FloatArray
     from classical_diffusion.langevin._system import PeriodicSystem
 
 
-class SteadyState(NamedTuple):
+@dataclass(frozen=True, kw_only=True)
+class SteadyState:
     """The steady state of the master equation of a periodic system, with the bands it is found in.
 
     The state is diagonal in the crystal momentum. The bands are only defined
@@ -84,50 +95,25 @@ def get_steady_state(
     return SteadyState(model=model, bands=bands, density=density)
 
 
-@timed
-def solve_isf(
-    system: PeriodicSystem,
-    delta_k: tuple[float, ...],
-    times: FloatArray,
-    *,
-    config: CaldeiraLeggettConfig = DEFAULT_CONFIG,
-    isf_config: RationalKrylovConfig = DEFAULT_RATIONAL_KRYLOV_CONFIG,
-) -> IsfResult:
-    """Solve the Caldeira-Leggett master equation of a periodic system, and get its ISF.
+@dataclass(frozen=True, kw_only=True)
+class _Sector:
+    """The ISF at dK as Tr[O^dagger exp(L t) X_0], in the natural units of the model."""
 
-    The ISF I(delta_k, t) = Tr[e^{i delta_k x} V(t) (rho e^{-i delta_k x})]
-    of the steady state rho is found at every time at once, from a reduced
-    model of the Liouvillian (`get_reduced_evolution`). The solver is
-    deterministic, so the ISF has no error.
+    model: Model
+    liouvillian: Liouvillian
+    initial: ComplexArray
+    """X_0."""
+    observable: ComplexArray
+    """O."""
+    delta_k: FloatArray
+    """dK, in the natural units."""
 
-    The Lindblad operators couple to e^{+-i q x} in place of x, which keeps
-    the equation periodic, with the spectral function of the universal
-    Lindblad equation as the temperature correction, so that the steady state
-    is close to the Gibbs state at any temperature.
 
-    Parameters
-    ----------
-    system
-        The periodic system. Its friction is isotropic.
-    delta_k
-        The scattering wavevector, in the units of the system.
-    times
-        The times of the ISF, in the units of the system.
-    config
-        The basis and linear solves, see `CaldeiraLeggettConfig`.
-    isf_config
-        The convergence of the reduced model, see `RationalKrylovConfig`.
-
-    Raises
-    ------
-    ValueError
-        If the times do not increase from zero.
-    """
-    times = np.asarray(times, dtype=np.float64)
-    if times[0] != 0 or np.any(np.diff(times) <= 0):
-        msg = "The times must increase from zero"
-        raise ValueError(msg)
-    model, bands, rho = get_steady_state.load_or_call_uncached(system, config=config)
+def _get_sector(
+    system: PeriodicSystem, delta_k: tuple[float, ...], config: CaldeiraLeggettConfig
+) -> _Sector:
+    state = get_steady_state.load_or_call_uncached(system, config=config)
+    model, bands = state.model, state.bands
     couplings = get_couplings(model, bands)
     operators = get_operators(bands.energies, couplings)
     # dK is split into the nearest point n @ cell_reciprocal and an offset
@@ -147,19 +133,177 @@ def solve_isf(
     # S[kappa] = <kappa - dK, m| e^{-i dK x} |kappa, n>, and the block
     # (kappa - dK, kappa) of rho e^{-i dK x} is rho[kappa - dK] S[kappa]
     scattering = get_shift_operator(model, bands, shift)
+    return _Sector(
+        model=model,
+        liouvillian=get_liouvillian(operators, bra, shifted_kappa),
+        initial=state.density[shifted_kappa] @ scattering,
+        observable=scattering,
+        delta_k=scaled,
+    )
+
+
+def _get_friction(system: PeriodicSystem, model: Model) -> float:
+    """Get the friction in the natural units of the model."""
+    return float(system.gamma) * model.units.time_into(1.0, system.units)
+
+
+@timed
+def solve_isf(
+    system: PeriodicSystem,
+    delta_k: tuple[float, ...],
+    times: FloatArray,
+    *,
+    config: CaldeiraLeggettConfig = DEFAULT_CONFIG,
+    isf_config: EvolutionConfig = DEFAULT_EVOLUTION_CONFIG,
+) -> IsfResult:
+    """Solve the Caldeira-Leggett master equation of a periodic system, and get its ISF.
+
+    The ISF I(delta_k, t) = Tr[e^{i delta_k x} V(t) (rho e^{-i delta_k x})]
+    of the steady state rho is found exactly at every time, as its slow
+    modes plus a stepper on the rest (`get_reduced_evolution`). The solver
+    is deterministic, so the ISF has no error.
+
+    The Lindblad operators couple to e^{+-i q x} in place of x, which keeps
+    the equation periodic, with the spectral function of the universal
+    Lindblad equation as the temperature correction, so that the steady state
+    is close to the Gibbs state at any temperature.
+
+    Parameters
+    ----------
+    system
+        The periodic system. Its friction is isotropic.
+    delta_k
+        The scattering wavevector, in the units of the system.
+    times
+        The times of the ISF, in the units of the system.
+    config
+        The basis and linear solves, see `CaldeiraLeggettConfig`.
+    isf_config
+        The convergence of the evolution, see `EvolutionConfig`.
+
+    Raises
+    ------
+    ValueError
+        If the times do not increase from zero.
+    """
+    times = np.asarray(times, dtype=np.float64)
+    if times[0] != 0 or np.any(np.diff(times) <= 0):
+        msg = "The times must increase from zero"
+        raise ValueError(msg)
+    sector = _get_sector(system, delta_k, config)
     result = get_isf(
-        get_liouvillian(operators, bra, shifted_kappa),
-        rho[shifted_kappa] @ scattering,
-        scattering,
-        system.units.time_into(times, model.units),
-        delta_k=tuple(scaled),
-        units=model.units,
-        config=config,
+        sector.liouvillian,
+        sector.initial,
+        sector.observable,
+        system.units.time_into(times, sector.model.units),
+        delta_k=tuple(sector.delta_k),
+        units=sector.model.units,
+        friction=_get_friction(system, sector.model),
         isf_config=isf_config,
     )
     # The ISF at exactly the given times, rather than at their round trip
     # through the natural units
     return IsfResult(times=times, isf=result.isf, delta_k=delta_k, units=system.units)
+
+
+@dataclass(frozen=True, kw_only=True)
+class SlowModes:
+    """The slowest modes of the ISF of a system at dK, I(t) = sum_j a_j exp(lambda_j t) once the faster modes have decayed."""
+
+    system: PeriodicSystem
+    delta_k: tuple[float, ...]
+    """The scattering wavevector, in the units of the system."""
+    rates: ComplexArray
+    """lambda_j, in the units of the system (1 / time), slowest first."""
+    amplitudes: ComplexArray
+    """a_j."""
+
+
+SLOW_RATE = 0.25
+"""The decay rate below which a mode is slow, in units of the friction.
+
+A quarter of the friction is clear of the in-well vibrations, which decay at
+about half of it, and of the momentum relaxation, at about the friction:
+the modes below it are the hops between sites, and the exchange between
+sites of different kinds.
+"""
+
+
+@timed
+def get_slow_modes(
+    system: PeriodicSystem,
+    delta_k: tuple[float, ...],
+    n_modes: int | None = None,
+    *,
+    config: CaldeiraLeggettConfig = DEFAULT_CONFIG,
+    isf_config: EvolutionConfig = DEFAULT_EVOLUTION_CONFIG,
+) -> SlowModes:
+    """Get the slowest modes of the ISF of a periodic system at dK, by Jacobi-Davidson (`find_slow_modes`).
+
+    The modes are the eigenvalues lambda_j of the Liouvillian, with
+    the weights a_j of each in the ISF, so that
+    I(t) = sum_j a_j exp(lambda_j t) once the faster modes have decayed
+    (`get_long_time_isf`). Modes the ISF does not see are skipped. It needs
+    no time steps: for lithium on Cu(110) in 2D, 600-700 applications of L,
+    3 times fewer than a matrix pencil fit to 10 / friction of the ISF,
+    which also misfits the hopping rate at large dK.
+
+    Parameters
+    ----------
+    system
+        The periodic system. Its friction is isotropic.
+    delta_k
+        The scattering wavevector, in the units of the system.
+    n_modes
+        The number of modes, by default every mode slower than SLOW_RATE of
+        the friction, and at least one. `solve_isf` may find more, any mode
+        which is cheaper to find than to step through, but always these.
+    config
+        The basis and linear solves, see `CaldeiraLeggettConfig`.
+    isf_config
+        The convergence of the modes, see `EvolutionConfig`.
+    """
+    sector = _get_sector(system, delta_k, config)
+    eigen = get_eigen_liouvillian(sector.liouvillian)
+    start = to_eigen(eigen, jnp.asarray(sector.initial))
+    observable = jnp.asarray(sector.observable)
+    measurement = get_measurement(
+        eigen, lambda x: jnp.sum(observable.conj() * x), start
+    )
+    friction = _get_friction(system, sector.model)
+    modes, _ = find_slow_modes(
+        eigen,
+        start,
+        measurement,
+        RateCut(rate=SLOW_RATE * friction)
+        if n_modes is None
+        else ModeCount(n_modes=n_modes),
+        rtol=isf_config.mode_rtol,
+        coefficient_rtol=0.1 * isf_config.stop,
+    )
+    # A rate in the natural units, over the natural unit of time in the system's
+    natural = sector.model.units.time_into(1.0, system.units)
+    return SlowModes(
+        system=system,
+        delta_k=tuple(delta_k),
+        rates=np.array([m.rate for m in modes], dtype=complex) / natural,
+        amplitudes=np.array([m.amplitude for m in modes], dtype=complex),
+    )
+
+
+def get_long_time_isf(slow_modes: SlowModes, times: FloatArray) -> IsfResult:
+    """Get the ISF of the slow modes alone, sum_j a_j exp(lambda_j t), at the times in the units of the system.
+
+    It is the ISF once the faster modes have decayed: for the ISF at every
+    time, use `solve_isf`.
+    """
+    times = np.asarray(times, dtype=np.float64)
+    return IsfResult(
+        times=times,
+        isf=np.exp(np.outer(times, slow_modes.rates)) @ slow_modes.amplitudes,
+        delta_k=slow_modes.delta_k,
+        units=slow_modes.system.units,
+    )
 
 
 @timed
@@ -191,7 +335,8 @@ def get_diffusion_constant(
     float
         The diffusion constant, in the units of the system.
     """
-    model, bands, rho = get_steady_state.load_or_call_uncached(system, config=config)
+    state = get_steady_state.load_or_call_uncached(system, config=config)
+    model, bands, rho = state.model, state.bands, state.density
     operators, derivative, _ = _get_derivative(model, bands, direction)
     diffusion = get_diffusion_coefficient(operators, derivative, rho, config)
     # D has units of length^2 / time
@@ -221,7 +366,7 @@ def solve_rms(
     *,
     direction: tuple[float, ...] | None = None,
     config: CaldeiraLeggettConfig = DEFAULT_CONFIG,
-    isf_config: RationalKrylovConfig = DEFAULT_RATIONAL_KRYLOV_CONFIG,
+    isf_config: EvolutionConfig = DEFAULT_EVOLUTION_CONFIG,
 ) -> RmsResult:
     """Solve the Caldeira-Leggett master equation of a periodic system, and get its mean square displacement along a direction.
 
@@ -244,7 +389,7 @@ def solve_rms(
     config
         The basis and linear solves, see `CaldeiraLeggettConfig`.
     isf_config
-        The convergence of the reduced model, see `RationalKrylovConfig`.
+        The convergence of the evolution, see `EvolutionConfig`.
 
     Raises
     ------
@@ -255,7 +400,8 @@ def solve_rms(
     if times[0] != 0 or np.any(np.diff(times) <= 0):
         msg = "The times must increase from zero"
         raise ValueError(msg)
-    model, bands, rho = get_steady_state.load_or_call_uncached(system, config=config)
+    state = get_steady_state.load_or_call_uncached(system, config=config)
+    model, bands, rho = state.model, state.bands, state.density
     operators, derivative, unit = _get_derivative(model, bands, direction)
     result = get_rms(
         operators,
@@ -265,6 +411,7 @@ def solve_rms(
         direction=tuple(unit),
         units=model.units,
         config=config,
+        friction=_get_friction(system, model),
         isf_config=isf_config,
     )
     length = model.units.length_into(1.0, system.units)

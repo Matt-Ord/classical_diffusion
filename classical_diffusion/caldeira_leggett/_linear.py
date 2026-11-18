@@ -1,8 +1,9 @@
 """Linear solves of a Liouvillian, (L - s) X = rhs, in the eigenvectors of its effective Hamiltonians, preconditioned by the exact inverse of its no-jump part."""
 
-# cspell: ignore maxiter bicgstab
+# cspell: ignore maxiter bicgstab Hamiltonians
+from dataclasses import dataclass
 from functools import partial
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
@@ -14,7 +15,9 @@ if TYPE_CHECKING:
     from classical_diffusion.caldeira_leggett._liouvillian import Liouvillian
 
 
-class EigenLiouvillian(NamedTuple):
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True, kw_only=True)
+class EigenLiouvillian:
     """A Liouvillian in the eigenvectors of K_ket = A diag(mu) A^-1 and K_bra = B diag(nu) B^-1, where its no-jump part is elementwise.
 
     A state X = A Y B^dagger at each kappa is held as Y = A^-1 X B^-dagger, in

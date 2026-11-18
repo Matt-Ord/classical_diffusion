@@ -1,10 +1,13 @@
 # cspell: ignore jkab jkac
-from typing import TYPE_CHECKING, NamedTuple
+import dataclasses
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
+from classical_diffusion.caldeira_leggett._evolution import get_reduced_evolution
 from classical_diffusion.caldeira_leggett._linear import (
     EigenLiouvillian,
     get_eigen_liouvillian,
@@ -16,13 +19,12 @@ from classical_diffusion.caldeira_leggett._liouvillian import (
     apply_liouvillian,
     get_liouvillian,
 )
-from classical_diffusion.caldeira_leggett._rational import get_reduced_evolution
 from classical_diffusion.simulation import IsfResult
 
 if TYPE_CHECKING:
     from classical_diffusion.caldeira_leggett._config import CaldeiraLeggettConfig
+    from classical_diffusion.caldeira_leggett._evolution import EvolutionConfig
     from classical_diffusion.caldeira_leggett._model import ComplexArray, FloatArray
-    from classical_diffusion.caldeira_leggett._rational import RationalKrylovConfig
     from classical_diffusion.system import UnitSystem
 
 
@@ -55,27 +57,28 @@ def get_isf(  # ruff:ignore[too-many-arguments]
     *,
     delta_k: tuple[float, ...],
     units: UnitSystem,
-    config: CaldeiraLeggettConfig,
-    isf_config: RationalKrylovConfig,
+    friction: float,
+    isf_config: EvolutionConfig,
 ) -> IsfResult:
     """Get the ISF Tr[O^dagger X(t)], where X(t) evolves from the initial state, at the times and scattering vector in the units.
 
-    The evolution is from a rational Krylov reduced model of L
-    (`get_reduced_evolution`), which gives every time at once.
+    The evolution is its slow modes, exactly, plus a stepper on the rest
+    (`get_reduced_evolution`), with the friction in the units.
     """
     o = jnp.asarray(observable)
-    isf = get_reduced_evolution(
+    evolution = get_reduced_evolution(
         liouvillian,
         jnp.asarray(initial),
         lambda x: jnp.sum(o.conj() * x),
         times,
+        friction=friction,
         config=isf_config,
-        linear_config=config,
     )
-    return IsfResult(times=times, isf=isf, delta_k=delta_k, units=units)
+    return IsfResult(times=times, isf=evolution.values, delta_k=delta_k, units=units)
 
 
-class _Twist(NamedTuple):
+@dataclass(frozen=True, kw_only=True)
+class _Twist:
     """The expansion L(theta) = L_0 + theta L_1 + theta^2 L_2 + ... of the Liouvillian of a bra offset by theta along a direction, about the steady state."""
 
     liouvillian: Liouvillian
@@ -109,7 +112,9 @@ def _get_twist(
     drift, and is projected out of the drift.
     """
     first_derivative = get_liouvillian(
-        operators._replace(hamiltonian=np.zeros_like(derivative.hamiltonian)),
+        dataclasses.replace(
+            operators, hamiltonian=np.zeros_like(derivative.hamiltonian)
+        ),
         derivative,
     )
     rho = jnp.asarray(steady_state)
@@ -177,7 +182,8 @@ def _get_diffusion_from_response(twist: _Twist, response: jax.Array) -> float:
     return -rate.real
 
 
-class RmsResult(NamedTuple):
+@dataclass(frozen=True, kw_only=True)
+class RmsResult:
     """The mean square displacement <(x(t) - x(0))^2> along a direction."""
 
     times: FloatArray
@@ -201,7 +207,8 @@ def get_rms(  # ruff:ignore[too-many-arguments]
     direction: tuple[float, ...],
     units: UnitSystem,
     config: CaldeiraLeggettConfig,
-    isf_config: RationalKrylovConfig,
+    friction: float,
+    isf_config: EvolutionConfig,
 ) -> RmsResult:
     """Get the mean square displacement <(x(t) - x(0))^2> along a direction, at the times from zero.
 
@@ -224,7 +231,7 @@ def get_rms(  # ruff:ignore[too-many-arguments]
 
     Only the last term evolves, from a state which decays, as for an ISF
     (`get_reduced_evolution`), rather than the growing integral. It costs two
-    linear solves and one evolution.
+    linear solves and one evolution, with the friction in the units.
     """
     twist = _get_twist(operators, derivative, steady_state)
     eigen = get_eigen_liouvillian(twist.liouvillian)
@@ -237,9 +244,10 @@ def get_rms(  # ruff:ignore[too-many-arguments]
         second,
         lambda x: _trace(apply_liouvillian(twist.first_derivative, x)),
         times,
+        friction=friction,
         config=isf_config,
-        linear_config=config,
-    ).real
+        steady_state=rho,
+    ).values.real
     mean_square = 2 * diffusion * times + 2 * (decay[0] - decay)
     return RmsResult(
         times=times,

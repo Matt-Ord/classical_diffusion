@@ -1,5 +1,6 @@
 # cspell: ignore eigh eigvalsh
-from typing import TYPE_CHECKING, NamedTuple
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 import scipy.linalg
@@ -18,7 +19,8 @@ if TYPE_CHECKING:
     )
 
 
-class Bands(NamedTuple):
+@dataclass(frozen=True, kw_only=True)
+class Bands:
     """The Bloch eigenstates of a model, at each crystal momentum kappa of the cell.
 
     The plane waves of every crystal momentum are k = kappa + G for the same
