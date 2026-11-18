@@ -100,12 +100,6 @@ def apply_eigen(eigen: EigenLiouvillian, y: jax.Array, shift: jax.Array) -> jax.
     )
 
 
-def _remove_trace(eigen: EigenLiouvillian, y: jax.Array) -> jax.Array:
-    """Remove the trace of a state Y along W^*, which keeps it in the range of L."""
-    w = eigen.trace.conj()
-    return y - w * (jnp.sum(eigen.trace * y) / jnp.sum(eigen.trace * w))
-
-
 def bicgstab(
     operator: Callable[[jax.Array], jax.Array],
     rhs: jax.Array,
@@ -197,22 +191,18 @@ def refine(  # ruff:ignore[too-many-arguments]
 
 
 @partial(jax.jit, static_argnames=("maxiter",))
-def _singular_pass(
+def _solve_pass(
     eigen: EigenLiouvillian, residual: jax.Array, rtol: jax.Array, *, maxiter: int
 ) -> tuple[jax.Array, jax.Array]:
     # Preconditioned on the right, L M y = residual with x = M y and M = N^-1,
     # so that the tolerance applies to the true residual rather than to
     # M (b - L x)
-    def operator(y: jax.Array) -> jax.Array:
-        # L conserves the trace, so L X has none, but the eigenvectors of K
-        # are not orthogonal and the round off of the trace of L X is then
-        # larger than in the bands. L is singular, and BiCGSTAB amplifies it
-        # once the residual nears it, so it is removed
-        return _remove_trace(
-            eigen, apply_eigen(eigen, y / eigen.rates, jnp.asarray(0j))
-        )
-
-    y, iterations = bicgstab(operator, _remove_trace(eigen, residual), rtol, maxiter)
+    y, iterations = bicgstab(
+        lambda y: apply_eigen(eigen, y / eigen.rates, jnp.asarray(0j)),
+        residual,
+        rtol,
+        maxiter,
+    )
     return y / eigen.rates, iterations
 
 
@@ -228,10 +218,16 @@ def solve(
     Cu(111) in 2D, GMRES(30) takes 18 times longer to find D, in 4 times the
     memory. It raises a RuntimeError if the residual is still falling after
     linear_refinements passes.
+
+    L is singular, and the round off of the trace of L X is larger in the
+    eigenvectors of K, which are not orthogonal, than in the bands. Removing
+    it in each iteration changes neither the applications of L (within 3%)
+    nor D (within 3e-10) for H, Li and Na on Cu(111), as the refinement stops
+    once the residual no longer halves.
     """
     y, _ = refine(
         lambda y: apply_eigen(eigen, y, jnp.asarray(0j)),
-        lambda residual, rtol: _singular_pass(
+        lambda residual, rtol: _solve_pass(
             eigen, residual, rtol, maxiter=config.linear_maxiter
         ),
         to_eigen(eigen, rhs),
