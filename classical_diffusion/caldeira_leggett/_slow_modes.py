@@ -205,15 +205,19 @@ class _Search:
     coefficient_applications: int = 0
     """The applications of L to find their coefficients."""
 
-    def expand(self, x: jax.Array) -> None:
+    def expand(self, x: jax.Array, *, scale: float = 1.0) -> bool:
+        """Add x, orthogonalized, to the search space, unless less than _STAGNATION scale of it is new.
+
+        A correction already in the space means the search has stagnated. A
+        restart vector is measured against its own norm.
+        """
         for _ in range(2):
             stack = self.locked + self.basis
             if stack:
                 x = _project_out(jnp.stack(stack), x)
         size = float(jnp.linalg.norm(x))
-        if size < _STAGNATION:
-            msg = "Jacobi-Davidson stagnated"
-            raise RuntimeError(msg)
+        if size <= _STAGNATION * scale:
+            return False
         x /= size
         image = apply_eigen(self.eigen, x, jnp.asarray(0j))
         self.applications += 1
@@ -221,6 +225,20 @@ class _Search:
             image = _project_out(jnp.stack(self.locked), image)
         self.basis.append(x)
         self.images.append(image)
+        return True
+
+    def correct(self, u: jax.Array, r: jax.Array, theta: complex) -> bool:
+        """Expand the search space by an approximate solution of the correction equation, or get False if it has stagnated."""
+        correction, inner = _projected_solve(
+            self.eigen,
+            jnp.stack([*self.locked, u]),
+            -r,
+            jnp.asarray(theta),
+            jnp.asarray(_INNER_RTOL),
+            maxiter=_INNER_MAXITER,
+        )
+        self.applications += 2 * int(inner)
+        return self.expand(correction)
 
     def ritz(self) -> _Ritz:
         v, w = jnp.stack(self.basis), jnp.stack(self.images)
@@ -267,7 +285,11 @@ class _Search:
         ]
         self.basis, self.images = [], []
         for x in restart:
-            self.expand(x)
+            self.expand(x, scale=float(jnp.linalg.norm(x)))
+        if not self.basis:
+            # No other Ritz vector is seen, as at dK = 0, where X_0 is the
+            # steady state: search on in what is left of X_0, if anything
+            self.expand(self.start, scale=float(jnp.linalg.norm(self.start)))
 
     def truncate(self, n: int) -> None:
         self.locked, self.schur = self.locked[:n], self.schur[:n, :n]
@@ -394,7 +416,10 @@ def find_slow_modes(
     Raises
     ------
     RuntimeError
-        If a mode does not converge in _MAX_OUTER iterations.
+        If a mode does not converge in _MAX_OUTER iterations, or its search
+        stagnates, unless the selection is a `CostCut`: its modes only save
+        time steps, so it keeps the modes locked before, each exact, and the
+        stepper takes the rest.
     """
     search = _Search(eigen=eigen, start=start, measurement=measurement)
     floor = 1e3 * np.finfo(float).eps * float(jnp.abs(eigen.rates).max())
@@ -402,7 +427,8 @@ def find_slow_modes(
     cost = _CostState(rule=selection) if isinstance(selection, CostCut) else None
     search.expand(start)
     iterations = 0
-    while len(search.locked) < target:
+    # The search space is empty once X_0 is in the span of the modes locked
+    while len(search.locked) < target and search.basis:
         ritz = search.ritz()
         j = ritz.order[0]
         theta = complex(ritz.values[j])
@@ -427,19 +453,13 @@ def find_slow_modes(
             iterations = 0
             continue
         iterations += 1
-        if iterations > _MAX_OUTER:
+        if iterations > _MAX_OUTER or not search.correct(u, r, theta):
+            if cost is not None:
+                # The modes only save time steps, and each one locked is
+                # exact: the stepper takes the rest
+                break
             msg = f"Jacobi-Davidson did not converge: |r| {norm:.1e} at {theta:.4e}"
             raise RuntimeError(msg)
-        correction, inner = _projected_solve(
-            eigen,
-            jnp.stack([*search.locked, u]),
-            -r,
-            jnp.asarray(theta),
-            jnp.asarray(_INNER_RTOL),
-            maxiter=_INNER_MAXITER,
-        )
-        search.applications += 2 * int(inner)
-        search.expand(correction)
     # The coefficients to well below the stop of the stepping
     return search.modes(0.1 * config.stop), {
         "modes": search.applications,
