@@ -81,7 +81,7 @@ class EvolutionConfig:
     step_rtol: float = 1e-8
     """The relative tolerance of each step of the Krylov exponential stepper."""
     step_atol: float = 1e-10
-    """The absolute tolerance of each step."""
+    """The absolute tolerance of each step, relative to |X_0| (as the stop is)."""
     mode_rtol: float = 1e-6
     """The relative residual |L r - lambda r| / |lambda| of each slow mode."""
     probe: float = 2.0

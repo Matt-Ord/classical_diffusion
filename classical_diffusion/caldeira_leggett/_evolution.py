@@ -283,8 +283,14 @@ def get_reduced_evolution(  # ruff:ignore[too-many-arguments, too-many-locals, t
     measurement = get_measurement(eigen, measure, start)
     times = np.asarray(times, dtype=np.float64)
     end = float(times[-1])
-    tolerances = (jnp.asarray(config.step_rtol), jnp.asarray(config.step_atol))
-    threshold = config.stop * float(jnp.linalg.norm(start))
+    size = float(jnp.linalg.norm(start))
+    # The evolution is linear, so the absolute tolerance is relative to |X_0|,
+    # as the stop is: with step_atol absolute, an MSD (|X_0| = 5e-3 for
+    # hydrogen in 2D) stepped with a Krylov basis of 12 could not step its
+    # remainder below _REMAINDER_STOP stop, and found 22 spurious modes in
+    # 91,241 applications of L; relative, 1,509
+    tolerances = (jnp.asarray(config.step_rtol), jnp.asarray(config.step_atol * size))
+    threshold = config.stop * size
     nothing = _padded(jnp.zeros((0, *start.shape), start.dtype))
     early = _step_until(
         eigen,
@@ -389,7 +395,7 @@ def get_reduced_evolution(  # ruff:ignore[too-many-arguments, too-many-locals, t
                     schur,
                     remainder,
                     measurement,
-                    size=float(jnp.linalg.norm(start)),
+                    size=size,
                     config=config,
                 )
             except RuntimeError:
