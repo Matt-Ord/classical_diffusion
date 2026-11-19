@@ -107,9 +107,36 @@ class _Sector:
     """dK, in the natural units."""
 
 
+_LOST_TOL = 1e-4
+"""The part of the ISF at t = 0 which the bands may lose at a large dK.
+
+It is an error of the basis, set by max_energy, not by the convergence of
+the evolution, and the truncation of the bands loses a little at any dK:
+1e-10 for lithium on Cu(111) in 1D at 0.3 |G|, 1.7e-6 for hydrogen in 2D
+at 0.3 |G| with bands to 16 k_B T and no more. The tolerance catches a dK
+far beyond the thermal momentum, where the loss grows fast: hydrogen in 1D
+loses 2.5e-5 at 3 |G|, 1.4e-3 at 3.7 |G| and all of it at 10 |G|.
+"""
+
+
 def _get_sector(
-    system: PeriodicSystem, delta_k: tuple[float, ...], config: CaldeiraLeggettConfig
+    system: PeriodicSystem,
+    delta_k: tuple[float, ...],
+    config: CaldeiraLeggettConfig,
 ) -> _Sector:
+    """Get the sector of the ISF at dK.
+
+    The ISF at t = 0 is Tr[rho e^{-i dK x} e^{i dK x}] = 1, but in the bands
+    e^{-i dK x} is truncated, and it loses the part of rho e^{-i dK x} kicked
+    above the highest band: for hydrogen on Cu(111) in 1D, with the default
+    bands, 1e-12 at dK = |G|, 7e-7 at 2.5 |G| and 1e-3 at 3.7 |G|, which is
+    then the error of the whole ISF (against bands to 40 k_B T).
+
+    Raises
+    ------
+    ValueError
+        If more than _LOST_TOL of the ISF at t = 0 is lost.
+    """
     state = get_steady_state.load_or_call_uncached(system, config=config)
     model, bands = state.model, state.bands
     couplings = get_couplings(model, bands)
@@ -131,10 +158,18 @@ def _get_sector(
     # S[kappa] = <kappa - dK, m| e^{-i dK x} |kappa, n>, and the block
     # (kappa - dK, kappa) of rho e^{-i dK x} is rho[kappa - dK] S[kappa]
     scattering = get_shift_operator(model, bands, shift)
+    initial = state.density[shifted_kappa] @ scattering
+    lost = abs(1 - complex(np.sum(scattering.conj() * initial)))
+    if lost > _LOST_TOL:
+        msg = (
+            f"The bands hold only 1 - {lost:.1e} of rho e^(-i dK x) at this dK: "
+            "raise CaldeiraLeggettConfig.max_energy"
+        )
+        raise ValueError(msg)
     return _Sector(
         model=model,
         liouvillian=get_liouvillian(operators, bra, shifted_kappa),
-        initial=state.density[shifted_kappa] @ scattering,
+        initial=initial,
         observable=scattering,
         delta_k=scaled,
     )
@@ -182,7 +217,9 @@ def solve_isf(
     Raises
     ------
     ValueError
-        If the times do not increase from zero.
+        If the times do not increase from zero, or if the bands lose more
+        than 1e-4 of the ISF at t = 0, at a dK far beyond the thermal
+        momentum (`_get_sector`).
     """
     times = np.asarray(times, dtype=np.float64)
     if times[0] != 0 or np.any(np.diff(times) <= 0):
@@ -259,7 +296,8 @@ def get_slow_modes(
     config
         The basis and linear solves, see `CaldeiraLeggettConfig`.
     isf_config
-        The convergence of the modes, see `EvolutionConfig`.
+        The convergence of the modes, see `EvolutionConfig`. It raises a
+        ValueError, as `solve_isf` does, at a dK the bands cannot hold.
     """
     sector = _get_sector(system, delta_k, config)
     eigen = get_eigen_liouvillian(sector.liouvillian)
