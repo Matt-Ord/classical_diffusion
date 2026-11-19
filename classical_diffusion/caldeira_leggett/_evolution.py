@@ -288,7 +288,7 @@ def get_reduced_evolution(  # ruff:ignore[too-many-arguments, too-many-locals, t
     # as the stop is: with step_atol absolute, an MSD (|X_0| = 5e-3 for
     # hydrogen in 2D) stepped with a Krylov basis of 12 could not step its
     # remainder below _REMAINDER_STOP stop, and found 22 spurious modes in
-    # 91,241 applications of L; relative, 1,509
+    # 91,241 applications of L; relative, 1,356
     tolerances = (jnp.asarray(config.step_rtol), jnp.asarray(config.step_atol * size))
     threshold = config.stop * size
     nothing = _padded(jnp.zeros((0, *start.shape), start.dtype))

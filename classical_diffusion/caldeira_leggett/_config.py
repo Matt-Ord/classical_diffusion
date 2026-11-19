@@ -80,8 +80,14 @@ class EvolutionConfig:
     """The norm of what is left of X_0, relative to |X_0|, below which it is no longer stepped."""
     step_rtol: float = 1e-8
     """The relative tolerance of each step of the Krylov exponential stepper."""
-    step_atol: float = 1e-10
-    """The absolute tolerance of each step, relative to |X_0| (as the stop is)."""
+    step_atol: float = 1e-9
+    """The absolute tolerance of each step, relative to |X_0| (as the stop is).
+
+    The ISF has |X_0| = 0.2-0.3 in the eigenvectors of K (H, Li and Na on Cu(111)),
+    so 1e-9 is close to the absolute 1e-10 it replaces; an MSD has |X_0| = 5e-3 (H in
+    2D), for which 1e-10 relative cost 11% more applications of L than 1e-9 and
+    gave the same errors.
+    """
     mode_rtol: float = 1e-6
     """The relative residual |L r - lambda r| / |lambda| of each slow mode."""
     probe: float = 2.0
