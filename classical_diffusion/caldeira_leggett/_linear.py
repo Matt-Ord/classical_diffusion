@@ -1,6 +1,6 @@
 """Linear solves of a Liouvillian, (L - s) X = rhs, in the eigenvectors of its effective Hamiltonians, preconditioned by the exact inverse of its no-jump part."""
 
-# cspell: ignore maxiter bicgstab Hamiltonians vdot orthogonalize fori
+# cspell: ignore maxiter bicgstab Hamiltonians vdot BLAS orthogonalize fori
 from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING
@@ -39,6 +39,7 @@ class EigenLiouvillian:
     rates: jax.Array
     """Z, (n_kappa, n_bands, n_bands)."""
     jumps_ket: jax.Array
+    """The transformed jumps, (n_ops, n_kappa, n_bands, n_bands), or with at least _GAUSS_BANDS bands (n_ops, 3, n_kappa, n_bands, n_bands) as their real part, imaginary part and the sum of both (`_product`)."""
     jumps_bra_dagger: jax.Array
     sources: jax.Array
     """(n_ops, n_kappa), the index of the kappa from which each jump reaches kappa."""
@@ -67,8 +68,8 @@ def get_eigen_liouvillian(liouvillian: Liouvillian) -> EigenLiouvillian:
     jumps_bra_dagger = np.asarray(liouvillian.jumps_bra_dagger)
     return EigenLiouvillian(
         rates=jnp.asarray(-1j * (mu[:, :, None] - nu.conj()[:, None, :])),
-        jumps_ket=jnp.asarray(a_inverse[targets] @ jumps_ket @ a),
-        jumps_bra_dagger=jnp.asarray(
+        jumps_ket=_parts(a_inverse[targets] @ jumps_ket @ a),
+        jumps_bra_dagger=_parts(
             b_dagger @ jumps_bra_dagger @ b_inverse_dagger[targets]
         ),
         sources=jnp.asarray(sources),
@@ -78,6 +79,38 @@ def get_eigen_liouvillian(liouvillian: Liouvillian) -> EigenLiouvillian:
         bra_inverse_dagger=jnp.asarray(b_inverse_dagger),
         trace=jnp.asarray((b_dagger @ a).swapaxes(-1, -2)),
     )
+
+
+_GAUSS_BANDS = 64
+"""The number of bands from which the jumps are applied as real products (`_product`).
+
+Per application of L, complex against real products: 2D Li (139 bands)
+122 -> 79 ms, 2D H (23 bands) 5.2 -> 6.7 ms, 1D Li (17 bands) 0.06 ->
+0.10 ms, as XLA spends longer on each small product than on its
+arithmetic.
+"""
+
+
+def _parts(x: np.ndarray) -> jax.Array:
+    """Get the jumps as stored: (n, ...), or with at least _GAUSS_BANDS bands the real part, imaginary part and their sum of each matrix, (n, 3, ...)."""
+    if x.shape[-1] < _GAUSS_BANDS:
+        return jnp.asarray(x)
+    return jnp.asarray(np.stack([x.real, x.imag, x.real + x.imag], axis=1))
+
+
+def _product(
+    a: tuple[jax.Array, jax.Array, jax.Array], b: tuple[jax.Array, jax.Array, jax.Array]
+) -> tuple[jax.Array, jax.Array]:
+    """Get the real and imaginary parts of a product of complex matrices, from three real products (Gauss).
+
+    a and b are each (real, imaginary, real + imaginary). XLA multiplies
+    complex matrices on the CPU at about half the flop rate of real ones
+    (OpenBLAS does not): (9, 139, 139) by (9, 139, 139) takes 10.2 ms
+    complex and 1.45 ms real (OpenBLAS 5.9 and 1.45 ms), so three real
+    products take 4.4 ms.
+    """
+    p_1, p_2, p_3 = a[0] @ b[0], a[1] @ b[1], a[2] @ b[2]
+    return p_1 - p_2, p_3 - p_1 - p_2
 
 
 def to_eigen(eigen: EigenLiouvillian, x: jax.Array) -> jax.Array:
@@ -92,12 +125,27 @@ def from_eigen(eigen: EigenLiouvillian, y: jax.Array) -> jax.Array:
 
 @jax.jit
 def apply_eigen(eigen: EigenLiouvillian, y: jax.Array, shift: jax.Array) -> jax.Array:
-    """Apply L - shift to a state in the eigenvectors, adding the jumps one at a time."""
-    return add_jumps(
-        (eigen.rates - shift) * y,
-        y,
-        (eigen.jumps_ket, eigen.jumps_bra_dagger, eigen.sources),
-    )
+    """Apply L - shift to a state in the eigenvectors, adding the jumps one at a time, with at least _GAUSS_BANDS bands as real products."""
+    if eigen.jumps_ket.ndim == y.ndim + 1:
+        return add_jumps(
+            (eigen.rates - shift) * y,
+            y,
+            (eigen.jumps_ket, eigen.jumps_bra_dagger, eigen.sources),
+        )
+    # The barriers keep XLA from fusing the parts into the products, which
+    # would then no longer be calls to its matrix product
+    barrier = jax.lax.optimization_barrier
+    parts = barrier((y.real, y.imag, y.real + y.imag))
+    real, imaginary = jnp.zeros(y.shape), jnp.zeros(y.shape)
+    for ket, bra_dagger, sources in zip(
+        eigen.jumps_ket, eigen.jumps_bra_dagger, eigen.sources, strict=True
+    ):
+        left = _product(tuple(ket), parts)
+        left = barrier((*left, left[0] + left[1]))
+        out = _product(left, tuple(bra_dagger))
+        real += out[0][sources]
+        imaginary += out[1][sources]
+    return (eigen.rates - shift) * y + (real + 1j * imaginary)
 
 
 def bicgstab(
