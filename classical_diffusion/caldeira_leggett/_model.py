@@ -88,14 +88,39 @@ def get_kappa(n_periods: int, n_dim: int) -> IntArray:
     return np.mod(np.stack(index, axis=-1) + n_periods // 2, n_periods) - n_periods // 2
 
 
+MAX_PLANE_WAVES = 5000
+"""The most plane waves at one crystal momentum.
+
+The Hamiltonian in them is dense, and building and diagonalizing it takes
+about 50 n^2 bytes: 1.2 GB at the limit. A system which needs more is
+classical, and has thousands of bands: xenon on Pt(111) in 2D at 121 K
+needs 10,411 already in the first guess of the cutoff, which took over
+3 GB in 7 s, before the first band was found.
+"""
+
+
 def get_reciprocal_vectors(reciprocal: FloatArray, radius: float) -> IntArray:
-    """Get the integer vectors G of every reciprocal lattice vector with |G @ reciprocal| up to radius."""
+    """Get the integer vectors G of every reciprocal lattice vector with |G @ reciprocal| up to radius.
+
+    Raises
+    ------
+    ValueError
+        If there are more than MAX_PLANE_WAVES of them.
+    """
     n_dim = reciprocal.shape[0]
     # |k| >= s_min |G|, where s_min is the smallest singular value
     s_min = np.linalg.svd(reciprocal, compute_uv=False).min()
     n_max = int(np.ceil(radius / s_min))
     grid = np.array(list(itertools.product(range(-n_max, n_max + 1), repeat=n_dim)))
-    return grid[np.linalg.norm(grid @ reciprocal, axis=-1) <= radius]
+    vectors = grid[np.linalg.norm(grid @ reciprocal, axis=-1) <= radius]
+    if len(vectors) > MAX_PLANE_WAVES:
+        msg = (
+            f"The bands need {len(vectors)} plane waves, more than {MAX_PLANE_WAVES}: "
+            "the system is too heavy or too hot for the band basis, which is "
+            "then classical (use Langevin dynamics), or lower max_energy"
+        )
+        raise ValueError(msg)
+    return vectors
 
 
 def get_hamiltonian(
