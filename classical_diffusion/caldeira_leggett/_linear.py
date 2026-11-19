@@ -1,6 +1,6 @@
 """Linear solves of a Liouvillian, (L - s) X = rhs, in the eigenvectors of its effective Hamiltonians, preconditioned by the exact inverse of its no-jump part."""
 
-# cspell: ignore maxiter bicgstab Hamiltonians vdot
+# cspell: ignore maxiter bicgstab Hamiltonians vdot orthogonalize fori
 from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING
@@ -158,8 +158,8 @@ def refine(  # ruff:ignore[too-many-arguments]
 ) -> tuple[jax.Array, int]:
     """Solve A x = rhs by passes of an inner solver, each from the true residual (iterative refinement), and get the applications of A.
 
-    solve_pass(residual, rtol) gives an approximate solution and its BiCGSTAB
-    iterations. Its residual is not monotonic, so each pass only reduces the
+    solve_pass(residual, rtol) gives an approximate solution and its
+    applications of A. Its residual is not monotonic, so each pass only reduces the
     true residual by inner_rtol (or to rtol), and the next starts afresh from
     that residual, which also recovers from a breakdown. The passes stop once
     the residual is below rtol of |rhs|, or once it no longer halves, when
@@ -174,12 +174,10 @@ def refine(  # ruff:ignore[too-many-arguments]
     solution, residual, best = jnp.zeros_like(rhs), rhs, 1.0
     applications = 0
     for _ in range(passes):
-        step, iterations = solve_pass(
-            residual, jnp.asarray(max(inner_rtol, rtol / best))
-        )
+        step, count = solve_pass(residual, jnp.asarray(max(inner_rtol, rtol / best)))
         update = solution + step
         update_residual = rhs - apply(update)
-        applications += 2 * int(iterations) + 1
+        applications += int(count) + 1
         relative = float(jnp.linalg.norm(update_residual)) / norm
         if relative > best / 2:
             return solution, applications
@@ -203,7 +201,7 @@ def _solve_pass(
         rtol,
         maxiter,
     )
-    return y / eigen.rates, iterations
+    return y / eigen.rates, 2 * iterations
 
 
 def solve(
@@ -236,3 +234,81 @@ def solve(
         passes=config.linear_refinements,
     )
     return from_eigen(eigen, y)
+
+
+def gmres(
+    operator: Callable[[jax.Array], jax.Array],
+    rhs: jax.Array,
+    rtol: jax.Array,
+    maxiter: int,
+) -> tuple[jax.Array, jax.Array]:
+    """Solve A x = rhs from x = 0 by GMRES without restarts, and get the number of iterations, each one application of A.
+
+    It stops once |rhs - A x| <= rtol |rhs|, or after maxiter iterations.
+    """
+    beta = jnp.linalg.norm(rhs)
+    basis = jnp.zeros((maxiter + 1, *rhs.shape), rhs.dtype).at[0].set(rhs / beta)
+    hessenberg = jnp.zeros((maxiter + 1, maxiter), rhs.dtype)
+    cosines = jnp.zeros(maxiter, rhs.dtype)
+    sines = jnp.zeros(maxiter, rhs.dtype)
+    g = jnp.zeros(maxiter + 1, rhs.dtype).at[0].set(beta)
+
+    def proceed(carry: tuple) -> jax.Array:
+        *_, g, k = carry
+        return (k < maxiter) & (jnp.abs(g[k]) > rtol * beta)
+
+    def iterate(carry: tuple) -> tuple:
+        basis, hessenberg, cosines, sines, g, k = carry
+        w = operator(basis[k])
+
+        # Modified Gram-Schmidt over the k + 1 vectors built so far only: the
+        # basis is large next to an application of L when L is cheap
+        def orthogonalize(
+            i: jax.Array, carry: tuple[jax.Array, jax.Array, jax.Array]
+        ) -> tuple[jax.Array, jax.Array, jax.Array]:
+            basis, w, h = carry
+            overlap = jnp.vdot(basis[i], w)
+            return basis, w - overlap * basis[i], h.at[i].set(overlap)
+
+        basis, w, h = jax.lax.fori_loop(
+            0, k + 1, orthogonalize, (basis, w, jnp.zeros(maxiter + 1, rhs.dtype))
+        )
+        norm = jnp.linalg.norm(w)
+        basis = basis.at[k + 1].set(w / jnp.where(norm > 0, norm, 1))
+        h = h.at[k + 1].set(norm)
+
+        # Apply the previous Givens rotations to the new column, then a new one
+        def rotate(i: jax.Array, h: jax.Array) -> jax.Array:
+            a, b = h[i], h[i + 1]
+            return (
+                h.at[i]
+                .set(cosines[i].conj() * a + sines[i].conj() * b)
+                .at[i + 1]
+                .set(-sines[i] * a + cosines[i] * b)
+            )
+
+        h = jax.lax.fori_loop(0, k, rotate, h)
+        a, b = h[k], h[k + 1]
+        r = jnp.sqrt(jnp.abs(a) ** 2 + jnp.abs(b) ** 2)
+        r = jnp.where(r > 0, r, 1)
+        c, s = a / r, b / r
+        h = h.at[k].set(c.conj() * a + s.conj() * b).at[k + 1].set(0)
+        g = g.at[k + 1].set(-s * g[k]).at[k].set(c.conj() * g[k])
+        return (
+            basis,
+            hessenberg.at[:, k].set(h),
+            cosines.at[k].set(c),
+            sines.at[k].set(s),
+            g,
+            k + 1,
+        )
+
+    basis, hessenberg, _, _, g, k = jax.lax.while_loop(
+        proceed, iterate, (basis, hessenberg, cosines, sines, g, jnp.asarray(0))
+    )
+    # Back substitution on the leading k x k of the triangular factor
+    active = jnp.arange(maxiter) < k
+    square = hessenberg[:maxiter]
+    square = jnp.where(active[:, None] & active[None, :], square, jnp.eye(maxiter))
+    y = jax.scipy.linalg.solve_triangular(square, jnp.where(active, g[:maxiter], 0))
+    return jnp.tensordot(y, basis[:maxiter], axes=1), k

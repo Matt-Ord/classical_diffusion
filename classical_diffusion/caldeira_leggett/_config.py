@@ -87,7 +87,14 @@ class EvolutionConfig:
     probe: float = 2.0
     """The time stepped before the slow modes are found, in units of 1 / friction."""
     cost_factor: float = 3.0
-    """The cost of a slow mode over that of its Jacobi-Davidson iterations (`CostCut`)."""
+    """The margin on the cost of a slow mode, estimated as the mean applications of L per mode found so far.
+
+    A mode is found if cost_factor times that is below the stepping it saves
+    (`CostCut`), or, once the remainder is stepped, below the stepping it
+    still needs (`get_reduced_evolution`). The first mode found, the hop,
+    costs most. 1.5 rather than 3 changes the total applications of L by
+    +0.5% over H, Li and Na on Cu(111) in 1D and H in 2D (2 seeds).
+    """
 
 
 DEFAULT_EVOLUTION_CONFIG = EvolutionConfig()
