@@ -33,6 +33,10 @@ def _to_complex(y: jax.Array) -> jax.Array:
     return y[0] + 1j * y[1]
 
 
+_CHUNK = 250
+"""The most steps of one solve. A longer evolution continues in another, from where it stopped, and the probe ends after one."""
+
+
 @jax.jit
 def _step(  # ruff:ignore[too-many-arguments]
     eigen: EigenLiouvillian,
@@ -42,12 +46,12 @@ def _step(  # ruff:ignore[too-many-arguments]
     *,
     threshold: jax.Array,
     tolerances: tuple[jax.Array, jax.Array],
+    dt0: jax.Array,
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
-    """Step <measurement, exp(L (t - t_0)) initial> from t_0 = times[0] to times[-1], or until the state is below the threshold.
+    """Step <measurement, exp(L (t - t_0)) initial> from t_0 = times[0] towards times[-1], for at most _CHUNK steps, or until the state is below the threshold.
 
-    Get the measurement at the times (non finite after a stop), the state and
-    time at the end, and the number of applications of L. A threshold of zero
-    never stops, so the probe and the stepping share one compiled solve.
+    Get the measurement at the times (non finite after the end), the state
+    and time at the end, and the number of applications of L.
 
     Each complex state is split into its real and imaginary parts, as diffrax
     supports complex states only experimentally.
@@ -63,7 +67,7 @@ def _step(  # ruff:ignore[too-many-arguments]
         solver,
         t0=times[0],
         t1=times[-1],
-        dt0=(times[-1] - times[0]) * 1e-6,
+        dt0=dt0,
         y0=_to_real(initial),
         saveat=dfx.SaveAt(
             subs=[
@@ -78,13 +82,76 @@ def _step(  # ruff:ignore[too-many-arguments]
         # exactly (`KrylovInterpolation`)
         stepsize_controller=dfx.PIDController(rtol=rtol, atol=atol),
         event=dfx.Event(lambda _t, y, _args, **_: jnp.linalg.norm(y) < threshold),
-        # Nothing is differentiated, so the number of steps need not be bounded
+        # Nothing is differentiated
         adjoint=dfx.ForwardMode(),
-        max_steps=None,
+        max_steps=_CHUNK,
+        throw=False,
     )
     measured, end = solution.ys
     applications = solution.stats["num_steps"] * solver.dimension
     return measured, _to_complex(end[0]), solution.ts[1][0], applications
+
+
+@dataclass(frozen=True, kw_only=True)
+class _Stepped:
+    """A measurement of exp(L (t - t_0)) X stepped from t_0, by `_step_until`."""
+
+    values: ComplexArray
+    """At each time from t_0 to the end, zero after it."""
+    state: jax.Array
+    """At the end."""
+    end: float
+    applications: int
+    below: bool
+    """Whether it ended as the state fell below the threshold."""
+
+
+def _step_until(  # ruff:ignore[too-many-arguments]
+    eigen: EigenLiouvillian,
+    initial: jax.Array,
+    measurement: jax.Array,
+    times: FloatArray,
+    span: tuple[float, float],
+    *,
+    threshold: jax.Array,
+    tolerances: tuple[jax.Array, jax.Array],
+    once: bool = False,
+) -> _Stepped:
+    """Step from span[0] to span[1], until the state is below the threshold, or for one solve only (once).
+
+    Each solve (`_step`) continues from where the last ended, with its mean
+    step, so a long evolution costs the same as one solve.
+    """
+    t_0, t_1 = span
+    values = np.zeros(len(times), complex)
+    state, start, applications = initial, t_0, 0
+    dt0 = (t_1 - t_0) * 1e-6
+    while True:
+        measured, state, end, count = _step(
+            eigen,
+            state,
+            measurement,
+            jnp.asarray(np.clip(times, start, t_1)),
+            threshold=threshold,
+            tolerances=tolerances,
+            dt0=jnp.asarray(dt0),
+        )
+        end, count = float(end), int(count)
+        measured = np.asarray(measured)
+        new = (times >= start if start == t_0 else times > start) & (times <= t_1)
+        values = np.where(new & np.isfinite(measured), measured, values)
+        applications += count
+        below = float(jnp.linalg.norm(state)) < float(threshold)
+        if end >= t_1 or below or once:
+            return _Stepped(
+                values=values,
+                state=state,
+                end=end,
+                applications=applications,
+                below=below,
+            )
+        dt0 = (end - start) * KrylovExponential().dimension / max(count, 1)
+        start = end
 
 
 def get_measurement(
@@ -157,24 +224,28 @@ def get_reduced_evolution(  # ruff:ignore[too-many-arguments, too-many-locals]
     measurement = get_measurement(eigen, measure, start)
     times = np.asarray(times, dtype=np.float64)
     tolerances = (jnp.asarray(config.step_rtol), jnp.asarray(config.step_atol))
-    probe = min(config.probe / friction, float(times[-1]))
-    early, state, _, probe_applications = _step(
+    threshold = jnp.asarray(config.stop * float(jnp.linalg.norm(start)))
+    early = _step_until(
         eigen,
         start,
         measurement,
-        jnp.minimum(jnp.asarray(times), probe),
-        threshold=jnp.asarray(0.0),
+        times,
+        (0.0, min(config.probe / friction, float(times[-1]))),
+        threshold=threshold,
         tolerances=tolerances,
+        once=True,
     )
+    probe, state = early.end, early.state
     applications = {
-        "probe": int(probe_applications),
+        "probe": early.applications,
         "modes": 0,
         "coefficients": 0,
         "stepping": 0,
     }
-    if probe >= times[-1]:
+    if probe >= times[-1] or early.below:
+        # The probe reached the end, or X(t) fell below the stop within it
         return Evolution(
-            values=np.asarray(early),
+            values=early.values,
             rates=np.zeros(0, complex),
             stopped=probe,
             applications=applications,
@@ -204,28 +275,24 @@ def get_reduced_evolution(  # ruff:ignore[too-many-arguments, too-many-locals]
         weight = jnp.sum(eigen.trace * remainder) / jnp.sum(eigen.trace * steady)
         remainder -= weight * steady
         constant = complex(weight * jnp.vdot(measurement, steady))
-    late, _, stopped, late_applications = _step(
+    late = _step_until(
         eigen,
         remainder,
         measurement,
-        jnp.maximum(jnp.asarray(times), probe),
-        threshold=jnp.asarray(config.stop * float(jnp.linalg.norm(start))),
+        times,
+        (probe, float(times[-1])),
+        threshold=threshold,
         tolerances=tolerances,
     )
     slow = sum(
         (m.amplitude * np.exp(m.rate * times) for m in modes),
         start=np.zeros(len(times), complex),
     )
-    late = np.asarray(late)
-    values = np.where(
-        times <= probe,
-        np.asarray(early),
-        slow + np.where(np.isfinite(late), late, 0) + constant,
-    )
-    applications["stepping"] = int(late_applications)
+    values = np.where(times <= probe, early.values, slow + late.values + constant)
+    applications["stepping"] = late.applications
     return Evolution(
         values=values,
         rates=np.array([m.rate for m in modes]),
-        stopped=max(float(stopped), probe),
+        stopped=late.end,
         applications=applications,
     )
