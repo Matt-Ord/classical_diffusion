@@ -294,14 +294,22 @@ class _Search:
     def truncate(self, n: int) -> None:
         self.locked, self.schur = self.locked[:n], self.schur[:n, :n]
 
-    def modes(self, rtol: float) -> list[Mode]:
+    def modes(self, rtol: float, *, optional: bool) -> list[Mode]:
         """Get the modes from the Schur form, slowest first, with their coefficients to rtol of |X_0|.
 
         Each eigenvector is only accurate to its residual, |r| ~ mode_rtol |lambda|,
         which leaks a little of it onto the slower modes. The coefficients are
         taken on what remains of X_0 as each mode is removed, fastest first, so
         the slowest, which would take longest to step through, are removed
-        exactly.
+        exactly. If the modes are optional, a mode whose coefficient solve
+        fails is left in the remainder, which the stepper takes: the
+        coefficient of each other mode is that of its left eigenvector, which
+        the mode left in does not change.
+
+        Raises
+        ------
+        RuntimeError
+            If a coefficient solve fails, and the modes are not optional.
         """
         if not self.locked:
             return []
@@ -311,14 +319,19 @@ class _Search:
         for j in np.argsort(rates.real):
             vector = jnp.tensordot(jnp.asarray(vectors[:, j]), q, axes=1)
             vector /= jnp.linalg.norm(vector)
-            amplitude, coefficient, applications = _get_amplitude(
-                self.eigen,
-                complex(rates[j]),
-                vector,
-                remainder,
-                measurement=self.measurement,
-                rtol=rtol,
-            )
+            try:
+                amplitude, coefficient, applications = _get_amplitude(
+                    self.eigen,
+                    complex(rates[j]),
+                    vector,
+                    remainder,
+                    measurement=self.measurement,
+                    rtol=rtol,
+                )
+            except RuntimeError:
+                if not optional:
+                    raise
+                continue
             self.coefficient_applications += applications
             remainder -= coefficient * vector
             modes.append(
@@ -461,7 +474,7 @@ def find_slow_modes(
             msg = f"Jacobi-Davidson did not converge: |r| {norm:.1e} at {theta:.4e}"
             raise RuntimeError(msg)
     # The coefficients to well below the stop of the stepping
-    return search.modes(0.1 * config.stop), {
+    return search.modes(0.1 * config.stop, optional=cost is not None), {
         "modes": search.applications,
         "coefficients": search.coefficient_applications,
     }
