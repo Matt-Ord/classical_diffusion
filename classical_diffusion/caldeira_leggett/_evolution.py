@@ -87,8 +87,9 @@ def _step(  # ruff:ignore[too-many-arguments]
     threshold: jax.Array,
     tolerances: tuple[jax.Array, jax.Array],
     dt0: jax.Array,
+    horizon: jax.Array,
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
-    """Step <measurement, exp(L (t - t_0)) initial> from t_0 = times[0] towards times[-1], for at most _CHUNK steps, or until the state is below the threshold.
+    """Step <measurement, exp(L (t - t_0)) initial> from t_0 = times[0] towards times[-1], for at most _CHUNK steps, until the state is below the threshold, or until a step ends past the horizon.
 
     Get the measurement at the times (non finite after the end), the state
     and time at the end, and the number of applications of L.
@@ -121,9 +122,12 @@ def _step(  # ruff:ignore[too-many-arguments]
         # The steps need not end on the times, which are found within a step
         # exactly (`KrylovInterpolation`)
         stepsize_controller=dfx.PIDController(rtol=rtol, atol=atol),
+        # A step past the horizon ends the solve rather than the times, which
+        # are then found only once, however many solves they span
         event=dfx.Event(
-            lambda _t, y, _args, **_: (
-                jnp.linalg.norm(_outside(locked, _to_complex(y))) < threshold
+            lambda t, y, _args, **_: (
+                (jnp.linalg.norm(_outside(locked, _to_complex(y))) < threshold)
+                | (t >= horizon)
             )
         ),
         # Nothing is differentiated
@@ -164,8 +168,9 @@ def _step_until(  # ruff:ignore[too-many-arguments]
     locked: jax.Array,
     solves: int | None = None,
     dt0: float | None = None,
+    until: float | None = None,
 ) -> _Stepped:
-    """Step from span[0] to span[1], until the state off the span of locked is below the threshold, or for a number of solves.
+    """Step from span[0] to span[1], until the state off the span of locked is below the threshold, for a number of solves, or until a step ends past until.
 
     Each solve (`_step`) continues from where the last ended, with its mean
     step (or dt0 for the first), so a long evolution costs the same as one
@@ -187,6 +192,7 @@ def _step_until(  # ruff:ignore[too-many-arguments]
             tolerances=tolerances,
             # Not weakly typed, as dt0 is from numpy or Python, so _step compiles once
             dt0=jnp.asarray(np.float64(dt0)),
+            horizon=jnp.asarray(np.float64(t_1 if until is None else until)),
         )
         end, count = float(end), int(count)
         measured = np.asarray(measured)
@@ -197,7 +203,7 @@ def _step_until(  # ruff:ignore[too-many-arguments]
         if solves is not None:
             solves -= 1
         dt0 = (end - start) * KrylovExponential().dimension / max(count, 1)
-        if end >= t_1 or below or solves == 0:
+        if end >= t_1 or below or solves == 0 or (until is not None and end >= until):
             return _Stepped(
                 values=values,
                 state=state,
@@ -365,11 +371,12 @@ def get_reduced_evolution(  # ruff:ignore[too-many-arguments, too-many-locals, t
             remainder,
             measurement,
             times,
-            (now, min(now + _CHECK * dt0, end)),
+            (now, end),
             threshold=jnp.asarray(stop),
             tolerances=tolerances,
             locked=_padded(schur.vectors),
             dt0=dt0,
+            until=now + _CHECK * dt0,
         )
         late = np.where((times > now) & (times <= stepped.end), stepped.values, late)
         applications["stepping"] += stepped.applications
