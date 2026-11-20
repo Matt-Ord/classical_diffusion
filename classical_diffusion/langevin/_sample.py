@@ -28,10 +28,20 @@ def _sample_initial_conditions(
     )
 
     # TODO: the assumption here is that the minimum of the potential  # ruff: ignore[line-contains-todo]
-    # is at 0, which is not always true. Finding the minimum of the
-    # potential can be done in sympy automatically.
+    # is at 0. This holds for a PeriodicSystem, but not for every system.
+    # Finding the minimum of the potential can be done in sympy automatically.
     v_min = 0
     p_std = jnp.sqrt(system.kbt * system.m)
+
+    def _draw_position(key: jax.Array) -> jax.Array:
+        if system.unit_cell is None:
+            # Draw from all x, q(x) ~ N(0, SAMPLE_REGION^2 * I)
+            return jax.random.normal(key, shape=(system.n_dim,)) * SAMPLE_REGION
+        # A periodic potential has the same Boltzmann weight in every cell, so
+        # drawing uniformly in one cell and accepting with exp(-V / kT) gives
+        # the exact Boltzmann distribution.
+        fractional = jax.random.uniform(key, shape=(system.n_dim,))
+        return fractional @ jnp.array(system.unit_cell)
 
     def _sample_one(key: jax.Array) -> tuple:
         def _cond_fn(state: tuple) -> bool:
@@ -42,8 +52,7 @@ def _sample_initial_conditions(
             key, _x, _p, _ = state
             key, kx, ku, kp = jax.random.split(key, 4)
 
-            # Draw position candidate from full continuous space q(x) ~ N(0, SAMPLE_REGION^2 * I)
-            x_candidate = jax.random.normal(kx, shape=(system.n_dim,)) * SAMPLE_REGION
+            x_candidate = _draw_position(kx)
             v = potential_fn(*x_candidate, *system.params)
 
             p_candidate = jax.random.normal(kp, (system.n_dim,)) * p_std
