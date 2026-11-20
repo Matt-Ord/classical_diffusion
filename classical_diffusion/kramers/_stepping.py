@@ -13,6 +13,7 @@ from classical_diffusion.kramers._real import (
     _get_ladder_matrices,
     _get_plane_wave_operators,
     _on_indices,
+    get_momentum_reach,
     get_width,
 )
 
@@ -68,7 +69,7 @@ def build_matrix_free_operator(
     model: Model, vectors: IntArray, max_order: int, delta_k: FloatArray
 ) -> MatrixFreeOperator:
     """Build the matrix-free real form of the Kramers operator at K."""
-    width = get_width(max_order)
+    width = get_width(max_order, get_momentum_reach(model))
     indices = get_hermite_indices(model.n_dim, max_order)
     p, dp, friction = _get_ladder_matrices(max_order, width)
     phase = 1j ** indices.sum(axis=1)

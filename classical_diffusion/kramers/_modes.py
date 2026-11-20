@@ -164,7 +164,8 @@ def get_modes_by_arnoldi(  # ruff:ignore[too-many-arguments, too-many-locals]
     has weight |u| (o^T V Y)_j (Y^{-1} e_0)_j.
     """
     norm = float(np.linalg.norm(start))
-    basis = [start / norm]
+    basis = np.zeros((min(64, max_solves) + 1, start.size))
+    basis[0] = start / norm
     projected = [float(observable @ basis[0])]
     hessenberg = np.zeros((max_solves + 1, max_solves))
     previous: Modes | None = None
@@ -180,19 +181,23 @@ def get_modes_by_arnoldi(  # ruff:ignore[too-many-arguments, too-many-locals]
         )
 
     for k in range(max_solves):
+        if k + 2 > len(basis):
+            grown = np.zeros((min(2 * len(basis), max_solves + 1), start.size))
+            grown[: len(basis)] = basis
+            basis = grown
         w = solve(basis[k])
-        stacked = np.array(basis)
+        built = basis[: k + 1]
         # Gram-Schmidt twice keeps the basis orthogonal to round off
         for _ in range(2):
-            overlap = stacked @ w
-            w -= overlap @ stacked
+            overlap = built @ w
+            w -= overlap @ built
             hessenberg[: k + 1, k] += overlap
         h = float(np.linalg.norm(w))
         hessenberg[k + 1, k] = h
         if h <= 1e-14 * norm:
             return modes(k + 1)
-        basis.append(w / h)
-        projected.append(float(observable @ basis[-1]))
+        basis[k + 1] = w / h
+        projected.append(float(observable @ basis[k + 1]))
         if (k + 1) % every == 0:
             current = modes(k + 1)
             if previous is not None and converged(previous, current):

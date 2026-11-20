@@ -2,9 +2,12 @@
 
 from typing import TYPE_CHECKING
 
+import functools
+
 import numpy as np
 import scipy.sparse
 
+from classical_diffusion.caldeira_leggett._model import get_saddle_energy
 from classical_diffusion.kramers._operator import get_hermite_indices
 
 if TYPE_CHECKING:
@@ -19,20 +22,60 @@ _THERMAL_WIDTH = np.sqrt(2.0)
 """The width s of the Hermite functions h_n(p / s) / sqrt(s) whose first is sqrt of the Maxwellian, e^{-p^2 / 4}."""
 
 
-def get_width(max_order: int) -> float:
-    """Get the width s of the Hermite functions h_n(p / s) / sqrt(s) up to an order.
+def get_momentum_reach(model: Model) -> float:
+    """Get the momentum, in thermal momenta, which the Hermite functions must reach: sqrt(2 (E_s + 25)).
 
-    The Hermite functions up to order N reach |p| ~ s sqrt(2 N), and resolve
-    structure in p of size ~ s / sqrt(2 N). Those whose first is the root of
-    the Maxwellian (s = sqrt 2) reach ever further into the tail of the
-    Maxwellian as N grows, while the structure that needs N, the filaments
-    of phase mixing and the boundary layer of the separatrix at low
-    friction, lies within a few thermal momenta. So beyond N = 31 the width
-    shrinks to keep the reach at 8 sqrt(2) thermal momenta, which resolves
-    that structure with ~ gamma^{-1/2} functions rather than ~ 1 / gamma: for
-    D of lithium on Cu(111) at 1e10 s^-1, 512 rather than 32768.
+    A particle diffuses by crossing the saddle of the potential at energy
+    E_s above its minimum (`get_saddle_energy`), so the momenta that carry
+    it reach sqrt(2 E_s) at the bottom of a well, and the Boltzmann factor
+    e^{-25} beyond 25 k_B T more is negligible at any tolerance. For lithium
+    on Cu(111) (E_s = 0.6 k_B T) this is 7.2 thermal momenta: a reach of
+    8 sqrt(2) needed Hermite functions to above order 80 for its ISF in 2D,
+    a reach of 5 sqrt(2) to order 44, and below that the tail of the
+    Maxwellian is cut. For hydrogen (E_s = 10.5 k_B T) it is 8.4: with
+    7.1, D converged only algebraically in the order.
     """
-    return _THERMAL_WIDTH * min(1.0, 8 / np.sqrt(2 * max_order + 1))
+    return _get_momentum_reach(tuple(model.potential), model.n_dim)
+
+
+@functools.cache
+def _get_momentum_reach(potential: tuple, n_dim: int) -> float:
+    saddle = get_saddle_energy(
+        tuple((g, float(np.real(v))) for g, v in potential), n_dim
+    )
+    minimum = _get_potential_minimum(potential, n_dim)
+    return float(np.sqrt(2 * (saddle - minimum + _MARGIN)))
+
+
+_MARGIN = 25.0
+"""The energy above the saddle, in units of k_B T, up to which the Hermite functions resolve the momentum."""
+
+
+def _get_potential_minimum(potential: tuple, n_dim: int) -> float:
+    n_grid = 64 if n_dim < 3 else 24  # ruff:ignore[magic-value-comparison]
+    u = np.stack(
+        np.meshgrid(*[np.arange(n_grid) / n_grid] * n_dim, indexing="ij"), axis=-1
+    )
+    values = np.zeros(u.shape[:-1], dtype=np.complex128)
+    for g, v in potential:
+        values += v * np.exp(2j * np.pi * (u @ np.array(g, dtype=float)))
+    return float(values.real.min())
+
+
+def get_width(max_order: int, reach: float) -> float:
+    """Get the width s of the Hermite functions h_n(p / s) / sqrt(s) up to an order, which reach the momentum `reach` (in thermal momenta).
+
+    The Hermite functions up to order N reach |p| ~ s sqrt(2 N + 1), and
+    resolve structure in p of size ~ s / sqrt(2 N). Those whose first is the
+    root of the Maxwellian (s = sqrt 2) reach ever further into the tail of
+    the Maxwellian as N grows, while the structure that needs N, the
+    filaments of phase mixing and the boundary layer of the separatrix at
+    low friction, lies within the reach (`get_momentum_reach`). So once they
+    pass it, the width shrinks to keep the reach, which resolves that
+    structure with ~ gamma^{-1/2} functions rather than ~ 1 / gamma: for D
+    of lithium on Cu(111) at 1e10 s^-1, 512 rather than 32768.
+    """
+    return min(_THERMAL_WIDTH, reach / np.sqrt(2 * max_order + 1))
 
 
 def _get_ladder_matrices(max_order: int, width: float) -> tuple[FloatArray, ...]:
@@ -145,7 +188,7 @@ def build_real_operator(
     J-symmetric, L^T = J L J with J = (-1)^{|n|}. The unknowns are ordered
     with the plane waves fastest.
     """
-    width = get_width(max_order)
+    width = get_width(max_order, get_momentum_reach(model))
     indices = get_hermite_indices(model.n_dim, max_order)
     p, dp, friction = _get_ladder_matrices(max_order, width)
     phase = 1j ** indices.sum(axis=1)

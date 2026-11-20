@@ -30,7 +30,6 @@ from classical_diffusion.kramers._stepping import (
     build_matrix_free_operator,
     propagate_form,
     get_ritz_pairs,
-    propagate_integrals,
     propagate_state,
     solve_by_propagation,
 )
@@ -464,6 +463,55 @@ def _get_stepped_slow_modes(
     return values, overlap**2 / form / problem.norm
 
 
+_PANEL_NODES = 16
+"""The Gauss-Legendre nodes on each panel of the integral of the velocity autocorrelation."""
+
+
+def _get_doubled_mean_square(
+    problem: _SteppedProblem, v: FloatArray, times: FloatArray, tol: float
+) -> FloatArray:
+    """Get 2 int_0^t (t - s) C(s) ds at the times, with C(t) = v^T e^{L t} v / <w|w> found by `propagate_form`.
+
+    The velocity v is odd in the momentum, so C(t) = -v^T J e^{L t} v, which
+    `propagate_form` gets stepping only to t / 2. C is found at Gauss-Legendre
+    nodes on panels between the times, no longer than a thermal transit of
+    the length unit, and the mean square displacement is
+    2 (t int_0^t C - int_0^t s C), each integral a cumulative sum over the
+    panels, exact for C a polynomial of degree 31 on each panel.
+    """
+    nodes, weights = np.polynomial.legendre.leggauss(_PANEL_NODES)
+    edges = [0.0]
+    for t in times[1:]:
+        count = max(1, int(np.ceil((t - edges[-1]) / _PANEL_LENGTH)))
+        edges.extend(np.linspace(edges[-1], t, count + 1)[1:].tolist())
+    edges_array = np.array(edges)
+    middle = 0.5 * (edges_array[1:] + edges_array[:-1])
+    half = 0.5 * np.diff(edges_array)
+    points = (middle[:, None] + half[:, None] * nodes[None, :]).ravel()
+    correlation = (
+        -propagate_form(
+            problem.operator.apply,
+            v,
+            problem.parity,
+            np.concatenate([[0.0], points]),
+            tol=tol,
+        ).values[1:]
+        / problem.norm
+    )
+    panel_c = (correlation.reshape(len(middle), -1) * weights).sum(axis=1) * half
+    panel_sc = ((correlation * points).reshape(len(middle), -1) * weights).sum(
+        axis=1
+    ) * half
+    cumulative_c = np.concatenate([[0.0], np.cumsum(panel_c)])
+    cumulative_sc = np.concatenate([[0.0], np.cumsum(panel_sc)])
+    at = np.searchsorted(edges_array, times)
+    return 2 * (times * cumulative_c[at] - cumulative_sc[at])
+
+
+_PANEL_LENGTH = 1.0
+"""The longest panel of the integral of the velocity autocorrelation, in units of the transit time of the length unit at the thermal velocity."""
+
+
 def _get_stepped_diffusion(
     model: Model, basis: Basis, direction: FloatArray, tol: float
 ) -> float:
@@ -574,14 +622,12 @@ def solve_rms(
             # The error of the steps is relative to |v|^2 = <w|w> <v^2>, and the
             # mean square displacement grows from t^2, so the tolerance is
             # scaled by the shortest time
-            result = propagate_integrals(
-                stepped.operator.apply,
-                v,
+            return _get_doubled_mean_square(
+                stepped,
                 v,
                 natural,
                 tol=1e-2 * config.tol * min(1.0, float(natural[1]) ** 2),
             )
-            return 2 * result.values[:, 2] / stepped.norm
         problem = _build_problem(model, basis, np.zeros(model.n_dim))
         v = problem.start(unit)
         modes = get_modes(
