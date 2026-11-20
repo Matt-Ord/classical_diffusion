@@ -1,4 +1,5 @@
 # cspell: ignore rint Hermiticity
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -184,6 +185,36 @@ def _get_friction(system: PeriodicSystem, model: Model) -> float:
     return float(system.gamma) * model.units.time_into(1.0, system.units)
 
 
+_MAX_FRICTION = 0.4
+"""The largest hbar gamma / k_B T at which the universal Lindblad equation is within 1% of the Caldeira-Leggett model.
+
+A Lindblad equation needs the bath to forget faster than the system relaxes
+(the Born-Markov approximation): the correlation time of an Ohmic bath,
+hbar / k_B T, short against the damping time 1 / gamma. The error is
+measured on a free particle, whose diffusion constant in the Ohmic
+Caldeira-Leggett model is k_B T / m gamma exactly at any temperature: the
+universal Lindblad equation gives (k_B T / m gamma) (1 + (hbar gamma / 4 k_B T)^2),
+to within the floor of 2e-4 of friction_tol = 1e-4, at hbar gamma / k_B T
+from 0.1 to 2 (1.0027 at 0.2, 1.0101 at 0.4, 1.0158 at 0.5, 1.0626 at 1,
+1.2500 at 2), for the masses of H, Li and Na at 100-300 K, which give the
+same ratio at the same hbar gamma / k_B T. The error passes 1% at 0.4.
+Hydrogen on Cu(111) at 15 ps^-1 and 150 K is at 0.76, 3.6%.
+"""
+
+
+def _warn_friction(system: PeriodicSystem) -> None:
+    """Warn if the friction is beyond _MAX_FRICTION, where the model error of the universal Lindblad equation is over 1%."""
+    ratio = float(system.gamma) * system.units.hbar / system.kbt
+    if ratio > _MAX_FRICTION:
+        msg = (
+            f"hbar gamma / k_B T = {ratio:.2f} is above {_MAX_FRICTION}: the "
+            "universal Lindblad equation is no longer Markovian, and overestimates "
+            f"the diffusion constant of a free particle by {(ratio / 4) ** 2:.1%}"
+        )
+        # Reported at the caller of the public function, beyond its timer
+        warnings.warn(msg, stacklevel=4)
+
+
 def _get_magnitudes(times: FloatArray) -> tuple[FloatArray, IntArray]:
     """Get the times |t| to evolve to, unique and increasing from zero, and the index among them of each |t|.
 
@@ -248,12 +279,19 @@ def solve_isf(
         If the times are not a one dimensional array of finite numbers, or
         if the bands lose more than 1e-4 of the ISF at t = 0, at a dK far
         beyond the thermal momentum (`_get_sector`).
+
+    Warns
+    -----
+    UserWarning
+        If hbar gamma / k_B T > 0.4, where the universal Lindblad equation
+        overestimates D of a free particle by over 1% (`_MAX_FRICTION`).
     """
     times = np.asarray(times, dtype=np.float64)
     if times.ndim != 1 or not np.all(np.isfinite(times)):
         msg = "The times must be a one dimensional array of finite numbers"
         raise ValueError(msg)
     magnitudes, index = _get_magnitudes(times)
+    _warn_friction(system)
     sector = _get_sector(system, delta_k, config)
     result = get_isf(
         sector.liouvillian,
@@ -339,10 +377,17 @@ def get_slow_modes(
     ValueError
         If n_modes is negative, or, as `solve_isf`, at a dK the bands cannot
         hold.
+
+    Warns
+    -----
+    UserWarning
+        If hbar gamma / k_B T > 0.4, where the universal Lindblad equation
+        overestimates D of a free particle by over 1% (`_MAX_FRICTION`).
     """
     if n_modes is not None and n_modes < 0:
         msg = f"n_modes must not be negative, got {n_modes}"
         raise ValueError(msg)
+    _warn_friction(system)
     sector = _get_sector(system, delta_k, config)
     # A rate in the natural units, over the natural unit of time in the system's
     natural = sector.model.units.time_into(1.0, system.units)
@@ -421,7 +466,14 @@ def get_diffusion_constant(
     -------
     float
         The diffusion constant, in the units of the system.
+
+    Warns
+    -----
+    UserWarning
+        If hbar gamma / k_B T > 0.4, where the universal Lindblad equation
+        overestimates D of a free particle by over 1% (`_MAX_FRICTION`).
     """
+    _warn_friction(system)
     state = get_steady_state.load_or_call_uncached(system, config=config)
     model, bands, rho = state.model, state.bands, state.density
     operators, derivative, _ = _get_derivative(model, bands, direction)
@@ -483,12 +535,19 @@ def solve_rms(
     ------
     ValueError
         If the times are not a one dimensional array of finite numbers.
+
+    Warns
+    -----
+    UserWarning
+        If hbar gamma / k_B T > 0.4, where the universal Lindblad equation
+        overestimates D of a free particle by over 1% (`_MAX_FRICTION`).
     """
     times = np.asarray(times, dtype=np.float64)
     if times.ndim != 1 or not np.all(np.isfinite(times)):
         msg = "The times must be a one dimensional array of finite numbers"
         raise ValueError(msg)
     magnitudes, index = _get_magnitudes(times)
+    _warn_friction(system)
     state = get_steady_state.load_or_call_uncached(system, config=config)
     model, bands, rho = state.model, state.bands, state.density
     operators, derivative, unit = _get_derivative(model, bands, direction)
