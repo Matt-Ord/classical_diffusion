@@ -34,6 +34,8 @@ from classical_diffusion.kramers._stepping import (
     propagate_state,
     solve_by_propagation,
 )
+from classical_diffusion.kramers._zero_friction import build as build_orbits
+from classical_diffusion.kramers._zero_friction import series_from_model
 from classical_diffusion.simulation import IsfResult
 from classical_diffusion.util import timed
 
@@ -310,6 +312,16 @@ def get_initial_stepped_basis(
     )
 
 
+def _check_zero_friction(model: Model) -> None:
+    """Raise unless the zero friction (Hamiltonian) solver applies: in 1D only."""
+    if model.n_dim != 1:
+        msg = (
+            "At zero friction only 1D systems are solved: in 2D the Hamiltonian"
+            " flow is chaotic, and no deterministic method reaches the tolerance"
+        )
+        raise ValueError(msg)
+
+
 @timed
 def solve_isf(
     system: PeriodicSystem,
@@ -328,6 +340,12 @@ def solve_isf(
     found by Lanczos on (1 - L)^{-1} in the form x^T J y (`get_modes`), with
     one sparse LU factorisation. The modes give the ISF at any time at once.
     The basis grows until the ISF changes by less than config.tol / 3.
+    Beyond 1D, the LU fills in, and the state is stepped in time instead
+    (`propagate_form`).
+
+    At zero friction the dynamics is Hamiltonian, and in 1D the ISF is a sum
+    over orbits, found exactly in their action-angle variables at any time
+    (`build_orbits`).
 
     Parameters
     ----------
@@ -343,7 +361,15 @@ def solve_isf(
     times = _check_times(times)
     model = build_model(system)
     natural = system.units.time_into(times, model.units)
-    isf = _get_isf(model, _scaled_delta_k(system, model, delta_k), natural, config)
+    scaled = _scaled_delta_k(system, model, delta_k)
+    if model.friction == 0:
+        _check_zero_friction(model)
+        orbits = build_orbits(
+            series_from_model(model), float(scaled[0]), tol=config.tol
+        )
+        isf = np.real(orbits.isf(natural, tol=config.tol))
+    else:
+        isf = _get_isf(model, scaled, natural, config)
     return IsfResult(times=times, isf=isf, delta_k=delta_k, units=system.units)
 
 
@@ -366,6 +392,9 @@ def get_slow_modes(
     one.
     """
     model = build_model(system)
+    if model.friction == 0:
+        msg = "At zero friction the ISF does not decay, and has no slow modes"
+        raise ValueError(msg)
     scaled = _scaled_delta_k(system, model, delta_k)
     if _is_stepped(model):
         rates, weights = _get_stepped_slow_modes(model, scaled, config)
@@ -480,6 +509,10 @@ def get_diffusion_constant(
         The diffusion constant, in the units of the system.
     """
     model = build_model(system)
+    if model.friction == 0:
+        _check_zero_friction(model)
+        # Running orbits move ballistically forever
+        return float("inf")
     unit = _direction(model, direction)
     _, diffusion = _converge_basis(
         get_initial_basis(model, np.zeros(model.n_dim), config),
@@ -517,6 +550,16 @@ def solve_rms(
     model = build_model(system)
     natural = system.units.time_into(times, model.units)
     unit = _direction(model, direction)
+    if model.friction == 0:
+        _check_zero_friction(model)
+        orbits = build_orbits(series_from_model(model), 0.0, tol=config.tol)
+        length = model.units.length_into(1.0, system.units)
+        return RmsResult(
+            times=times,
+            mean_square=orbits.msd(natural, tol=config.tol) * length**2,
+            direction=tuple(unit),
+            units=system.units,
+        )
 
     def change(a: FloatArray, b: FloatArray) -> float:
         # Relative to the mean square displacement itself, which starts as
