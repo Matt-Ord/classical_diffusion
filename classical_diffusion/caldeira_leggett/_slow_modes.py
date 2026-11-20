@@ -201,25 +201,34 @@ def _get_amplitude(  # ruff:ignore[too-many-arguments]
         out = apply_eigen(eigen, y, shift)
         return out - jnp.vdot(vector, out) * vector
 
-    y, applications = refine(
-        apply,
-        lambda residual, inner_rtol: _projected_solve(
-            eigen,
-            vector[None],
-            residual,
-            shift,
-            inner_rtol,
-            maxiter=1000,
-            method="bicgstab",
-        ),
-        state - jnp.vdot(vector, state) * vector,
-        rtol=rtol,
-        inner_rtol=1e-4,
-        passes=10,
-    )
-    coefficient = complex(jnp.vdot(vector, state - apply_eigen(eigen, y, shift)))
+    rhs = state - jnp.vdot(vector, state) * vector
+    if float(jnp.linalg.norm(rhs)) <= rtol * float(jnp.linalg.norm(state)):
+        # Less than rtol of the state is off the mode, as for the steady
+        # state at dK = 0, so y = 0 solves it to rtol: refining that rhs, of
+        # round off, to rtol of itself took 2,002 applications of L for
+        # hydrogen on Cu(111) in 1D
+        coefficient, applications = complex(jnp.vdot(vector, state)), 0
+    else:
+        y, applications = refine(
+            apply,
+            lambda residual, inner_rtol: _projected_solve(
+                eigen,
+                vector[None],
+                residual,
+                shift,
+                inner_rtol,
+                maxiter=1000,
+                method="bicgstab",
+            ),
+            rhs,
+            rtol=rtol,
+            inner_rtol=1e-4,
+            passes=10,
+        )
+        coefficient = complex(jnp.vdot(vector, state - apply_eigen(eigen, y, shift)))
+        applications += 1
     amplitude = complex(jnp.vdot(measurement, vector)) * coefficient
-    return amplitude, coefficient, applications + 1
+    return amplitude, coefficient, applications
 
 
 @dataclass(frozen=True, kw_only=True)

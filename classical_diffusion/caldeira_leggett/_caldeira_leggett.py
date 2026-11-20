@@ -292,14 +292,32 @@ def get_slow_modes(
     n_modes
         The number of modes, by default every mode slower than SLOW_RATE of
         the friction, and at least one. `solve_isf` may find more, any mode
-        which is cheaper to find than to step through, but always these.
+        which is cheaper to find than to step through, but always these. At
+        dK = 0 the only mode seen is the steady state, so fewer are found.
     config
         The basis and linear solves, see `CaldeiraLeggettConfig`.
     isf_config
-        The convergence of the modes, see `EvolutionConfig`. It raises a
-        ValueError, as `solve_isf` does, at a dK the bands cannot hold.
+        The convergence of the modes, see `EvolutionConfig`.
+
+    Raises
+    ------
+    ValueError
+        If n_modes is negative, or, as `solve_isf`, at a dK the bands cannot
+        hold.
     """
+    if n_modes is not None and n_modes < 0:
+        msg = f"n_modes must not be negative, got {n_modes}"
+        raise ValueError(msg)
     sector = _get_sector(system, delta_k, config)
+    # A rate in the natural units, over the natural unit of time in the system's
+    natural = sector.model.units.time_into(1.0, system.units)
+    if n_modes == 0:
+        return SlowModes(
+            system=system,
+            delta_k=tuple(delta_k),
+            rates=np.zeros(0, complex),
+            amplitudes=np.zeros(0, complex),
+        )
     eigen = get_eigen_liouvillian(sector.liouvillian)
     start = to_eigen(eigen, jnp.asarray(sector.initial))
     observable = jnp.asarray(sector.observable)
@@ -316,8 +334,6 @@ def get_slow_modes(
         else ModeCount(n_modes=n_modes),
         config=isf_config,
     )
-    # A rate in the natural units, over the natural unit of time in the system's
-    natural = sector.model.units.time_into(1.0, system.units)
     return SlowModes(
         system=system,
         delta_k=tuple(delta_k),
