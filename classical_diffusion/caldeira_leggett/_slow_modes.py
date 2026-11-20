@@ -65,9 +65,14 @@ class CostCut:
     stop, at ln(|c| / stop) / |Re lambda|, and not before start_time, which is
     stepped already. A group is found if its estimated cost, cost_factor
     times its size times the applications per mode so far (none for the
-    first), is below step_rate times the time it saves. A group which costs
-    more than that is dropped, so a group is never worse than twice its
-    saving.
+    first), is below step_rate times the time it saves, decided once its
+    first Ritz pair is close (_ROUGH).
+
+    The caps on the applications spent on each group (at its estimated
+    saving) and on a search between modes (at the best saving seen), which
+    this rule had, never bound: without them, the same applications of L in
+    every run for H, Li and Na on Cu(111) in 1D and H in 2D (ISF at 0.3 and
+    0.05 |G| and MSD, 3 seeds) and lithium in 2D at 0.3 |G|.
     """
 
     step_rate: float
@@ -75,7 +80,7 @@ class CostCut:
     start_time: float
     stop: float
     cost_factor: float
-    """The margin on the estimated cost of a mode, which varies from mode to mode (`EvolutionConfig.cost_factor`)."""
+    """The margin on the estimated cost of a mode, which varies from mode to mode (`_evolution._COST_FACTOR`)."""
 
 
 type Selection = ModeCount | RateCut | CostCut
@@ -396,9 +401,6 @@ class _Search:
             # steady state: search on in what is left of X_0, if anything
             self.expand(self.start, scale=float(jnp.linalg.norm(self.start)))
 
-    def truncate(self, n: int) -> None:
-        self.locked, self.schur = self.locked[:n], self.schur[:n, :n]
-
     def modes(self, rtol: float, *, optional: bool) -> list[Mode]:
         """Get the modes from the Schur form, slowest first, with their coefficients to rtol of |X_0|.
 
@@ -455,12 +457,9 @@ class _CostState:
     """The progress of a `CostCut`, in applications of L."""
 
     rule: CostCut
-    since: int = 0
-    """The count at the last mode found."""
     per_mode: float = 0.0
-    best_saving: float = 0.0
-    group: tuple[float, int, int, float] | None = None
-    """Re lambda of the group being found, the count it began at, the modes found before it, and its budget."""
+    group: float | None = None
+    """Re lambda of the group being found."""
 
     def saving(self, ritz: _Ritz, j: int) -> tuple[float, int]:
         """Get the applications saved by finding the group of Ritz pair j, and its size."""
@@ -478,30 +477,22 @@ class _CostState:
         with_group = max([self.rule.start_time, *(end(i) for i in beyond)])
         return self.rule.step_rate * (without - with_group), len(members)
 
-    def done(
-        self, search: _Search, ritz: _Ritz, j: int, count: int, *, rough: bool
-    ) -> bool:
-        """Decide whether to stop before finding Ritz pair j, dropping any group over its budget."""
-        saving, size = self.saving(ritz, j)
+    def done(self, ritz: _Ritz, j: int, *, rough: bool) -> bool:
+        """Decide whether to stop before finding Ritz pair j: once it is rough, unless it is a partner of the group being found."""
         re = ritz.values.real[j]
-        if self.group is not None and abs(re - self.group[0]) <= _PARTNER * abs(
-            self.group[0]
+        if self.group is not None and abs(re - self.group) <= _PARTNER * abs(
+            self.group
         ):
-            if count - self.group[1] > self.group[3]:
-                search.truncate(self.group[2])
-                return True
             return False
-        self.best_saving = max(self.best_saving, saving)
-        if count - self.since > self.best_saving:
+        if not rough:
+            return False
+        saving, size = self.saving(ritz, j)
+        if self.rule.cost_factor * size * self.per_mode > saving:
             return True
-        if rough:
-            if self.rule.cost_factor * size * self.per_mode > saving:
-                return True
-            self.group = (re, self.since, len(search.locked), saving)
+        self.group = re
         return False
 
     def found(self, count: int, n_locked: int) -> None:
-        self.since, self.best_saving = count, 0.0
         self.per_mode = count / n_locked
 
 
@@ -668,9 +659,7 @@ def _search(  # ruff:ignore[too-many-arguments]
             and theta.real < -selection.rate
         ):
             break
-        if cost is not None and cost.done(
-            search, ritz, j, search.applications, rough=rough
-        ):
+        if cost is not None and cost.done(ritz, j, rough=rough):
             break
         if norm <= max(_get_mode_rtol(config.mode_rtol, ritz, j, scale), floor):
             search.lock(u, ritz)

@@ -56,11 +56,47 @@ def _outside(q: jax.Array, y: jax.Array) -> jax.Array:
 
 _CHUNK = 250
 """The most steps of one solve. A longer evolution continues in another, from where it stopped, and the probe ends after one."""
-_CHECK = 10
+_PROBE = 2.0
+"""The time stepped before the slow modes are found, in units of 1 / friction (`get_reduced_evolution`).
+
+The search starts from the state there, in which the fastest parts have
+decayed, and `CostCut` estimates the stepping each group of modes saves
+from it. From 1 / friction rather than 2 the estimates find 8 or 9 modes
+for hydrogen on Cu(111) in 2D (ISF at 0.3 |G|: 2,335 rather than 1,756
+applications of L), though the probe costs less in 1D (-7% in all).
+Without the estimates (the modes of `get_slow_modes` and the measured check
+alone, branch robust-ratecut), 1 / friction is best, but lithium in 2D
+then needs 25% more at 0.05 |G|.
+"""
+_CHECK = 7
 """The steps (of the mean length of the last) after which the remainder is checked for a mode left in it (`get_reduced_evolution`).
 
-Checking after 10 rather than 25 steps: H, Li and Na on Cu(111) in 1D and H in 2D,
-2 seeds, 4.3% fewer applications of L.
+Every 7 rather than 10 steps, with the cost per mode updated as the check
+finds modes: over H, Li and Na on Cu(111) in 1D and H in 2D (3 seeds), from
+-11% (hydrogen in 1D, ISF at 0.05 |G|) to +0%, -3.2% in all; lithium in 2D
+at 0.3 |G| is unchanged. Without the estimates of `CostCut` (branch
+robust-ratecut), checks every 5 steps found more modes than they saved for
+hydrogen and lithium in 2D.
+"""
+_COST_FACTOR = 3.0
+"""The margin on the estimated cost of a mode, the mean applications of L per mode found so far, against the stepping that the remainder still needs (`get_reduced_evolution`).
+
+The cost of a mode varies from mode to mode (the hop costs most). Over H,
+Li and Na on Cu(111) in 1D and H in 2D, halving it (with _ESTIMATED kept)
+changes the applications of L per case by -7% to +9%, and doubling it by
+-12% to +16%, and the total by +0.2% and +1.2%.
+"""
+_ESTIMATED = 2.0
+"""The further margin of a decision on the Ritz estimate of the stepping a group of modes saves (`CostCut`) over one on the stepping measured.
+
+A group whose estimated saving is within a factor 2 of its cost is left to
+the check of the remainder, which measures it. With one margin for both,
+the groups decided closest to it (saving / cost 1.05, 1.15 and 1.17 for the
+MSD of hydrogen in 2D and 1D and the ISF of lithium in 1D at 0.3 |G|) went
+either way with the round off of the steady state: the MSD of hydrogen in
+1D took 786-951 applications of L over 4 seeds, and 773-815 with this
+margin, and that in 2D 1,408 rather than 1,366-1,369; the ISF of lithium in
+1D takes 4% more (1,716-1,753).
 """
 _REMAINDER_STOP = 0.1
 """The stop of the remainder off the slow modes, in units of config.stop.
@@ -270,16 +306,20 @@ def get_reduced_evolution(  # ruff:ignore[too-many-arguments, too-many-locals, t
     0.3 |G|, and 1,328 rather than 3,024-3,083 at 0.05 |G| (2 round-off
     seeds of the steady state, which no longer change the modes found).
 
-    Which modes to find is a question of cost alone. X_0 is first stepped to
-    config.probe / friction, which gives the measurement there and the
-    applications of L per unit time of stepping. A mode is found if that
-    costs fewer applications than stepping through it saves (`CostCut`). The
-    remainder is then stepped, and checked every _CHECK steps; if it decays so
-    slowly that stepping it to the stop would cost more than cost_factor
-    modes, a mode is left in it that the estimate missed, such as the
-    partner of a conjugate pair, or a mode the measurement does not see. The
-    mode is found from the remainder (blind to the measurement) and added to
-    the Schur form, and the stepping goes on.
+    Which modes to find is a question of cost alone, one rule decided
+    twice: a mode is found if stepping through it would cost more than
+    _COST_FACTOR times the applications of L per mode found so far. X_0 is
+    first stepped to _PROBE / friction, which gives the measurement there and
+    the applications of L per unit time of stepping. The modes the
+    measurement sees are found while the stepping each group of them saves,
+    estimated from their Ritz values and weights, is _ESTIMATED times above
+    that (`CostCut`). The remainder is then stepped, and checked every
+    _CHECK steps: if it decays so slowly that stepping it to the stop would
+    cost more than _COST_FACTOR modes, a mode is left in it that the estimate
+    missed or left to the measurement, such as the partner of a conjugate
+    pair, or a mode the measurement does not see. The mode is found from the
+    remainder (blind to the measurement) and added to the Schur form, and the
+    stepping goes on.
 
     At dK = 0 (steady_state, the null vector of L, in the bands) the steady
     state begins the Schur form, so its weight, which the round off of the
@@ -303,7 +343,7 @@ def get_reduced_evolution(  # ruff:ignore[too-many-arguments, too-many-locals, t
         start,
         measurement,
         times,
-        (0.0, min(config.probe / friction, end)),
+        (0.0, min(_PROBE / friction, end)),
         threshold=jnp.asarray(threshold),
         tolerances=tolerances,
         locked=nothing,
@@ -334,15 +374,18 @@ def get_reduced_evolution(  # ruff:ignore[too-many-arguments, too-many-locals, t
             step_rate=step_rate,
             start_time=probe,
             stop=config.stop,
-            cost_factor=config.cost_factor,
+            cost_factor=_ESTIMATED * _COST_FACTOR,
         ),
         config=config,
         seed=early.state,
         prior=prior,
     )
-    found = len(schur.vectors) - known
-    # The applications to find a mode, or before any is found, to step the probe
-    per_mode = applications["modes"] / found if found else early.applications
+
+    def per_mode() -> float:
+        """Get the applications of L per mode found so far, or before any is found, to step the probe."""
+        found = len(schur.vectors) - known
+        return applications["modes"] / found if found else early.applications
+
     slow = np.zeros(len(times), complex)
 
     def split(x: jax.Array, since: float) -> jax.Array:
@@ -391,8 +434,7 @@ def get_reduced_evolution(  # ruff:ignore[too-many-arguments, too-many-locals, t
             and len(schur.vectors) < _MAX_MODES
             and (
                 rate <= 0
-                or step_rate * math.log(norm / stop) / rate
-                > config.cost_factor * per_mode
+                or step_rate * math.log(norm / stop) / rate > _COST_FACTOR * per_mode()
             )
         ):
             # The remainder decays too slowly: a mode is left in it

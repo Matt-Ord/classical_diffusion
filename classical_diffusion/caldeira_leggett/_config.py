@@ -69,7 +69,11 @@ DEFAULT_CONFIG = CaldeiraLeggettConfig()
 
 @dataclass(frozen=True, kw_only=True)
 class EvolutionConfig:
-    """The convergence of an ISF or mean square displacement (`get_reduced_evolution`)."""
+    """The convergence of an ISF or mean square displacement (`get_reduced_evolution`), and of the slow modes (`get_slow_modes`).
+
+    Each sets an accuracy. Which modes are found to save time steps is
+    decided by fixed rules (`_evolution._PROBE`, `_CHECK`, `_COST_FACTOR`).
+    """
 
     stop: float = 1e-6
     """The norm of what is left of X_0, relative to |X_0|, below which it is no longer stepped."""
@@ -85,17 +89,6 @@ class EvolutionConfig:
     """
     mode_rtol: float = 1e-6
     """The relative residual |L r - lambda r| / |lambda| of each slow mode."""
-    probe: float = 2.0
-    """The time stepped before the slow modes are found, in units of 1 / friction."""
-    cost_factor: float = 3.0
-    """The margin on the cost of a slow mode, estimated as the mean applications of L per mode found so far.
-
-    A mode is found if cost_factor times that is below the stepping it saves
-    (`CostCut`), or, once the remainder is stepped, below the stepping it
-    still needs (`get_reduced_evolution`). The first mode found, the hop,
-    costs most. 1.5 rather than 3 changes the total applications of L by
-    +0.5% over H, Li and Na on Cu(111) in 1D and H in 2D (2 seeds).
-    """
 
 
 DEFAULT_EVOLUTION_CONFIG = EvolutionConfig()
