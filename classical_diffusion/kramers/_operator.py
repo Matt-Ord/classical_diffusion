@@ -42,9 +42,7 @@ def get_lowering(indices: IntArray) -> list[scipy.sparse.csr_array]:
             cols.append(k)
             values.append(np.sqrt(n[j]))
         size = len(indices)
-        out.append(
-            scipy.sparse.csr_array((values, (rows, cols)), shape=(size, size))
-        )
+        out.append(scipy.sparse.csr_array((values, (rows, cols)), shape=(size, size)))
     return out
 
 
@@ -73,7 +71,9 @@ def get_shift_operators(
                     # d_j V / 2 = sum_G (i G_j V_G / 2) e^{i G x}
                     force.append(0.5j * q * v_g)
         d = scipy.sparse.csr_array((derivative, (rows, cols)), shape=(size, size))
-        f = scipy.sparse.csr_array((force, (force_rows, force_cols)), shape=(size, size))
+        f = scipy.sparse.csr_array(
+            (force, (force_rows, force_cols)), shape=(size, size)
+        )
         minus.append((d - f).tocsr())
         plus.append((d + f).tocsr())
     return minus, plus

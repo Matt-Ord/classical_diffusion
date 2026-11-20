@@ -33,6 +33,12 @@ def _get_index(vectors: IntArray) -> dict[tuple[int, ...], int]:
     return {tuple(int(i) for i in v): j for j, v in enumerate(vectors)}
 
 
+def get_extended_vectors(model: Model, vectors: IntArray) -> IntArray:
+    """Get the plane waves and every one shifted by a term of the potential: the outputs of `get_gradient_operator`."""
+    shifts = [np.array(g) for g, _ in model.potential if any(g)]
+    return np.unique(np.concatenate([vectors, *[vectors + s for s in shifts]]), axis=0)
+
+
 def get_gradient_operator(
     model: Model, vectors: IntArray, delta_k: FloatArray
 ) -> ComplexArray:
@@ -41,10 +47,7 @@ def get_gradient_operator(
     The output plane waves are the inputs and every input shifted by a term
     of the potential, so A_+^dag A_+ is exact on the inputs.
     """
-    shifts = [np.array(g) for g, _ in model.potential if any(g)]
-    extended = np.unique(
-        np.concatenate([vectors, *[vectors + s for s in shifts]]), axis=0
-    )
+    extended = get_extended_vectors(model, vectors)
     out_index = _get_index(extended)
     n_in = len(vectors)
     operator = np.zeros((model.n_dim, len(extended), n_in), dtype=np.complex128)

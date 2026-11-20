@@ -14,8 +14,8 @@ from classical_diffusion.kramers._config import DEFAULT_CONFIG, KramersConfig
 from classical_diffusion.kramers._model import (
     Model,
     build_model,
-    get_box_vectors,
     get_plane_waves,
+    get_plane_waves_within,
 )
 from classical_diffusion.kramers._modes import Modes, get_modes
 from classical_diffusion.kramers._overdamped import (
@@ -25,6 +25,13 @@ from classical_diffusion.kramers._overdamped import (
 )
 from classical_diffusion.kramers._real import build_real_operator, get_start
 from classical_diffusion.kramers._smoluchowski import get_amplitude, get_grid_size
+from classical_diffusion.kramers._stepping import (
+    MatrixFreeOperator,
+    build_matrix_free_operator,
+    propagate_form,
+    propagate_integrals,
+    solve_by_propagation,
+)
 from classical_diffusion.simulation import IsfResult
 from classical_diffusion.util import timed
 
@@ -54,16 +61,9 @@ class Basis:
         return Basis(max_order=self.max_order, radius=self.radius * _GROW)
 
 
-def get_plane_waves_within(model: Model, radius: float) -> IntArray:
-    """Get the plane waves |G| <= radius, as integer vectors, shortest first."""
-    s_min = np.linalg.svd(model.reciprocal, compute_uv=False).min()
-    box = get_box_vectors(int(np.ceil(radius / s_min)), model.n_dim)
-    lengths = np.linalg.norm(box @ model.reciprocal, axis=-1)
-    keep = lengths <= radius + 1e-12
-    return box[keep][np.argsort(lengths[keep], kind="stable")]
-
-
-def get_initial_basis(model: Model, delta_k: FloatArray, config: KramersConfig) -> Basis:
+def get_initial_basis(
+    model: Model, delta_k: FloatArray, config: KramersConfig
+) -> Basis:
     """Get a first guess of the basis which converges the ISF.
 
     The plane waves resolve e^{-V / 2} to config.basis_tol, with a margin
@@ -189,6 +189,69 @@ def _get_isf_modes(
     return modes
 
 
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _SteppedProblem:
+    """The matrix-free operator of a basis, for systems in more than one dimension, whose LU does not fit."""
+
+    operator: MatrixFreeOperator
+    amplitude: FloatArray
+
+    @property
+    def norm(self) -> float:
+        return float(self.amplitude @ self.amplitude)
+
+    @property
+    def parity(self) -> FloatArray:
+        return np.repeat(self.operator.parity, self.operator.shape[1])
+
+    def start(self, direction: FloatArray | None = None) -> FloatArray:
+        return get_start(
+            self.operator.indices, self.operator.width, self.amplitude, direction
+        )
+
+
+def _build_stepped_problem(
+    model: Model, basis: Basis, delta_k: FloatArray
+) -> _SteppedProblem:
+    vectors = get_plane_waves_within(model, basis.radius)
+    return _SteppedProblem(
+        operator=build_matrix_free_operator(model, vectors, basis.max_order, delta_k),
+        amplitude=get_amplitude(model, vectors, get_grid_size(vectors)).real,
+    )
+
+
+def _is_stepped(model: Model) -> bool:
+    """Whether to step in time rather than factorise: the sparse LU fills in beyond one dimension."""
+    return model.n_dim > 1
+
+
+def _get_isf(
+    model: Model, delta_k: FloatArray, times: FloatArray, config: KramersConfig
+) -> FloatArray:
+    if not _is_stepped(model):
+        return _get_isf_modes(model, delta_k, times, config)(times)
+
+    def compute(basis: Basis) -> FloatArray:
+        problem = _build_stepped_problem(model, basis, delta_k)
+        start = problem.start()
+        result = propagate_form(
+            problem.operator.apply,
+            start,
+            problem.parity,
+            times,
+            tol=1e-2 * config.tol,
+        )
+        return result.values / problem.norm
+
+    _, isf = _converge_basis(
+        get_initial_basis(model, delta_k, config),
+        compute,
+        lambda a, b: float(np.max(np.abs(a - b))),
+        config.tol,
+    )
+    return isf
+
+
 @timed
 def solve_isf(
     system: PeriodicSystem,
@@ -222,10 +285,8 @@ def solve_isf(
     times = _check_times(times)
     model = build_model(system)
     natural = system.units.time_into(times, model.units)
-    modes = _get_isf_modes(
-        model, _scaled_delta_k(system, model, delta_k), natural, config
-    )
-    return IsfResult(times=times, isf=modes(natural), delta_k=delta_k, units=system.units)
+    isf = _get_isf(model, _scaled_delta_k(system, model, delta_k), natural, config)
+    return IsfResult(times=times, isf=isf, delta_k=delta_k, units=system.units)
 
 
 @timed
@@ -250,7 +311,9 @@ def get_slow_modes(
     order = np.argsort(-modes.rates.real)
     rates, weights = modes.rates[order], modes.weights[order]
     if n_modes is None:
-        n_modes = max(1, int(np.count_nonzero(rates.real > -SLOW_RATE * model.friction)))
+        n_modes = max(
+            1, int(np.count_nonzero(rates.real > -SLOW_RATE * model.friction))
+        )
     natural = model.units.time_into(1.0, system.units)
     return SlowModes(
         system=system,
@@ -258,6 +321,18 @@ def get_slow_modes(
         rates=rates[:n_modes] / natural,
         amplitudes=weights[:n_modes],
     )
+
+
+def _get_stepped_diffusion(
+    model: Model, basis: Basis, direction: FloatArray, tol: float
+) -> float:
+    """D = v^T (-L_0)^{-1} v / <w|w>, solved by propagation over 1 / gamma (`solve_by_propagation`)."""
+    problem = _build_stepped_problem(model, basis, np.zeros(model.n_dim))
+    v = problem.start(direction)
+    solution, _ = solve_by_propagation(
+        problem.operator.apply, v, 1 / model.friction, tol=1e-2 * tol
+    )
+    return float(v @ solution) / problem.norm
 
 
 def _get_diffusion(model: Model, basis: Basis, direction: FloatArray) -> float:
@@ -296,7 +371,9 @@ def get_diffusion_constant(
     unit = _direction(model, direction)
     _, diffusion = _converge_basis(
         get_initial_basis(model, np.zeros(model.n_dim), config),
-        lambda basis: _get_diffusion(model, basis, unit),
+        (lambda basis: _get_stepped_diffusion(model, basis, unit, config.tol))
+        if _is_stepped(model)
+        else (lambda basis: _get_diffusion(model, basis, unit)),
         lambda a, b: abs(a - b) / abs(b),
         config.tol,
     )
@@ -328,17 +405,28 @@ def solve_rms(
     model = build_model(system)
     natural = system.units.time_into(times, model.units)
     unit = _direction(model, direction)
-    def mean_square(modes: Modes) -> FloatArray:
-        return 2 * modes.double_integral(natural)
 
-    def change(a: Modes, b: Modes) -> float:
+    def change(a: FloatArray, b: FloatArray) -> float:
         # Relative to the mean square displacement itself, which starts as
         # t^2 and can level off in a well, far below 2 k_B T t / (m gamma)
-        reference = mean_square(b)
-        scale = np.maximum(np.abs(reference), 1e-300)
-        return float(np.max(np.abs(mean_square(a) - reference)[1:] / scale[1:]))
+        scale = np.maximum(np.abs(b), 1e-300)
+        return float(np.max(np.abs(a - b)[1:] / scale[1:]))
 
-    def compute(basis: Basis) -> Modes:
+    def compute(basis: Basis) -> FloatArray:
+        if _is_stepped(model):
+            stepped = _build_stepped_problem(model, basis, np.zeros(model.n_dim))
+            v = stepped.start(unit)
+            # The error of the steps is relative to |v|^2 = <w|w> <v^2>, and the
+            # mean square displacement grows from t^2, so the tolerance is
+            # scaled by the shortest time
+            result = propagate_integrals(
+                stepped.operator.apply,
+                v,
+                v,
+                natural,
+                tol=1e-2 * config.tol * min(1.0, float(natural[1]) ** 2),
+            )
+            return 2 * result.values[:, 2] / stepped.norm
         problem = _build_problem(model, basis, np.zeros(model.n_dim))
         v = problem.start(unit)
         modes = get_modes(
@@ -346,16 +434,15 @@ def solve_rms(
             v,
             problem.parity,
             _SHIFT,
-            converged=lambda a, b: change(a, b) < 1e-2 * config.tol,
+            converged=lambda a, b: (
+                change(-2 * a.double_integral(natural), -2 * b.double_integral(natural))
+                < 1e-2 * config.tol
+            ),
         )
         # J v = -v, so the modes are of -v^T e^{L t} v
-        return Modes(
-            rates=modes.rates,
-            weights=-modes.weights / problem.norm,
-            n_solves=modes.n_solves,
-        )
+        return -2 * modes.double_integral(natural) / problem.norm
 
-    _, modes = _converge_basis(
+    _, mean_square = _converge_basis(
         get_initial_basis(model, np.zeros(model.n_dim), config),
         compute,
         change,
@@ -364,7 +451,7 @@ def solve_rms(
     length = model.units.length_into(1.0, system.units)
     return RmsResult(
         times=times,
-        mean_square=mean_square(modes) * length**2,
+        mean_square=mean_square * length**2,
         direction=tuple(unit),
         units=system.units,
     )

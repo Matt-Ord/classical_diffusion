@@ -143,3 +143,12 @@ def get_plane_waves(model: Model, tol: float) -> IntArray:
             kept = vectors[keep]
             return kept[np.argsort(lengths[keep], kind="stable")]
         n_max *= 2
+
+
+def get_plane_waves_within(model: Model, radius: float) -> IntArray:
+    """Get the plane waves |G| <= radius, as integer vectors, shortest first."""
+    s_min = np.linalg.svd(model.reciprocal, compute_uv=False).min()
+    box = get_box_vectors(int(np.ceil(radius / s_min)), model.n_dim)
+    lengths = np.linalg.norm(box @ model.reciprocal, axis=-1)
+    keep = lengths <= radius + 1e-12
+    return box[keep][np.argsort(lengths[keep], kind="stable")]

@@ -51,7 +51,9 @@ def _get_ladder_matrices(max_order: int, width: float) -> tuple[FloatArray, ...]
     return p[keep, keep], dp[keep, keep], friction[keep, keep]
 
 
-def _on_indices(matrix: FloatArray, indices: IntArray, j: int) -> scipy.sparse.csr_array:
+def _on_indices(
+    matrix: FloatArray, indices: IntArray, j: int
+) -> scipy.sparse.csr_array:
     """Lift a matrix on the order of component j to the multi-indices, where every other component is unchanged."""
     lookup = {tuple(int(i) for i in n): k for k, n in enumerate(indices)}
     rows, cols, values = [], [], []
@@ -68,7 +70,9 @@ def _on_indices(matrix: FloatArray, indices: IntArray, j: int) -> scipy.sparse.c
     return scipy.sparse.csr_array((values, (rows, cols)), shape=(size, size))
 
 
-def get_momentum_overlaps(max_order: int, width: float) -> tuple[FloatArray, FloatArray]:
+def get_momentum_overlaps(
+    max_order: int, width: float
+) -> tuple[FloatArray, FloatArray]:
     """Get the components of psi_0 and p psi_0 on the Hermite functions of the width, psi_0^2 the Maxwellian.
 
     The integrals are found by the trapezoid rule on a fine grid, exact to
@@ -92,7 +96,10 @@ def get_momentum_overlaps(max_order: int, width: float) -> tuple[FloatArray, Flo
 def get_force_shifts(model: Model) -> list[tuple[IntArray, ComplexArray]]:
     """Get the shift c and coefficient i q_c V_c of each term of grad V, q_c = c @ reciprocal."""
     return [
-        (np.array(c, dtype=np.int64), 1j * complex(v) * (np.array(c) @ model.reciprocal))
+        (
+            np.array(c, dtype=np.int64),
+            1j * complex(v) * (np.array(c) @ model.reciprocal),
+        )
         for c, v in model.potential
         if any(c)
     ]
@@ -146,8 +153,10 @@ def build_real_operator(
 
     def real_form(matrix: FloatArray, j: int) -> scipy.sparse.csr_array:
         lifted = _on_indices(matrix, indices, j)
-        return scipy.sparse.diags_array(phase.conj()) @ lifted @ scipy.sparse.diags_array(
-            phase
+        return (
+            scipy.sparse.diags_array(phase.conj())
+            @ lifted
+            @ scipy.sparse.diags_array(phase)
         )
 
     operator = scipy.sparse.csr_array((len(indices) * len(vectors),) * 2, dtype=complex)
