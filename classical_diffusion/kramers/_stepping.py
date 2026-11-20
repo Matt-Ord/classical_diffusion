@@ -19,7 +19,12 @@ from classical_diffusion.kramers._real import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
-    from classical_diffusion.kramers._model import FloatArray, IntArray, Model
+    from classical_diffusion.kramers._model import (
+        ComplexArray,
+        FloatArray,
+        IntArray,
+        Model,
+    )
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -122,8 +127,14 @@ def _arnoldi(apply: Callable[[FloatArray], FloatArray], u: FloatArray, m: int) -
     hessenberg = np.zeros((m + 1, m))
     for j in range(m):
         w = apply(basis[j])
-        # Gram-Schmidt twice keeps the basis orthogonal to round off
-        for _ in range(2):
+        before = float(np.linalg.norm(w))
+        overlap = basis[: j + 1] @ w
+        w -= overlap @ basis[: j + 1]
+        hessenberg[: j + 1, j] = overlap
+        # A second pass only where the first cancelled most of w (Daniel,
+        # Gragg, Kaufman and Stewart 1976), which keeps the basis orthogonal
+        # to round off at half the cost of always reorthogonalising
+        if np.linalg.norm(w) < 0.7 * before:
             overlap = basis[: j + 1] @ w
             w -= overlap @ basis[: j + 1]
             hessenberg[: j + 1, j] += overlap
@@ -288,14 +299,20 @@ def propagate_state(
     *,
     tol: float,
     m: int = 30,
+    monitor: Callable[[FloatArray], None] | None = None,
 ) -> tuple[FloatArray, FloatArray, int]:
-    """Get e^{L tau} u and int_0^tau e^{L t} u dt, with the number of applications of L."""
+    """Get e^{L tau} u and int_0^tau e^{L t} u dt, with the number of applications of L.
+
+    `monitor` sees the state at the start of every step.
+    """
     integral = np.zeros_like(start)
     state = start
     count = 0
     for _, length, step, augmented in _steps(
         apply, start, duration, tol=tol, m=m, extra=1
     ):
+        if monitor is not None:
+            monitor(step.norm * step.basis[0])
         count += step.basis.shape[0]
         rows = step.basis.shape[0]
         e = scipy.linalg.expm(length * augmented)
@@ -338,3 +355,17 @@ def solve_by_propagation(
         msg = "GMRES did not converge on (1 - e^{L tau}) x = int_0^tau e^{L t} b dt"
         raise RuntimeError(msg)
     return solution, applications[0]
+
+
+def get_ritz_pairs(
+    apply: Callable[[FloatArray], FloatArray], start: FloatArray, m: int
+) -> tuple[ComplexArray, ComplexArray, FloatArray]:
+    """Get the Ritz values, vectors (as rows) and residual norms |L r - lambda r| of L in the Krylov space of m vectors of start."""
+    step = _arnoldi(apply, start, m)
+    rows = min(step.basis.shape[0], step.hessenberg.shape[1])
+    square = step.hessenberg[:rows, :rows]
+    values, vectors = scipy.linalg.eig(square)
+    vectors /= np.linalg.norm(vectors, axis=0)
+    last = step.hessenberg[rows, rows - 1] if step.hessenberg.shape[0] > rows else 0.0
+    residuals = np.abs(last * vectors[-1])
+    return values, vectors.T @ step.basis[:rows], residuals

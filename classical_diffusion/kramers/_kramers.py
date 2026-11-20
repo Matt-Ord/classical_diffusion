@@ -29,7 +29,9 @@ from classical_diffusion.kramers._stepping import (
     MatrixFreeOperator,
     build_matrix_free_operator,
     propagate_form,
+    get_ritz_pairs,
     propagate_integrals,
+    propagate_state,
     solve_by_propagation,
 )
 from classical_diffusion.simulation import IsfResult
@@ -38,7 +40,7 @@ from classical_diffusion.util import timed
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from classical_diffusion.kramers._model import FloatArray, IntArray
+    from classical_diffusion.kramers._model import ComplexArray, FloatArray, IntArray
     from classical_diffusion.langevin._system import PeriodicSystem
 
 _SHIFT = 1.0
@@ -231,25 +233,81 @@ def _get_isf(
     if not _is_stepped(model):
         return _get_isf_modes(model, delta_k, times, config)(times)
 
-    def compute(basis: Basis) -> FloatArray:
+    basis = get_initial_stepped_basis(model, delta_k, config)
+    for _ in range(_MAX_STEPPED_ROUNDS):
         problem = _build_stepped_problem(model, basis, delta_k)
-        start = problem.start()
+        tails = _Tails(problem, basis, model)
         result = propagate_form(
             problem.operator.apply,
-            start,
+            problem.start(),
             problem.parity,
             times,
             tol=1e-2 * config.tol,
+            monitor=tails.update,
         )
-        return result.values / problem.norm
+        grow_order = tails.hermite >= 3 * config.tol
+        grow_radius = tails.plane_wave**2 >= 2 * config.tol
+        if not (grow_order or grow_radius):
+            return result.values / problem.norm
+        basis = Basis(
+            max_order=basis.grow_order().max_order if grow_order else basis.max_order,
+            radius=basis.grow_radius().radius if grow_radius else basis.radius,
+        )
+    msg = "The basis did not converge"
+    raise RuntimeError(msg)
 
-    _, isf = _converge_basis(
-        get_initial_basis(model, delta_k, config),
-        compute,
-        lambda a, b: float(np.max(np.abs(a - b))),
-        config.tol,
+
+_MAX_STEPPED_ROUNDS = 12
+
+
+class _Tails:
+    """The largest share of the state, over the steps, in the outermost Hermite shells and plane waves.
+
+    The amplitude in the top eighth of the Hermite orders (at least two) and
+    in the plane waves beyond 0.85 of the radius estimate the error of
+    cutting the basis there, from a single run. For hydrogen, lithium and
+    xenon on Cu(111) and Pt(111) in 1D, at 0.1 to 10 times their friction,
+    the error of the ISF was below 0.2 times the Hermite tail and 0.3 times
+    the square of the plane wave tail, so the basis is kept when these are
+    below 3 and 2 times the tolerance.
+    """
+
+    def __init__(self, problem: _SteppedProblem, basis: Basis, model: Model) -> None:
+        order = problem.operator.indices.sum(axis=1)
+        top = int(order.max())
+        self._top = order >= top - max(2, top // 8)
+        vectors = get_plane_waves_within(model, basis.radius)
+        lengths = np.linalg.norm(vectors @ model.reciprocal, axis=-1)
+        self._outer = lengths >= 0.85 * basis.radius
+        self._shape = problem.operator.shape
+        self.hermite = 0.0
+        self.plane_wave = 0.0
+
+    def update(self, state: FloatArray) -> None:
+        x = state.reshape(self._shape)
+        total = float(np.sum(x**2))
+        if total == 0:
+            return
+        self.hermite = max(self.hermite, np.sqrt(np.sum(x[self._top] ** 2) / total))
+        self.plane_wave = max(
+            self.plane_wave, np.sqrt(np.sum(x[:, self._outer] ** 2) / total)
+        )
+
+
+def get_initial_stepped_basis(
+    model: Model, delta_k: FloatArray, config: KramersConfig
+) -> Basis:
+    """Get a first guess of the basis for time steps: the Hermite order of `get_initial_basis`, and the plane waves which hold e^{-V / 2} to config.tol, and |K| more.
+
+    Each run of the time steps checks its own basis (`_Tails`), so the
+    guess starts small and grows only where it must.
+    """
+    vectors = get_plane_waves(model, config.tol)
+    radius = float(np.max(np.linalg.norm(vectors @ model.reciprocal, axis=-1)))
+    return Basis(
+        max_order=get_initial_basis(model, delta_k, config).max_order,
+        radius=max(radius + float(np.linalg.norm(delta_k)), 1.0),
     )
-    return isf
 
 
 @timed
@@ -299,17 +357,28 @@ def get_slow_modes(
 ) -> SlowModes:
     """Get the slowest modes of the ISF of a periodic system at dK, I(t) = sum_j a_j exp(lambda_j t) once the faster modes have decayed.
 
-    The modes are those of `solve_isf`, converged over the times to 20 /
-    gamma, by default every mode which decays more slowly than SLOW_RATE of
-    the friction, and at least one.
+    In 1D the modes are those of `solve_isf`, converged over the times to
+    20 / gamma. Beyond 1D, the start is stepped to 4 / gamma, by when the
+    fast modes have decayed, and the slow modes are the Ritz pairs of the
+    Krylov space of what is left, each with its weight in the ISF from the
+    J-symmetry of L, (u^T J r)^2 / (r^T J r) / <w|w>. By default every mode
+    which decays more slowly than SLOW_RATE of the friction, and at least
+    one.
     """
     model = build_model(system)
-    window = np.linspace(0, 20 / model.friction, 200)
-    modes = _get_isf_modes(
-        model, _scaled_delta_k(system, model, delta_k), window, config
-    )
-    order = np.argsort(-modes.rates.real)
-    rates, weights = modes.rates[order], modes.weights[order]
+    scaled = _scaled_delta_k(system, model, delta_k)
+    if _is_stepped(model):
+        rates, weights = _get_stepped_slow_modes(model, scaled, config)
+    else:
+        window = np.linspace(0, 20 / model.friction, 200)
+        modes = _get_isf_modes(model, scaled, window, config)
+        rates, weights = modes.rates, modes.weights
+    # A Ritz value of a mode the start barely holds can land right of the
+    # axis, or anywhere, with no weight
+    real = (rates.real <= 0) & (np.abs(weights) > 1e-12)
+    rates, weights = rates[real], weights[real]
+    order = np.argsort(-rates.real)
+    rates, weights = rates[order], weights[order]
     if n_modes is None:
         n_modes = max(
             1, int(np.count_nonzero(rates.real > -SLOW_RATE * model.friction))
@@ -321,6 +390,49 @@ def get_slow_modes(
         rates=rates[:n_modes] / natural,
         amplitudes=weights[:n_modes],
     )
+
+
+_RITZ_VECTORS = 80
+_RITZ_RTOL = 1e-4
+"""The residual of a Ritz pair, in units of the friction, above which it is not a mode: those kept have rates good to about its square."""
+
+
+def _get_stepped_slow_modes(
+    model: Model, delta_k: FloatArray, config: KramersConfig
+) -> tuple[ComplexArray, ComplexArray]:
+    """Get the slow modes of the ISF by stepping the start past the fast modes, then the Ritz pairs of what is left."""
+    basis = get_initial_stepped_basis(model, delta_k, config)
+    for _ in range(_MAX_STEPPED_ROUNDS):
+        problem = _build_stepped_problem(model, basis, delta_k)
+        tails = _Tails(problem, basis, model)
+        start = problem.start()
+        state, _, _ = propagate_state(
+            problem.operator.apply,
+            start,
+            4 / model.friction,
+            tol=1e-2 * config.tol,
+            monitor=tails.update,
+        )
+        grow_order = tails.hermite >= 3 * config.tol
+        grow_radius = tails.plane_wave**2 >= 2 * config.tol
+        if not (grow_order or grow_radius):
+            break
+        basis = Basis(
+            max_order=basis.grow_order().max_order if grow_order else basis.max_order,
+            radius=basis.grow_radius().radius if grow_radius else basis.radius,
+        )
+    else:
+        msg = "The basis did not converge"
+        raise RuntimeError(msg)
+    values, vectors, residuals = get_ritz_pairs(
+        problem.operator.apply, state, _RITZ_VECTORS
+    )
+    keep = residuals <= _RITZ_RTOL * model.friction
+    values, vectors = values[keep], vectors[keep]
+    parity = problem.parity
+    overlap = vectors @ (parity * start)
+    form = np.sum(vectors * parity * vectors, axis=1)
+    return values, overlap**2 / form / problem.norm
 
 
 def _get_stepped_diffusion(
