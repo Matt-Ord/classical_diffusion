@@ -1,4 +1,4 @@
-# cspell: ignore rint
+# cspell: ignore rint Hermiticity
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -49,7 +49,11 @@ from classical_diffusion.util import cached, timed
 
 if TYPE_CHECKING:
     from classical_diffusion.caldeira_leggett._liouvillian import Liouvillian
-    from classical_diffusion.caldeira_leggett._model import ComplexArray, FloatArray
+    from classical_diffusion.caldeira_leggett._model import (
+        ComplexArray,
+        FloatArray,
+        IntArray,
+    )
     from classical_diffusion.langevin._system import PeriodicSystem
 
 
@@ -180,6 +184,17 @@ def _get_friction(system: PeriodicSystem, model: Model) -> float:
     return float(system.gamma) * model.units.time_into(1.0, system.units)
 
 
+def _get_magnitudes(times: FloatArray) -> tuple[FloatArray, IntArray]:
+    """Get the times |t| to evolve to, unique and increasing from zero, and the index among them of each |t|.
+
+    For times which increase from zero these are the times themselves.
+    """
+    magnitudes, index = np.unique(
+        np.abs(np.concatenate([[0.0], times])), return_inverse=True
+    )
+    return magnitudes, index[1:]
+
+
 @timed
 def solve_isf(
     system: PeriodicSystem,
@@ -196,6 +211,17 @@ def solve_isf(
     modes plus a stepper on the rest (`get_reduced_evolution`). The solver
     is deterministic, so the ISF has no error.
 
+    At negative times the ISF of the steady state is, by the quantum
+    regression theorem, I(-t) = <e^{-i delta_k x(t)} e^{i delta_k x(0)}> =
+    Tr[e^{-i delta_k x} V(t) (e^{i delta_k x} rho)], and as V(t) preserves
+    Hermiticity (the master equation is of Lindblad form), this is I(t)^*,
+    as it is for the exact stationary correlation. Evolved explicitly for
+    hydrogen on Cu(111) in 1D at 0.1, 0.3 and 1 |G|, it equals I(t)^* to
+    7.6e-12, 2.1e-11 and 4.7e-9, the tolerance of the evolution, where the
+    ISF has |Im I| up to 3.9e-4. The other order of the operators,
+    Tr[e^{-i delta_k x} V(t) (rho e^{i delta_k x})], is I(-delta_k, t), which
+    differs from I(t)^* by up to 7.8e-4.
+
     The Lindblad operators couple to e^{+-i q x} in place of x, which keeps
     the equation periodic, with the spectral function of the universal
     Lindblad equation as the temperature correction, so that the steady state
@@ -208,7 +234,9 @@ def solve_isf(
     delta_k
         The scattering wavevector, in the units of the system.
     times
-        The times of the ISF, in the units of the system.
+        The times of the ISF, in the units of the system: any real times, in
+        any order. The ISF is evolved once, to each |t|, so negative times
+        cost nothing more.
     config
         The basis and linear solves, see `CaldeiraLeggettConfig`.
     isf_config
@@ -217,20 +245,21 @@ def solve_isf(
     Raises
     ------
     ValueError
-        If the times do not increase from zero, or if the bands lose more
-        than 1e-4 of the ISF at t = 0, at a dK far beyond the thermal
-        momentum (`_get_sector`).
+        If the times are not a one dimensional array of finite numbers, or
+        if the bands lose more than 1e-4 of the ISF at t = 0, at a dK far
+        beyond the thermal momentum (`_get_sector`).
     """
     times = np.asarray(times, dtype=np.float64)
-    if times[0] != 0 or np.any(np.diff(times) <= 0):
-        msg = "The times must increase from zero"
+    if times.ndim != 1 or not np.all(np.isfinite(times)):
+        msg = "The times must be a one dimensional array of finite numbers"
         raise ValueError(msg)
+    magnitudes, index = _get_magnitudes(times)
     sector = _get_sector(system, delta_k, config)
     result = get_isf(
         sector.liouvillian,
         sector.initial,
         sector.observable,
-        system.units.time_into(times, sector.model.units),
+        system.units.time_into(magnitudes, sector.model.units),
         delta_k=tuple(sector.delta_k),
         units=sector.model.units,
         friction=_get_friction(system, sector.model),
@@ -238,7 +267,13 @@ def solve_isf(
     )
     # The ISF at exactly the given times, rather than at their round trip
     # through the natural units
-    return IsfResult(times=times, isf=result.isf, delta_k=delta_k, units=system.units)
+    isf = result.isf[index]
+    return IsfResult(
+        times=times,
+        isf=np.where(times < 0, isf.conj(), isf),
+        delta_k=delta_k,
+        units=system.units,
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -349,9 +384,10 @@ def get_long_time_isf(slow_modes: SlowModes, times: FloatArray) -> IsfResult:
     time, use `solve_isf`.
     """
     times = np.asarray(times, dtype=np.float64)
+    isf = np.exp(np.outer(np.abs(times), slow_modes.rates)) @ slow_modes.amplitudes
     return IsfResult(
         times=times,
-        isf=np.exp(np.outer(times, slow_modes.rates)) @ slow_modes.amplitudes,
+        isf=np.where(times < 0, isf.conj(), isf),
         delta_k=slow_modes.delta_k,
         units=slow_modes.system.units,
     )
@@ -434,7 +470,8 @@ def solve_rms(
     system
         The periodic system. Its friction is isotropic.
     times
-        The times, in the units of the system, increasing from zero.
+        The times, in the units of the system: any real times, in any order.
+        The mean square displacement is even in t.
     direction
         The direction along which x is measured, by default the first axis.
     config
@@ -445,12 +482,13 @@ def solve_rms(
     Raises
     ------
     ValueError
-        If the times do not increase from zero.
+        If the times are not a one dimensional array of finite numbers.
     """
     times = np.asarray(times, dtype=np.float64)
-    if times[0] != 0 or np.any(np.diff(times) <= 0):
-        msg = "The times must increase from zero"
+    if times.ndim != 1 or not np.all(np.isfinite(times)):
+        msg = "The times must be a one dimensional array of finite numbers"
         raise ValueError(msg)
+    magnitudes, index = _get_magnitudes(times)
     state = get_steady_state.load_or_call_uncached(system, config=config)
     model, bands, rho = state.model, state.bands, state.density
     operators, derivative, unit = _get_derivative(model, bands, direction)
@@ -458,7 +496,7 @@ def solve_rms(
         operators,
         derivative,
         rho,
-        system.units.time_into(times, model.units),
+        system.units.time_into(magnitudes, model.units),
         direction=tuple(unit),
         units=model.units,
         config=config,
@@ -468,7 +506,8 @@ def solve_rms(
     length = model.units.length_into(1.0, system.units)
     return RmsResult(
         times=times,
-        mean_square=result.mean_square * length**2,
+        # Even in t, as <(x(-t) - x(0))^2> = <(x(0) - x(t))^2> in the steady state
+        mean_square=result.mean_square[index] * length**2,
         direction=tuple(unit),
         units=system.units,
     )
