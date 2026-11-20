@@ -118,7 +118,16 @@ def _convert_time_span(
 
 
 def _get_max_force(system: System) -> float:
-    """Find max ||F|| numerically using SciPy minimization starting at the origin."""
+    """Find max ||F|| numerically: on a grid of starting points, then by SciPy minimization from the best.
+
+    The origin of the built-in potentials is a stationary point, where ||F||
+    has a local minimum, so a search from the origin alone finds no force.
+    A periodic system is searched over a grid of its unit cell, in the
+    fractional coordinates of its lattice, so the search is well scaled in
+    any units. The objective is normalised by the largest force on the grid,
+    so that the default tolerances of the search apply. A system whose force
+    is unbounded, such as a harmonic one, returns 0.
+    """
     if not system.force_expr or system.potential_expr == 0:
         return 0.0
 
@@ -131,16 +140,30 @@ def _get_max_force(system: System) -> float:
         force,
         modules=[{"DerivativeSafeMod": np.mod}, "numpy"],
     )
+    n_dim = len(system.coordinate_symbols)
+    lattice = getattr(system, "lattice_vectors", None)
+    if lattice is None:
+        return 0.0
+    lattice = np.asarray(lattice, dtype=float)
 
-    def objective(coords: np.ndarray) -> float:
-        # Evaluate force vector and return negative magnitude for minimization
-        f_vec = np.array(force_fn(*coords), dtype=float)
-        return -float(np.linalg.norm(f_vec))
+    def get_force(fractions: np.ndarray) -> float:
+        coords = fractions @ lattice
+        return float(np.linalg.norm(np.array(force_fn(*coords), dtype=float)))
 
-    x0 = np.zeros(len(system.coordinate_symbols))
-    res = scipy.optimize.minimize(objective, x0)
+    n_grid = 16 if n_dim <= 2 else 6  # ruff:ignore[magic-value-comparison]
+    axes = [np.arange(n_grid) / n_grid] * n_dim
+    starts = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1).reshape(-1, n_dim)
+    on_grid = np.array([get_force(x0) for x0 in starts])
+    force_scale = float(on_grid.max())
+    if force_scale == 0 or not np.isfinite(force_scale):
+        return 0.0
 
-    return float(-res.fun) if res.success else 0.0
+    def objective(fractions: np.ndarray) -> float:
+        # Return negative magnitude for minimization
+        return -get_force(fractions) / force_scale
+
+    result = scipy.optimize.minimize(objective, starts[int(np.argmax(on_grid))])
+    return max(force_scale, -float(result.fun) * force_scale)
 
 
 def _get_langevin_units(system: System) -> UnitSystem:
