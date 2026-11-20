@@ -12,6 +12,9 @@ import numpy as np
 import scipy.linalg
 
 from classical_diffusion.caldeira_leggett._linear import (
+    INNER_RTOL,
+    MAXITER,
+    PASSES,
     EigenLiouvillian,
     apply_eigen,
     bicgstab,
@@ -217,13 +220,13 @@ def _get_amplitude(  # ruff:ignore[too-many-arguments]
                 residual,
                 shift,
                 inner_rtol,
-                maxiter=1000,
+                maxiter=MAXITER,
                 method="bicgstab",
             ),
             rhs,
             rtol=rtol,
-            inner_rtol=1e-4,
-            passes=10,
+            inner_rtol=INNER_RTOL,
+            passes=PASSES,
         )
         coefficient = complex(jnp.vdot(vector, state - apply_eigen(eigen, y, shift)))
         applications += 1

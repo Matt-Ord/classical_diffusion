@@ -236,6 +236,20 @@ def refine(  # ruff:ignore[too-many-arguments]
     raise RuntimeError(msg)
 
 
+MAXITER = 1000
+"""The most BiCGSTAB iterations in each pass of a linear solve (`refine`)."""
+INNER_RTOL = 1e-4
+"""The factor by which each pass of BiCGSTAB reduces the residual."""
+PASSES = 20
+"""The most passes of BiCGSTAB, each from the true residual.
+
+These were settings of `CaldeiraLeggettConfig` that nothing varied, and the
+coefficient solves of `get_slow_modes` had their own 10. For H, Li and Na on
+Cu(111) in 1D and H in 2D, every singular solve (steady state, D, the MSD
+responses) takes 3 passes and every coefficient solve 2.
+"""
+
+
 @partial(jax.jit, static_argnames=("maxiter",))
 def _solve_pass(
     eigen: EigenLiouvillian, residual: jax.Array, rtol: jax.Array, *, maxiter: int
@@ -263,7 +277,7 @@ def solve(
     until it restarts, and a short restart can stall: for hydrogen on
     Cu(111) in 2D, GMRES(30) takes 18 times longer to find D, in 4 times the
     memory. It raises a RuntimeError if the residual is still falling after
-    linear_refinements passes.
+    PASSES passes.
 
     L is singular, and the round off of the trace of L X is larger in the
     eigenvectors of K, which are not orthogonal, than in the bands. Removing
@@ -273,13 +287,11 @@ def solve(
     """
     y, _ = refine(
         lambda y: apply_eigen(eigen, y, jnp.asarray(0j)),
-        lambda residual, rtol: _solve_pass(
-            eigen, residual, rtol, maxiter=config.linear_maxiter
-        ),
+        lambda residual, rtol: _solve_pass(eigen, residual, rtol, maxiter=MAXITER),
         to_eigen(eigen, rhs),
         rtol=config.linear_rtol,
-        inner_rtol=config.linear_inner_rtol,
-        passes=config.linear_refinements,
+        inner_rtol=INNER_RTOL,
+        passes=PASSES,
     )
     return from_eigen(eigen, y)
 

@@ -7,9 +7,10 @@ from typing import override
 class CaldeiraLeggettConfig:
     """The convergence parameters of the steady state of the Caldeira-Leggett master equation.
 
-    The basis is set by friction_tol, max_energy and plane_wave_energy, and the
-    linear solves by the rest. Every function starts from the steady state, so
-    every function takes these, and the steady state is cached by them. The
+    The basis is set by friction_tol, max_energy, extra_bands and
+    plane_wave_energy, and the linear solves by linear_rtol. Every function
+    starts from the steady state, so every function takes these, and the
+    steady state is cached by them. The
     time steps of an ISF are set separately (`EvolutionConfig`). Energies are in
     units of k_B T.
     """
@@ -56,12 +57,6 @@ class CaldeiraLeggettConfig:
     for hydrogen on Cu(111) at 300 times its mass, a residual of 1e-8 leaves
     D wrong by 2e-3, and of 1e-12 by 1e-7.
     """
-    linear_maxiter: int = 1000
-    """The largest number of BiCGSTAB iterations in each pass."""
-    linear_inner_rtol: float = 1e-4
-    """The factor by which each pass of BiCGSTAB reduces the residual."""
-    linear_refinements: int = 20
-    """The largest number of passes of BiCGSTAB, each from the true residual."""
 
     @override
     def __hash__(self) -> int:
