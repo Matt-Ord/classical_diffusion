@@ -95,7 +95,7 @@ the groups decided closest to it (saving / cost 1.05, 1.15 and 1.17 for the
 MSD of hydrogen in 2D and 1D and the ISF of lithium in 1D at 0.3 |G|) went
 either way with the round off of the steady state: the MSD of hydrogen in
 1D took 786-951 applications of L over 4 seeds, and 773-815 with this
-margin, and that in 2D 1,408 rather than 1,366-1,369; the ISF of lithium in
+margin, and that in 2D 1,408 rather than 1,366-1,374; the ISF of lithium in
 1D takes 4% more (1,716-1,753).
 """
 _REMAINDER_STOP = 0.1
@@ -302,8 +302,8 @@ def get_reduced_evolution(  # ruff:ignore[too-many-arguments, too-many-locals, t
     No coefficient of a mode is needed, where solving for each (as a
     bordered linear solve) cost as many applications of L as finding the
     modes. With the search of `find_slow_schur`, the ISF of hydrogen on
-    Cu(111) in 2D takes 1,756 applications rather than 4,123-4,252 at
-    0.3 |G|, and 1,328 rather than 3,024-3,083 at 0.05 |G| (2 round-off
+    Cu(111) in 2D takes 1,750 applications rather than 4,123-4,252 at
+    0.3 |G|, and 1,328 rather than 3,024-3,083 at 0.05 |G| (4 round-off
     seeds of the steady state, which no longer change the modes found).
 
     Which modes to find is a question of cost alone, one rule decided
