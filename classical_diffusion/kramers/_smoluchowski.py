@@ -1,11 +1,8 @@
-# cspell: ignore eigh
-"""The overdamped (Smoluchowski) limit, solved exactly from the eigenvectors of its symmetrised generator."""
+"""The generator of the overdamped (Smoluchowski) limit: the gradient operator A_+ on the plane waves, and the equilibrium amplitude."""
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
-import scipy.linalg
 
 from classical_diffusion.kramers._model import get_fourier_coefficients, get_rows
 
@@ -16,18 +13,6 @@ if TYPE_CHECKING:
         IntArray,
         Model,
     )
-
-
-@dataclass(frozen=True, kw_only=True)
-class Spectrum:
-    """The decay rates of the Smoluchowski generator at K, and the weight of each in a measurement.
-
-    A measurement <u| e^{L t} |u> / <w|w> is sum_j weights_j e^{-rates_j t}.
-    """
-
-    rates: FloatArray
-    """The decay rates, slowest first."""
-    weights: FloatArray
 
 
 def _get_index(vectors: IntArray) -> dict[tuple[int, ...], int]:
@@ -67,24 +52,11 @@ def get_gradient_operator(
     return operator
 
 
-def get_generator(model: Model, vectors: IntArray, delta_k: FloatArray) -> ComplexArray:
-    """Get -L = D_0 sum_j A_+j^dag A_+j at K on the plane waves, Hermitian and positive semidefinite."""
-    a = get_gradient_operator(model, vectors, delta_k)
-    return np.einsum("jgm,jgn->mn", a.conj(), a) / model.friction
-
-
 def get_amplitude(model: Model, vectors: IntArray, n_grid: int) -> ComplexArray:
     """Get the plane wave coefficients of the equilibrium amplitude w = e^{-V / 2}."""
     return get_fourier_coefficients(
         model, vectors, lambda v: np.exp(-v / 2), n_grid=n_grid
     )
-
-
-def get_spectrum(generator: ComplexArray, state: ComplexArray, norm: float) -> Spectrum:
-    """Get the decay rates of -L and the weights |<u_j|state>|^2 / norm of the measurement <state| e^{L t} |state> / norm."""
-    rates, vectors = scipy.linalg.eigh(generator)
-    weights = np.abs(vectors.conj().T @ state) ** 2 / norm
-    return Spectrum(rates=np.maximum(rates, 0.0), weights=weights)
 
 
 def get_grid_size(vectors: IntArray) -> int:

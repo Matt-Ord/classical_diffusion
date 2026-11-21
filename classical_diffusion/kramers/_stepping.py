@@ -9,11 +9,11 @@ import scipy.linalg
 import scipy.sparse
 import scipy.sparse.linalg
 
-from classical_diffusion.kramers._operator import get_hermite_indices
 from classical_diffusion.kramers._real import (
     _get_ladder_matrices,
     _get_plane_wave_operators,
     _on_indices,
+    get_hermite_indices,
     get_momentum_reach,
     get_width,
 )
@@ -248,54 +248,6 @@ def propagate_form(  # ruff:ignore[too-many-arguments]
             c = step.norm * scipy.linalg.expm((half[i] - t) * augmented)[:rows, 0]
             out[i] = c @ form @ c
             i += 1
-    return Propagation(values=out, n_applications=count)
-
-
-def propagate_integrals(  # ruff:ignore[too-many-arguments]
-    apply: Callable[[FloatArray], FloatArray],
-    start: FloatArray,
-    observable: FloatArray,
-    times: FloatArray,
-    *,
-    tol: float,
-    m: int = 30,
-) -> Propagation:
-    """Get o^T e^{L t} u, o^T int_0^t e^{L s} u ds and o^T int_0^t (t - s) e^{L s} u ds at the times, (n_times, 3).
-
-    The integrals are exact within each step, from the exponential of H
-    augmented by two rows (phi_1 and phi_2 of Saad 1992).
-    """
-    out = np.zeros((len(times), 3))
-    count, i = 0, 0
-    first = second = 0.0
-    while i < len(times) and times[i] == 0:
-        out[i, 0] = observable @ start
-        i += 1
-    if i == len(times):
-        return Propagation(values=out, n_applications=0)
-    for t, length, step, augmented in _steps(
-        apply, start, float(times[-1]), tol=tol, m=m, extra=2
-    ):
-        count += step.basis.shape[0]
-        rows = step.basis.shape[0]
-        projected = step.norm * (step.basis @ observable)
-
-        def measure(
-            dt: float,
-            augmented: FloatArray = augmented,
-            projected: FloatArray = projected,
-            rows: int = rows,
-        ) -> FloatArray:
-            e = scipy.linalg.expm(dt * augmented)
-            return projected @ e[:rows, [0, rows, rows + 1]]
-
-        while i < len(times) and times[i] <= t + length * (1 + 1e-12):
-            dt = times[i] - t
-            value, once, twice = measure(dt)
-            out[i] = (value, first + once, second + dt * first + twice)
-            i += 1
-        _, once, twice = measure(length)
-        second, first = second + length * first + twice, first + once
     return Propagation(values=out, n_applications=count)
 
 

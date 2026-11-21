@@ -9,8 +9,7 @@ import numpy as np
 import scipy.sparse
 import scipy.sparse.linalg
 
-from classical_diffusion.caldeira_leggett import SLOW_RATE, SlowModes
-from classical_diffusion.caldeira_leggett._solver import RmsResult
+from classical_diffusion._results import SLOW_RATE, RmsResult, SlowModes
 from classical_diffusion.kramers._config import DEFAULT_CONFIG, KramersConfig
 from classical_diffusion.kramers._model import (
     Model,

@@ -2,14 +2,14 @@
 """The Kramers operator in its real form, in scaled Hermite functions of the momentum and plane waves of the position, as a sparse matrix."""
 
 import functools
+import itertools
 from typing import TYPE_CHECKING
 
 import numpy as np
 import scipy.sparse
 
-from classical_diffusion.caldeira_leggett._model import get_saddle_energy
+from classical_diffusion._periodic import get_saddle_energy
 from classical_diffusion.kramers._model import get_rows
-from classical_diffusion.kramers._operator import get_hermite_indices
 
 if TYPE_CHECKING:
     from classical_diffusion.kramers._model import (
@@ -18,6 +18,18 @@ if TYPE_CHECKING:
         IntArray,
         Model,
     )
+
+
+def get_hermite_indices(n_dim: int, max_order: int) -> IntArray:
+    """Get the multi-indices (n_1, ..., n_d) of total order up to max_order, (n_hermite, n_dim), lowest order first."""
+    indices = [
+        n
+        for total in range(max_order + 1)
+        for n in itertools.product(range(total + 1), repeat=n_dim)
+        if sum(n) == total
+    ]
+    return np.array(indices, dtype=np.int64).reshape(-1, n_dim)
+
 
 _THERMAL_WIDTH = np.sqrt(2.0)
 """The width s of the Hermite functions h_n(p / s) / sqrt(s) whose first is sqrt of the Maxwellian, e^{-p^2 / 4}."""
@@ -41,9 +53,7 @@ def get_momentum_reach(model: Model) -> float:
 
 @functools.cache
 def _get_momentum_reach(potential: tuple, n_dim: int) -> float:
-    saddle, minimum = get_saddle_energy(
-        tuple((g, float(np.real(v))) for g, v in potential), n_dim
-    )
+    saddle, minimum = get_saddle_energy(potential, n_dim)
     return float(np.sqrt(2 * (saddle - minimum + _MARGIN)))
 
 

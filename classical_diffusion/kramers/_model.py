@@ -3,21 +3,26 @@
 # cspell: ignore ifftn fftn
 import itertools
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 
+from classical_diffusion._periodic import (
+    IntVector,
+    get_potential_on_grid,
+    get_potential_terms,
+    get_reciprocal,
+    get_vectors_within,
+)
 from classical_diffusion.system import unit_with_trajectory_scale
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from classical_diffusion._periodic import Terms
+    from classical_diffusion._results import ComplexArray, FloatArray, IntArray
     from classical_diffusion.langevin._system import PeriodicSystem
     from classical_diffusion.system import UnitSystem
-
-type FloatArray = np.ndarray[Any, np.dtype[np.float64]]
-type IntArray = np.ndarray[Any, np.dtype[np.int64]]
-type ComplexArray = np.ndarray[Any, np.dtype[np.complex128]]
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -35,8 +40,8 @@ class Model:
     units: UnitSystem
     reciprocal: FloatArray
     """The primitive reciprocal lattice vectors, as rows, (n_dim, n_dim)."""
-    potential: tuple[tuple[tuple[int, ...], complex], ...]
-    """The Fourier components V_G of the potential in units of k_B T, for G = c @ reciprocal, with V_{-G} = V_G^*."""
+    potential: Terms
+    """The Fourier components V_G of the potential in units of k_B T, for G = c @ reciprocal, with V_{-G} = V_G."""
     friction: float
 
     @property
@@ -56,12 +61,8 @@ def build_model(system: PeriodicSystem) -> Model:
         time=length / velocity,
         momentum=system.m * velocity,
     )
-    reciprocal = 2 * np.pi * np.linalg.inv(system.lattice_vectors).T * length
-    potential = list[tuple[tuple[int, ...], complex]]()
-    for term in system.terms:
-        # a cos(g . x) = (a / 2) (e^{i g . x} + e^{-i g . x})
-        half = term.amplitude / (2 * kbt)
-        potential.extend([(term.miller, half), (tuple(-n for n in term.miller), half)])
+    reciprocal = get_reciprocal(system, length)
+    potential = list(get_potential_terms(system))
     # The constant of the system puts the minimum of its potential at zero,
     # which keeps e^{-V / 2} of order one in the wells
     potential.append(((0,) * len(reciprocal), system.params[-1] / kbt))
@@ -73,12 +74,10 @@ def build_model(system: PeriodicSystem) -> Model:
     )
 
 
-def _merge(
-    terms: list[tuple[tuple[int, ...], complex]],
-) -> tuple[tuple[tuple[int, ...], complex], ...]:
-    out = dict[tuple[int, ...], complex]()
+def _merge(terms: list[tuple[IntVector, float]]) -> Terms:
+    out = dict[IntVector, float]()
     for g, v in terms:
-        out[g] = out.get(g, 0) + v
+        out[g] = out.get(g, 0.0) + v
     return tuple((g, v) for g, v in out.items() if v != 0)
 
 
@@ -98,12 +97,8 @@ def get_grid_function(
     model: Model, n_grid: int, f: Callable[[FloatArray], FloatArray]
 ) -> ComplexArray:
     """Get the Fourier coefficients c_G, G in [-n_grid / 2, n_grid / 2)^d, of f(V(u)) for u on a grid of the unit cell, by FFT."""
-    axes = [np.arange(n_grid) / n_grid] * model.n_dim
-    u = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1)
-    values = np.zeros(u.shape[:-1], dtype=np.complex128)
-    for g, v_g in model.potential:
-        values += v_g * np.exp(2j * np.pi * (u @ np.array(g, dtype=float)))
-    return np.fft.fftn(f(values.real)) / n_grid**model.n_dim
+    values = get_potential_on_grid(model.potential, model.n_dim, n_grid)
+    return np.fft.fftn(f(values)) / n_grid**model.n_dim
 
 
 def get_fourier_coefficients(
@@ -160,8 +155,6 @@ def get_plane_waves(model: Model, tol: float) -> IntArray:
 
 def get_plane_waves_within(model: Model, radius: float) -> IntArray:
     """Get the plane waves |G| <= radius, as integer vectors, shortest first."""
-    s_min = np.linalg.svd(model.reciprocal, compute_uv=False).min()
-    box = get_box_vectors(int(np.ceil(radius / s_min)), model.n_dim)
-    lengths = np.linalg.norm(box @ model.reciprocal, axis=-1)
-    keep = lengths <= radius + 1e-12
-    return box[keep][np.argsort(lengths[keep], kind="stable")]
+    vectors = get_vectors_within(model.reciprocal, radius + 1e-12)
+    lengths = np.linalg.norm(vectors @ model.reciprocal, axis=-1)
+    return vectors[np.argsort(lengths, kind="stable")]

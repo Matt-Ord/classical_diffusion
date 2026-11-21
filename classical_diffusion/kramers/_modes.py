@@ -32,11 +32,6 @@ class Modes:
         keep = self.rates.real <= 0
         return (np.exp(np.outer(times, self.rates[keep])) @ self.weights[keep]).real
 
-    def integral(self) -> float:
-        """int_0^inf C(t) dt."""
-        keep = self._decaying()
-        return float(np.sum(self.weights[keep] / -self.rates[keep]).real)
-
     def double_integral(self, times: FloatArray) -> FloatArray:
         """int_0^t (t - u) C(u) du at the times."""
         keep = self._decaying()

@@ -9,8 +9,7 @@ import scipy.linalg
 import scipy.sparse
 import scipy.sparse.linalg
 
-from classical_diffusion.caldeira_leggett import SlowModes
-from classical_diffusion.caldeira_leggett._solver import RmsResult
+from classical_diffusion._results import RmsResult, SlowModes
 from classical_diffusion.kramers._config import DEFAULT_CONFIG, KramersConfig
 from classical_diffusion.kramers._lanczos import Quadrature, get_lanczos_quadrature
 from classical_diffusion.kramers._model import (
@@ -101,14 +100,6 @@ def _converged_on(
         )
 
     return converged
-
-
-def _check_times(times: FloatArray) -> FloatArray:
-    times = np.asarray(times, dtype=np.float64)
-    if times[0] != 0 or np.any(np.diff(times) <= 0):
-        msg = "The times must increase from zero"
-        raise ValueError(msg)
-    return times
 
 
 def _scaled_delta_k(
