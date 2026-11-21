@@ -7,10 +7,11 @@ from typing import override
 class CaldeiraLeggettConfig:
     """The convergence parameters of the steady state of the Caldeira-Leggett master equation.
 
-    The basis is set by friction_tol, max_energy and plane_wave_energy, and the
-    linear solves by the rest. Every function starts from the steady state, so
-    every function takes these, and the steady state is cached by them. The
-    time steps of an ISF are set separately (`solve_isf`). Energies are in
+    The basis is set by friction_tol (the cell) and basis_tol (the bands and
+    plane waves), and the linear solves by linear_rtol. Every function
+    starts from the steady state, so every function takes these, and the
+    steady state is cached by them. The
+    time steps of an ISF are set separately (`EvolutionConfig`). Energies are in
     units of k_B T.
     """
 
@@ -23,30 +24,17 @@ class CaldeiraLeggettConfig:
     The error is taken at the coherence length of a free particle,
     hbar / sqrt(m k_B T).
     """
-    max_energy: float = 12.0
-    """The energy above the saddle of the potential, or the ground state if it is higher, up to which bands are kept: the states which are occupied."""
-    extra_bands: int = 6
-    """extra_bands**n_dim more bands are kept above max_energy: the states which complete the basis.
+    basis_tol: float = 1e-4
+    """The error allowed from the basis of bands and plane waves, in D relative to D and in the ISF.
 
-    The bands above the occupied ones are never occupied, but they are the
-    intermediate states of the Lamb shift and of the response to the twist
-    which gives D, whose sum restores the bare mass (the f-sum rule). D is the
-    small difference of two terms which each depend on it, so it needs a
-    number of them which grows with the dimension, not an energy: hydrogen on
-    Cu(111) needs about 8 bands in 1D and 43 in 2D. With bands to 12 k_B T and
-    6^2 more (52), D for hydrogen in 2D is within 1e-5 of converged, where
-    with 4^2 or 5^2 more it is 6e-4 and 9e-4 high, and with bands to 16 k_B T
-    and none more 0.5%: the error is erratic, as single bands enter. Lithium
-    in 2D has 139 bands within 12 k_B T, for D 1.6e-4 low, and 175 with
-    6^2 more; in 1D every system tested is within 1e-7 with 6 more. The high
-    bands cannot be eliminated instead, as no gap separates them from those
-    kept.
-    """
-    plane_wave_energy: float | None = None
-    """The kinetic energy up to which plane waves are kept to build the bands.
-
-    By default, 2.5 times the largest kinetic energy that the highest band can
-    classically have, its height above the minimum of the potential.
+    No cutoff is set by hand: the bands and plane waves are raised until the
+    population the steady state leaves at their edge, times D_free / D
+    (D_free = k_B T / m gamma) and a ratio measured for the system from the
+    change of D between two bases, is below it (`_caldeira_leggett._get_basis`),
+    and for each ISF until rho e^{-i dK x} loses less than it above the
+    highest band (`_caldeira_leggett._get_sector`). Against converged
+    references (H, Li and Na on Cu(111) in 1D and 2D, and 11 harder systems)
+    every result was within 0.35 of it.
     """
     linear_rtol: float = 1e-12
     """The relative residual of each linear solve (BiCGSTAB), or its floor from round off if that is higher.
@@ -56,12 +44,6 @@ class CaldeiraLeggettConfig:
     for hydrogen on Cu(111) at 300 times its mass, a residual of 1e-8 leaves
     D wrong by 2e-3, and of 1e-12 by 1e-7.
     """
-    linear_maxiter: int = 1000
-    """The largest number of BiCGSTAB iterations in each pass."""
-    linear_inner_rtol: float = 1e-4
-    """The factor by which each pass of BiCGSTAB reduces the residual."""
-    linear_refinements: int = 20
-    """The largest number of passes of BiCGSTAB, each from the true residual."""
 
     @override
     def __hash__(self) -> int:
@@ -70,3 +52,23 @@ class CaldeiraLeggettConfig:
 
 
 DEFAULT_CONFIG = CaldeiraLeggettConfig()
+
+
+@dataclass(frozen=True, kw_only=True)
+class EvolutionConfig:
+    """The convergence of an ISF or mean square displacement (`get_reduced_evolution`), and of the slow modes (`get_slow_modes`)."""
+
+    stop: float = 1e-6
+    """The error allowed in the measurement at each time, relative to its value at t = 0.
+
+    The evolution is by two-sided Lanczos, which stops once the measurement
+    at the times changes by less than this over two blocks of steps, and
+    its Laplace transform at 1 / span agrees with one found directly
+    (`get_reduced_evolution`). Below its round off floor (1e-16 to 2e-9 on
+    H, Li and Na on Cu(111)) it warns and returns what it reached.
+    """
+    mode_rtol: float = 1e-6
+    """The relative residual |L r - lambda r| / |lambda| of each slow mode."""
+
+
+DEFAULT_EVOLUTION_CONFIG = EvolutionConfig()

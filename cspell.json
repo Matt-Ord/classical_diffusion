@@ -39,6 +39,7 @@
         "ndindex",
         "normalised",
         "orthogonalized",
+        "Pade",
         "pcolormesh",
         "pickler",
         "PRNG",

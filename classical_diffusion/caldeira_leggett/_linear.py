@@ -1,16 +1,19 @@
 """Linear solves of a Liouvillian, (L - s) X = rhs, in the eigenvectors of its effective Hamiltonians, preconditioned by the exact inverse of its no-jump part."""
 
-# cspell: ignore maxiter bicgstab Hamiltonians
+# cspell: ignore maxiter bicgstab Hamiltonians vdot BLAS orthogonalize fori
 from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
-import jax.scipy.sparse.linalg
 import numpy as np
 
+from classical_diffusion.caldeira_leggett._liouvillian import add_jumps
+
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from classical_diffusion.caldeira_leggett._config import CaldeiraLeggettConfig
     from classical_diffusion.caldeira_leggett._liouvillian import Liouvillian
 
@@ -36,6 +39,7 @@ class EigenLiouvillian:
     rates: jax.Array
     """Z, (n_kappa, n_bands, n_bands)."""
     jumps_ket: jax.Array
+    """The transformed jumps, (n_ops, n_kappa, n_bands, n_bands), or with at least _GAUSS_BANDS bands (n_ops, 3, n_kappa, n_bands, n_bands) as their real part, imaginary part and the sum of both (`_product`)."""
     jumps_bra_dagger: jax.Array
     sources: jax.Array
     """(n_ops, n_kappa), the index of the kappa from which each jump reaches kappa."""
@@ -47,6 +51,12 @@ class EigenLiouvillian:
     bra_inverse_dagger: jax.Array
     trace: jax.Array
     """W = (B^dagger A)^T, so that Tr[X] = sum(W * Y)."""
+    adjoint_ket: jax.Array
+    """The transformed jumps of L^dagger, K_j^dagger, stored as jumps_ket (`apply_adjoint`)."""
+    adjoint_bra_dagger: jax.Array
+    """B_j^dagger, the bra side of the jumps of L^dagger."""
+    targets: jax.Array
+    """(n_ops, n_kappa), the index of the kappa each jump reaches from kappa, the inverse of sources."""
 
 
 def get_eigen_liouvillian(liouvillian: Liouvillian) -> EigenLiouvillian:
@@ -60,14 +70,17 @@ def get_eigen_liouvillian(liouvillian: Liouvillian) -> EigenLiouvillian:
     sources = np.asarray(liouvillian.sources)
     # The jump j takes kappa to targets[j, kappa], as sources[j, targets[j, kappa]] = kappa
     targets = np.argsort(sources, axis=-1)
-    jumps_ket = np.asarray(liouvillian.jumps_ket)
-    jumps_bra_dagger = np.asarray(liouvillian.jumps_bra_dagger)
+    jumps_ket = a_inverse[targets] @ np.asarray(liouvillian.jumps_ket) @ a
+    jumps_bra_dagger = (
+        b_dagger @ np.asarray(liouvillian.jumps_bra_dagger) @ b_inverse_dagger[targets]
+    )
     return EigenLiouvillian(
         rates=jnp.asarray(-1j * (mu[:, :, None] - nu.conj()[:, None, :])),
-        jumps_ket=jnp.asarray(a_inverse[targets] @ jumps_ket @ a),
-        jumps_bra_dagger=jnp.asarray(
-            b_dagger @ jumps_bra_dagger @ b_inverse_dagger[targets]
-        ),
+        jumps_ket=_parts(jumps_ket),
+        jumps_bra_dagger=_parts(jumps_bra_dagger),
+        adjoint_ket=_parts(_dagger(jumps_ket)),
+        adjoint_bra_dagger=_parts(_dagger(jumps_bra_dagger)),
+        targets=jnp.asarray(targets),
         sources=jnp.asarray(sources),
         ket_vectors=jnp.asarray(a),
         ket_inverse=jnp.asarray(a_inverse),
@@ -75,6 +88,42 @@ def get_eigen_liouvillian(liouvillian: Liouvillian) -> EigenLiouvillian:
         bra_inverse_dagger=jnp.asarray(b_inverse_dagger),
         trace=jnp.asarray((b_dagger @ a).swapaxes(-1, -2)),
     )
+
+
+_GAUSS_BANDS = 64
+"""The number of bands from which the jumps are applied as real products (`_product`).
+
+Per application of L, complex against real products: 2D Li (139 bands)
+122 -> 79 ms, 2D H (23 bands) 5.2 -> 6.7 ms, 1D Li (17 bands) 0.06 ->
+0.10 ms, as XLA spends longer on each small product than on its
+arithmetic.
+"""
+
+
+def _dagger(x: np.ndarray) -> np.ndarray:
+    return x.conj().swapaxes(-1, -2)
+
+
+def _parts(x: np.ndarray) -> jax.Array:
+    """Get the jumps as stored: (n, ...), or with at least _GAUSS_BANDS bands the real part, imaginary part and their sum of each matrix, (n, 3, ...)."""
+    if x.shape[-1] < _GAUSS_BANDS:
+        return jnp.asarray(x)
+    return jnp.asarray(np.stack([x.real, x.imag, x.real + x.imag], axis=1))
+
+
+def _product(
+    a: tuple[jax.Array, jax.Array, jax.Array], b: tuple[jax.Array, jax.Array, jax.Array]
+) -> tuple[jax.Array, jax.Array]:
+    """Get the real and imaginary parts of a product of complex matrices, from three real products (Gauss).
+
+    a and b are each (real, imaginary, real + imaginary). XLA multiplies
+    complex matrices on the CPU at about half the flop rate of real ones
+    (OpenBLAS does not): (9, 139, 139) by (9, 139, 139) takes 10.2 ms
+    complex and 1.45 ms real (OpenBLAS 5.9 and 1.45 ms), so three real
+    products take 4.4 ms.
+    """
+    p_1, p_2, p_3 = a[0] @ b[0], a[1] @ b[1], a[2] @ b[2]
+    return p_1 - p_2, p_3 - p_1 - p_2
 
 
 def to_eigen(eigen: EigenLiouvillian, x: jax.Array) -> jax.Array:
@@ -89,122 +138,282 @@ def from_eigen(eigen: EigenLiouvillian, y: jax.Array) -> jax.Array:
 
 @jax.jit
 def apply_eigen(eigen: EigenLiouvillian, y: jax.Array, shift: jax.Array) -> jax.Array:
-    """Apply L - shift to a state in the eigenvectors, adding the jumps one at a time."""
-
-    def add_jump(
-        out: jax.Array, jump: tuple[jax.Array, jax.Array, jax.Array]
-    ) -> tuple[jax.Array, None]:
-        ket, bra_dagger, sources = jump
-        return out + (ket @ y @ bra_dagger)[sources], None
-
-    out, _ = jax.lax.scan(
-        add_jump,
-        (eigen.rates - shift) * y,
-        (eigen.jumps_ket, eigen.jumps_bra_dagger, eigen.sources),
-    )
-    return out
-
-
-def _remove_trace(eigen: EigenLiouvillian, y: jax.Array) -> jax.Array:
-    """Remove the trace of a state Y along W^*, which keeps it in the range of L."""
-    w = eigen.trace.conj()
-    return y - w * (jnp.sum(eigen.trace * y) / jnp.sum(eigen.trace * w))
-
-
-@partial(jax.jit, static_argnames=("maxiter", "singular"))
-def _bicgstab(  # ruff:ignore[too-many-arguments]
-    eigen: EigenLiouvillian,
-    residual: jax.Array,
-    rtol: jax.Array,
-    shift: jax.Array,
-    *,
-    maxiter: int,
-    singular: bool,
-) -> jax.Array:
-    # Preconditioned on the right, (L - s) M y = residual with x = M y and
-    # M = (N - s)^-1, so that the tolerance applies to the true residual rather
-    # than to M (b - L x)
-    rates = eigen.rates - shift
-
-    def operator(y: jax.Array) -> jax.Array:
-        out = apply_eigen(eigen, y / rates, shift)
-        # L conserves the trace, so L X has none, but the eigenvectors of K
-        # are not orthogonal and the round off of the trace of L X is then
-        # larger than in the bands. At s = 0, where L is singular, BiCGSTAB
-        # amplifies it once the residual nears it, so it is removed
-        return _remove_trace(eigen, out) if singular else out
-
-    y, _ = jax.scipy.sparse.linalg.bicgstab(
-        operator,
-        _remove_trace(eigen, residual) if singular else residual,
-        tol=rtol,
-        atol=0.0,
-        maxiter=maxiter,
-    )
-    return y / rates
+    """Apply L - shift to a state in the eigenvectors, adding the jumps one at a time, with at least _GAUSS_BANDS bands as real products."""
+    if eigen.jumps_ket.ndim == y.ndim + 1:
+        return add_jumps(
+            (eigen.rates - shift) * y,
+            y,
+            (eigen.jumps_ket, eigen.jumps_bra_dagger, eigen.sources),
+        )
+    # The barriers keep XLA from fusing the parts into the products, which
+    # would then no longer be calls to its matrix product
+    barrier = jax.lax.optimization_barrier
+    parts = barrier((y.real, y.imag, y.real + y.imag))
+    real, imaginary = jnp.zeros(y.shape), jnp.zeros(y.shape)
+    for ket, bra_dagger, sources in zip(
+        eigen.jumps_ket, eigen.jumps_bra_dagger, eigen.sources, strict=True
+    ):
+        left = _product(tuple(ket), parts)
+        left = barrier((*left, left[0] + left[1]))
+        out = _product(left, tuple(bra_dagger))
+        real += out[0][sources]
+        imaginary += out[1][sources]
+    return (eigen.rates - shift) * y + (real + 1j * imaginary)
 
 
-def solve_eigen(
-    eigen: EigenLiouvillian,
+@jax.jit
+def apply_adjoint(eigen: EigenLiouvillian, w: jax.Array, shift: jax.Array) -> jax.Array:
+    """Apply (L - shift)^dagger to a state in the eigenvectors, the adjoint of `apply_eigen` in <w, y> = sum(conj(w) * y).
+
+    As L Y[kappa] = Z Y[kappa] + sum_j K_j[s] Y[s] B_j[s] with s the source of
+    kappa, L^dagger W[s] = conj(Z) W[s] + sum_j K_j[s]^dagger W[t_j(s)]
+    B_j[s]^dagger with t_j(s) the target of s: the same products, as many
+    as for L.
+    """
+    rates = (eigen.rates - shift).conj()
+    if eigen.adjoint_ket.ndim == w.ndim + 1:
+        return add_jumps(
+            rates * w,
+            w,
+            (eigen.adjoint_ket, eigen.adjoint_bra_dagger, eigen.targets),
+            gather=True,
+        )
+    barrier = jax.lax.optimization_barrier
+    real, imaginary = jnp.zeros(w.shape), jnp.zeros(w.shape)
+    for ket, bra_dagger, targets in zip(
+        eigen.adjoint_ket, eigen.adjoint_bra_dagger, eigen.targets, strict=True
+    ):
+        moved = w[targets]
+        parts = barrier((moved.real, moved.imag, moved.real + moved.imag))
+        left = _product(tuple(ket), parts)
+        left = barrier((*left, left[0] + left[1]))
+        out = _product(left, tuple(bra_dagger))
+        real += out[0]
+        imaginary += out[1]
+    return rates * w + (real + 1j * imaginary)
+
+
+def bicgstab(
+    operator: Callable[[jax.Array], jax.Array],
     rhs: jax.Array,
-    config: CaldeiraLeggettConfig,
+    rtol: jax.Array,
+    maxiter: int,
+) -> tuple[jax.Array, jax.Array]:
+    """Solve A x = rhs from x = 0 by BiCGSTAB, and get the number of iterations, each two applications of A.
+
+    It stops once |rhs - A x| <= rtol |rhs|, after maxiter iterations, or on
+    a breakdown, which the next pass of `refine` recovers from.
+    """
+    target = rtol * jnp.linalg.norm(rhs)
+    zero = jnp.zeros_like(rhs)
+    one = jnp.asarray(1.0 + 0j)
+
+    def proceed(carry: tuple) -> jax.Array:
+        _x, r, _p, _v, rho, _alpha, omega, k = carry
+        return (k < maxiter) & (jnp.linalg.norm(r) > target) & (rho != 0) & (omega != 0)
+
+    def iterate(carry: tuple) -> tuple:
+        x, r, p, v, rho, alpha, omega, k = carry
+        rho_new = jnp.vdot(rhs, r)
+        p = r + (rho_new / rho) * (alpha / omega) * (p - omega * v)
+        v = operator(p)
+        alpha = rho_new / jnp.vdot(rhs, v)
+        s = r - alpha * v
+        t = operator(s)
+        tt = jnp.vdot(t, t)
+        # s = 0 once the half step has converged, and then so is t
+        omega = jnp.where(tt != 0, jnp.vdot(t, s) / jnp.where(tt != 0, tt, 1), 0)
+        return (
+            x + alpha * p + omega * s,
+            s - omega * t,
+            p,
+            v,
+            rho_new,
+            alpha,
+            omega,
+            k + 1,
+        )
+
+    x, *_, k = jax.lax.while_loop(
+        proceed, iterate, (zero, rhs, zero, zero, one, one, one, jnp.asarray(0))
+    )
+    return x, k
+
+
+def refine(  # ruff:ignore[too-many-arguments]
+    apply: Callable[[jax.Array], jax.Array],
+    solve_pass: Callable[[jax.Array, jax.Array], tuple[jax.Array, jax.Array]],
+    rhs: jax.Array,
     *,
-    shift: complex = 0.0,
-    guess: jax.Array | None = None,
-) -> jax.Array:
-    """Solve (L - shift) Y = rhs in the eigenvectors with BiCGSTAB, preconditioned on the right by (N - shift)^-1, N the no-jump part of L.
+    rtol: float,
+    inner_rtol: float,
+    passes: int,
+) -> tuple[jax.Array, int]:
+    """Solve A x = rhs by passes of an inner solver, each from the true residual (iterative refinement), and get the applications of A.
 
-    The solve starts from the guess, if there is one and its residual is
-    below |rhs|, and from zero otherwise.
-
-    BiCGSTAB keeps a fixed handful of vectors, where GMRES keeps a basis
-    which grows until it restarts, and a short restart can stall: for
-    hydrogen on Cu(111) in 2D, GMRES(30) takes 18 times longer to find D, in 4
-    times the memory. Its residual is not monotonic, so each pass of BiCGSTAB
-    only reduces the true residual by linear_inner_rtol, and the next pass
-    starts afresh from that residual (iterative refinement), which also
-    recovers from a breakdown. The passes stop once the residual is below
-    linear_rtol of |rhs|, or once it no longer halves, when round off has set
-    its floor.
+    solve_pass(residual, rtol) gives an approximate solution and its
+    applications of A. Its residual is not monotonic, so each pass only reduces the
+    true residual by inner_rtol (or to rtol), and the next starts afresh from
+    that residual, which also recovers from a breakdown. The passes stop once
+    the residual is below rtol of |rhs|, or once it no longer halves, when
+    round off has set its floor.
 
     Raises
     ------
     RuntimeError
-        If the residual is still falling after linear_refinements passes.
+        If the residual is still falling after the passes.
     """
-    s = jnp.asarray(shift, dtype=complex)
-    norm = float(jnp.linalg.norm(rhs))
+    norm = max(float(jnp.linalg.norm(rhs)), 1e-300)
     solution, residual, best = jnp.zeros_like(rhs), rhs, 1.0
-    if guess is not None:
-        guess_residual = rhs - apply_eigen(eigen, guess, s)
-        relative = float(jnp.linalg.norm(guess_residual)) / norm
-        if relative < best:
-            solution, residual, best = guess, guess_residual, relative
-    for _ in range(config.linear_refinements):
-        update = solution + _bicgstab(
-            eigen,
-            residual,
-            jnp.asarray(max(config.linear_inner_rtol, config.linear_rtol / best)),
-            s,
-            maxiter=config.linear_maxiter,
-            singular=shift == 0,
-        )
-        update_residual = rhs - apply_eigen(eigen, update, s)
+    applications = 0
+    for _ in range(passes):
+        step, count = solve_pass(residual, jnp.asarray(max(inner_rtol, rtol / best)))
+        update = solution + step
+        update_residual = rhs - apply(update)
+        applications += int(count) + 1
         relative = float(jnp.linalg.norm(update_residual)) / norm
         if relative > best / 2:
-            return solution
+            return solution, applications
         solution, residual, best = update, update_residual, relative
-        if best <= config.linear_rtol:
-            return solution
-    msg = (
-        f"BiCGSTAB reached a residual of {best:.1e}, above {config.linear_rtol:.1e}, "
-        f"after {config.linear_refinements} passes"
-    )
+        if best <= rtol:
+            return solution, applications
+    msg = f"BiCGSTAB reached a residual of {best:.1e}, above {rtol:.1e}, after {passes} passes"
     raise RuntimeError(msg)
+
+
+MAXITER = 1000
+"""The most BiCGSTAB iterations in each pass of a linear solve (`refine`)."""
+INNER_RTOL = 1e-4
+"""The factor by which each pass of BiCGSTAB reduces the residual."""
+PASSES = 20
+"""The most passes of BiCGSTAB, each from the true residual.
+
+These were settings of `CaldeiraLeggettConfig` that nothing varied, and the
+coefficient solves of `get_slow_modes` had their own 10. For H, Li and Na on
+Cu(111) in 1D and H in 2D, every singular solve (steady state, D, the MSD
+responses) takes 3 passes and every coefficient solve 2.
+"""
+
+
+@partial(jax.jit, static_argnames=("maxiter",))
+def _solve_pass(
+    eigen: EigenLiouvillian, residual: jax.Array, rtol: jax.Array, *, maxiter: int
+) -> tuple[jax.Array, jax.Array]:
+    # Preconditioned on the right, L M y = residual with x = M y and M = N^-1,
+    # so that the tolerance applies to the true residual rather than to
+    # M (b - L x)
+    y, iterations = bicgstab(
+        lambda y: apply_eigen(eigen, y / eigen.rates, jnp.asarray(0j)),
+        residual,
+        rtol,
+        maxiter,
+    )
+    return y / eigen.rates, 2 * iterations
 
 
 def solve(
     eigen: EigenLiouvillian, rhs: jax.Array, config: CaldeiraLeggettConfig
 ) -> jax.Array:
-    """Solve L X = rhs for a state X in the basis of the bands (`solve_eigen`)."""
-    return from_eigen(eigen, solve_eigen(eigen, to_eigen(eigen, rhs), config))
+    """Solve L X = rhs for a state X in the basis of the bands, for a rhs in the range of L.
+
+    BiCGSTAB in the eigenvectors of K, preconditioned on the right by N^-1, N
+    the no-jump part of L, with iterative refinement (`refine`). BiCGSTAB
+    keeps a fixed handful of vectors, where GMRES keeps a basis which grows
+    until it restarts, and a short restart can stall: for hydrogen on
+    Cu(111) in 2D, GMRES(30) takes 18 times longer to find D, in 4 times the
+    memory. It raises a RuntimeError if the residual is still falling after
+    PASSES passes.
+
+    L is singular, and the round off of the trace of L X is larger in the
+    eigenvectors of K, which are not orthogonal, than in the bands. Removing
+    it in each iteration changes neither the applications of L (within 3%)
+    nor D (within 5e-10) for H, Li and Na on Cu(111), as the refinement stops
+    once the residual no longer halves.
+    """
+    y, _ = refine(
+        lambda y: apply_eigen(eigen, y, jnp.asarray(0j)),
+        lambda residual, rtol: _solve_pass(eigen, residual, rtol, maxiter=MAXITER),
+        to_eigen(eigen, rhs),
+        rtol=config.linear_rtol,
+        inner_rtol=INNER_RTOL,
+        passes=PASSES,
+    )
+    return from_eigen(eigen, y)
+
+
+def gmres(
+    operator: Callable[[jax.Array], jax.Array],
+    rhs: jax.Array,
+    rtol: jax.Array,
+    maxiter: int,
+) -> tuple[jax.Array, jax.Array]:
+    """Solve A x = rhs from x = 0 by GMRES without restarts, and get the number of iterations, each one application of A.
+
+    It stops once |rhs - A x| <= rtol |rhs|, or after maxiter iterations.
+    """
+    beta = jnp.linalg.norm(rhs)
+    basis = jnp.zeros((maxiter + 1, *rhs.shape), rhs.dtype).at[0].set(rhs / beta)
+    hessenberg = jnp.zeros((maxiter + 1, maxiter), rhs.dtype)
+    cosines = jnp.zeros(maxiter, rhs.dtype)
+    sines = jnp.zeros(maxiter, rhs.dtype)
+    g = jnp.zeros(maxiter + 1, rhs.dtype).at[0].set(beta)
+
+    def proceed(carry: tuple) -> jax.Array:
+        *_, g, k = carry
+        return (k < maxiter) & (jnp.abs(g[k]) > rtol * beta)
+
+    def iterate(carry: tuple) -> tuple:
+        basis, hessenberg, cosines, sines, g, k = carry
+        w = operator(basis[k])
+
+        # Modified Gram-Schmidt over the k + 1 vectors built so far only: the
+        # basis is large next to an application of L when L is cheap
+        def orthogonalize(
+            i: jax.Array, carry: tuple[jax.Array, jax.Array, jax.Array]
+        ) -> tuple[jax.Array, jax.Array, jax.Array]:
+            basis, w, h = carry
+            overlap = jnp.vdot(basis[i], w)
+            return basis, w - overlap * basis[i], h.at[i].set(overlap)
+
+        basis, w, h = jax.lax.fori_loop(
+            0, k + 1, orthogonalize, (basis, w, jnp.zeros(maxiter + 1, rhs.dtype))
+        )
+        norm = jnp.linalg.norm(w)
+        basis = basis.at[k + 1].set(w / jnp.where(norm > 0, norm, 1))
+        h = h.at[k + 1].set(norm)
+
+        # Apply the previous Givens rotations to the new column, then a new one
+        def rotate(i: jax.Array, h: jax.Array) -> jax.Array:
+            a, b = h[i], h[i + 1]
+            return (
+                h.at[i]
+                .set(cosines[i].conj() * a + sines[i].conj() * b)
+                .at[i + 1]
+                .set(-sines[i] * a + cosines[i] * b)
+            )
+
+        h = jax.lax.fori_loop(0, k, rotate, h)
+        a, b = h[k], h[k + 1]
+        r = jnp.sqrt(jnp.abs(a) ** 2 + jnp.abs(b) ** 2)
+        r = jnp.where(r > 0, r, 1)
+        c, s = a / r, b / r
+        h = h.at[k].set(c.conj() * a + s.conj() * b).at[k + 1].set(0)
+        g = g.at[k + 1].set(-s * g[k]).at[k].set(c.conj() * g[k])
+        return (
+            basis,
+            hessenberg.at[:, k].set(h),
+            cosines.at[k].set(c),
+            sines.at[k].set(s),
+            g,
+            k + 1,
+        )
+
+    basis, hessenberg, _, _, g, k = jax.lax.while_loop(
+        proceed, iterate, (basis, hessenberg, cosines, sines, g, jnp.asarray(0))
+    )
+    # Back substitution on the leading k x k of the triangular factor
+    active = jnp.arange(maxiter) < k
+    square = hessenberg[:maxiter]
+    square = jnp.where(active[:, None] & active[None, :], square, jnp.eye(maxiter))
+    y = jax.scipy.linalg.solve_triangular(square, jnp.where(active, g[:maxiter], 0))
+    return jnp.tensordot(y, basis[:maxiter], axes=1), k

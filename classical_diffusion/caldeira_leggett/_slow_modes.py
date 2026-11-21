@@ -1,36 +1,39 @@
 """The slowest modes of a measurement of exp(L t) X_0, by Jacobi-Davidson with a partial Schur form, in the eigenvectors of K."""
 
 # cspell: ignore maxiter bicgstab vdot eigenpair finfo
-import math
 from dataclasses import dataclass, field
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import scipy.linalg
 
-from classical_diffusion.caldeira_leggett._linear import EigenLiouvillian, apply_eigen
+from classical_diffusion.caldeira_leggett._linear import (
+    INNER_RTOL,
+    MAXITER,
+    PASSES,
+    EigenLiouvillian,
+    apply_eigen,
+    bicgstab,
+    gmres,
+    refine,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
+    from classical_diffusion.caldeira_leggett._config import EvolutionConfig
     from classical_diffusion.caldeira_leggett._model import ComplexArray
 
 
 @dataclass(frozen=True, kw_only=True)
 class Mode:
-    """An eigenpair L r = lambda r, |r| = 1, and its weight in a measurement of exp(L t) X_0."""
+    """An eigenvalue lambda of L and its weight in a measurement of exp(L t) X_0."""
 
     rate: complex
     """lambda."""
-    vector: jax.Array
-    """r, in the eigenvectors of K."""
-    coefficient: complex
-    """c, the weight of r in X_0 (or in what remains of it once the faster modes are removed)."""
     amplitude: complex
-    """a = measure(r) c, the weight of exp(lambda t) in the measurement."""
+    """a = measure(r) c for the eigenvector r and its weight c in X_0, the weight of exp(lambda t) in the measurement."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -47,45 +50,37 @@ class RateCut:
     rate: float
 
 
-@dataclass(frozen=True, kw_only=True)
-class CostCut:
-    """Every mode which costs fewer applications of L to find than to step through.
-
-    The modes are taken in groups of nearly equal Re lambda, conjugate or
-    degenerate partners, which only shorten the stepping together. The
-    stepping stops when the slowest mode left, of weight c, has decayed to
-    stop, at ln(|c| / stop) / |Re lambda|, and not before start_time, which is
-    stepped already. A group is found if its estimated cost, cost_factor
-    times its size times the applications per mode so far (none for the
-    first), is below step_rate times the time it saves. A group which costs
-    more than that is dropped, so a group is never worse than twice its
-    saving.
-    """
-
-    step_rate: float
-    """The applications of L per unit time of stepping."""
-    start_time: float
-    stop: float
-    cost_factor: float
-    """The cost of a mode over that of its Jacobi-Davidson iterations, which leave out its amplitude: 1.3 to 2.5 for H, Li and Na on Cu(111), so 3 bounds it."""
-
-
-type Selection = ModeCount | RateCut | CostCut
+type Selection = ModeCount | RateCut
 
 _AMPLITUDE_TOL = 1e-8
 """The smallest amplitude of a mode, relative to the measurement at t = 0, below which it is not looked for: modes the measurement cannot see, such as the steady state at dK = 0."""
 _INNER_RTOL = 0.1
 """The residual reduction of each solve of the correction equation."""
 _INNER_MAXITER = 25
+"""The most GMRES iterations, each one application of L, of each solve of the correction equation.
+
+GMRES rather than BiCGSTAB (two applications per iteration, at most 25
+iterations): over the cases of _RESTART, 7.5% fewer applications of L in
+all, and Jacobi-Davidson needs 1,106 rather than 1,605 applications to find
+the 4 modes of the ISF of hydrogen on Cu(111) in 2D at 0.3 |G|. At most 35
+or 50 GMRES iterations need 1,137 and 1,205, and a reduction of 0.01
+rather than 0.1 needs 1,312.
+"""
 _MAX_OUTER = 60
 """The largest number of iterations to find one mode."""
 _MAX_MODES = 50
 _ROUGH = 0.1
 """The relative residual of a Ritz pair below which a selection is decided on it, as its value and weight are then close."""
-_PARTNER = 0.05
-"""The relative difference of Re lambda within which modes are a group."""
-_RESTART = 5
-"""The number of Ritz vectors kept when the search space restarts after a mode is found."""
+_RESTART = 20
+"""The most Ritz vectors kept when the search space restarts after a mode is found.
+
+The restart needs no application of L (`_Search.lock`), and keeping 20
+rather than 5 keeps more of the partners of a conjugate or degenerate
+group: over H, Li and Na on Cu(111) in 1D and H in 2D, 2.7% fewer
+applications of L.
+"""
+_INDEPENDENT = 1e-8
+"""The norm of a restart vector, once orthogonalized, below which it is dropped."""
 _STAGNATION = 1e-14
 """The norm of a new search vector, once orthogonalized, below which the search has stagnated."""
 
@@ -96,48 +91,21 @@ def _dot(a: jax.Array, b: jax.Array) -> jax.Array:
     return jnp.tensordot(a.conj(), b, axes=(axes, axes))
 
 
-def _bicgstab(
-    operator: Callable[[jax.Array], jax.Array],
-    rhs: jax.Array,
-    rtol: jax.Array,
-    maxiter: int,
-) -> tuple[jax.Array, jax.Array]:
-    """Solve A x = rhs from x = 0 by BiCGSTAB, and get the number of iterations, each two applications of A."""
-    target = rtol * jnp.linalg.norm(rhs)
-    zero = jnp.zeros_like(rhs)
-    one = jnp.asarray(1.0 + 0j)
-
-    def proceed(carry: tuple) -> jax.Array:
-        _x, r, _p, _v, rho, _alpha, _omega, k = carry
-        return (k < maxiter) & (jnp.linalg.norm(r) > target) & (rho != 0)
-
-    def iterate(carry: tuple) -> tuple:
-        x, r, p, v, rho, alpha, omega, k = carry
-        rho_new = jnp.vdot(rhs, r)
-        p = r + (rho_new / rho) * (alpha / omega) * (p - omega * v)
-        v = operator(p)
-        alpha = rho_new / jnp.vdot(rhs, v)
-        s = r - alpha * v
-        t = operator(s)
-        omega = jnp.vdot(t, s) / jnp.vdot(t, t)
-        return (
-            x + alpha * p + omega * s,
-            s - omega * t,
-            p,
-            v,
-            rho_new,
-            alpha,
-            omega,
-            k + 1,
-        )
-
-    x, *_, k = jax.lax.while_loop(
-        proceed, iterate, (zero, rhs, zero, zero, one, one, one, jnp.asarray(0))
-    )
-    return x, k
+_PAD = 8
 
 
-@partial(jax.jit, static_argnames=("maxiter",))
+def _padded(q: jax.Array) -> jax.Array:
+    """Pad a stack of states with zeros to a multiple of _PAD, at least one, so that few sizes are compiled."""
+    size = _PAD * max(-(-len(q) // _PAD), 1)
+    return jnp.concatenate([q, jnp.zeros((size - len(q), *q.shape[1:]), q.dtype)])
+
+
+def _project_out(q: jax.Array, x: jax.Array) -> jax.Array:
+    """(1 - Q Q^dagger) x for an orthonormal stack Q."""
+    return x - jnp.tensordot(_dot(q, x[None])[:, 0], q, axes=1)
+
+
+@partial(jax.jit, static_argnames=("maxiter", "method"))
 def _projected_solve(  # ruff:ignore[too-many-arguments]
     eigen: EigenLiouvillian,
     locked: jax.Array,
@@ -146,16 +114,21 @@ def _projected_solve(  # ruff:ignore[too-many-arguments]
     rtol: jax.Array,
     *,
     maxiter: int,
+    method: Literal["gmres", "bicgstab"],
 ) -> tuple[jax.Array, jax.Array]:
     """Solve P (L - theta) P t = rhs for t orthogonal to the orthonormal stack Q, P = 1 - Q Q^dagger.
 
-    BiCGSTAB, preconditioned on the right by (N - theta)^-1 projected so that
-    it keeps t orthogonal to Q, M_p z = M z - M Q (Q^dagger M Q)^-1 Q^dagger M z,
-    with M exact for the no-jump part N. Also get the number of iterations.
+    GMRES or BiCGSTAB, preconditioned on the right by (N - theta)^-1
+    projected so that it keeps t orthogonal to Q,
+    M_p z = M z - M Q (Q^dagger M Q)^-1 Q^dagger M z, with M exact for the
+    no-jump part N. Also get the number of applications of L.
     """
     rates = eigen.rates - theta
     m_q = locked / rates
-    small = _dot(locked, m_q)
+    # Rows of zeros pad Q, so that few sizes are compiled: they are made
+    # inert by a one on the diagonal of Q^dagger M Q
+    padding = jnp.all(locked == 0, axis=tuple(range(1, locked.ndim)))
+    small = _dot(locked, m_q) + jnp.diag(padding.astype(m_q.dtype))
 
     def precondition(z: jax.Array) -> jax.Array:
         m_z = z / rates
@@ -165,10 +138,13 @@ def _projected_solve(  # ruff:ignore[too-many-arguments]
     def operator(z: jax.Array) -> jax.Array:
         t = precondition(z)
         out = apply_eigen(eigen, t, theta)
-        return out - jnp.tensordot(_dot(locked, out[None])[:, 0], locked, axes=1)
+        return _project_out(locked, out)
 
-    z, iterations = _bicgstab(operator, rhs, rtol, maxiter)
-    return precondition(z), iterations
+    if method == "gmres":
+        z, iterations = gmres(operator, rhs, rtol, maxiter)
+        return precondition(z), iterations
+    z, iterations = bicgstab(operator, rhs, rtol, maxiter)
+    return precondition(z), 2 * iterations
 
 
 def _get_amplitude(  # ruff:ignore[too-many-arguments]
@@ -185,34 +161,41 @@ def _get_amplitude(  # ruff:ignore[too-many-arguments]
     The system (L - lambda) y + c r = X, r^dagger y = 0 has
     c = <l|X> / <l|r>, for l the left eigenvector, without needing l: with
     P = 1 - r r^dagger, P (L - lambda) P y = P X is well conditioned, as
-    lambda is projected out, and then c = r^dagger (X - (L - lambda) y).
+    lambda is projected out, and then c = r^dagger (X - (L - lambda) y). It
+    is solved to rtol by passes of BiCGSTAB (`refine`).
     """
     shift = jnp.asarray(rate)
+
+    def apply(y: jax.Array) -> jax.Array:
+        out = apply_eigen(eigen, y, shift)
+        return out - jnp.vdot(vector, out) * vector
+
     rhs = state - jnp.vdot(vector, state) * vector
-    norm = float(jnp.linalg.norm(rhs))
-    y, residual, best = jnp.zeros_like(state), rhs, 1.0
-    applications = 1
-    # Restarted until the residual is below rtol, or stops halving
-    for _ in range(10):
-        step, iterations = _projected_solve(
-            eigen,
-            vector[None],
-            residual,
-            shift,
-            jnp.asarray(max(1e-4, rtol / best)),
-            maxiter=1000,
+    if float(jnp.linalg.norm(rhs)) <= rtol * float(jnp.linalg.norm(state)):
+        # Less than rtol of the state is off the mode, as for the steady
+        # state at dK = 0, so y = 0 solves it to rtol: refining that rhs, of
+        # round off, to rtol of itself took 2,002 applications of L for
+        # hydrogen on Cu(111) in 1D
+        coefficient, applications = complex(jnp.vdot(vector, state)), 0
+    else:
+        y, applications = refine(
+            apply,
+            lambda residual, inner_rtol: _projected_solve(
+                eigen,
+                vector[None],
+                residual,
+                shift,
+                inner_rtol,
+                maxiter=MAXITER,
+                method="bicgstab",
+            ),
+            rhs,
+            rtol=rtol,
+            inner_rtol=INNER_RTOL,
+            passes=PASSES,
         )
-        update = y + step
-        applications += 2 * int(iterations) + 1
-        out = apply_eigen(eigen, update, shift)
-        new_residual = rhs - (out - jnp.vdot(vector, out) * vector)
-        relative = float(jnp.linalg.norm(new_residual)) / max(norm, 1e-300)
-        if relative > best / 2:
-            break
-        y, residual, best = update, new_residual, relative
-        if best <= rtol:
-            break
-    coefficient = complex(jnp.vdot(vector, state - apply_eigen(eigen, y, shift)))
+        coefficient = complex(jnp.vdot(vector, state - apply_eigen(eigen, y, shift)))
+        applications += 1
     amplitude = complex(jnp.vdot(measurement, vector)) * coefficient
     return amplitude, coefficient, applications
 
@@ -238,43 +221,82 @@ class _Search:
     measurement: jax.Array
     locked: list[jax.Array] = field(default_factory=list)
     schur: ComplexArray = field(default_factory=lambda: np.zeros((0, 0), complex))
-    basis: list[jax.Array] = field(default_factory=list)
-    images: list[jax.Array] = field(default_factory=list)
+    basis: jax.Array = field(init=False)
+    """V, (k, ...), orthonormal."""
+    images: jax.Array = field(init=False)
+    """W."""
+    projected: ComplexArray = field(default_factory=lambda: np.zeros((0, 0), complex))
+    """V^dagger W, kept as V grows, rather than k^2 products of states each iteration."""
+    overlaps: ComplexArray = field(default_factory=lambda: np.zeros(0, complex))
+    """V^dagger X_0."""
+    measured: ComplexArray = field(default_factory=lambda: np.zeros(0, complex))
+    """<measurement, V>."""
     applications: int = 0
     """The applications of L to find the modes."""
     coefficient_applications: int = 0
     """The applications of L to find their coefficients."""
 
-    def expand(self, x: jax.Array) -> None:
-        for _ in range(2):
-            stack = self.locked + self.basis
-            if stack:
-                s = jnp.stack(stack)
-                x -= jnp.tensordot(_dot(s, x[None])[:, 0], s, axes=1)
+    def __post_init__(self) -> None:
+        self.basis = self.images = jnp.zeros((0, *self.start.shape), self.start.dtype)
+
+    def expand(self, x: jax.Array, *, scale: float = 1.0) -> bool:
+        """Add x, orthogonalized, to the search space, unless less than _STAGNATION scale of it is new.
+
+        A correction already in the space means the search has stagnated. A
+        restart vector is measured against its own norm.
+        """
+        known = (
+            jnp.concatenate([jnp.stack(self.locked), self.basis])
+            if self.locked
+            else self.basis
+        )
+        if len(known):
+            for _ in range(2):
+                x = _project_out(known, x)
         size = float(jnp.linalg.norm(x))
-        if size < _STAGNATION:
-            msg = "Jacobi-Davidson stagnated"
-            raise RuntimeError(msg)
+        if size <= _STAGNATION * scale:
+            return False
         x /= size
         image = apply_eigen(self.eigen, x, jnp.asarray(0j))
         self.applications += 1
         if self.locked:
-            q = jnp.stack(self.locked)
-            image -= jnp.tensordot(_dot(q, image[None])[:, 0], q, axes=1)
-        self.basis.append(x)
-        self.images.append(image)
+            image = _project_out(jnp.stack(self.locked), image)
+        k = len(self.basis)
+        grown = np.zeros((k + 1, k + 1), complex)
+        grown[:k, :k] = self.projected
+        if k:
+            grown[:k, k] = np.asarray(_dot(self.basis, image[None])[:, 0])
+            grown[k, :k] = np.asarray(_dot(x[None], self.images)[0])
+        grown[k, k] = complex(jnp.vdot(x, image))
+        self.projected = grown
+        self.overlaps = np.append(self.overlaps, complex(jnp.vdot(x, self.start)))
+        self.measured = np.append(self.measured, complex(jnp.vdot(self.measurement, x)))
+        self.basis = jnp.concatenate([self.basis, x[None]])
+        self.images = jnp.concatenate([self.images, image[None]])
+        return True
+
+    def correct(self, u: jax.Array, r: jax.Array, theta: complex) -> bool:
+        """Expand the search space by an approximate solution of the correction equation, or get False if it has stagnated."""
+        correction, inner = _projected_solve(
+            self.eigen,
+            _padded(jnp.stack([*self.locked, u])),
+            -r,
+            jnp.asarray(theta),
+            jnp.asarray(_INNER_RTOL),
+            maxiter=_INNER_MAXITER,
+            method="gmres",
+        )
+        self.applications += int(inner)
+        return self.expand(correction)
 
     def ritz(self) -> _Ritz:
-        v, w = jnp.stack(self.basis), jnp.stack(self.images)
-        values, left, right = scipy.linalg.eig(
-            np.asarray(_dot(v, w)), left=True, right=True
-        )
+        values, left, right = scipy.linalg.eig(self.projected, left=True, right=True)
         right /= np.linalg.norm(right, axis=0)
         # c = (z^dagger V^dagger X_0) / (z^dagger s) for the left and right Ritz vectors z and s
-        weights = (left.conj().T @ np.asarray(_dot(v, self.start[None])[:, 0])) / (
+        weights = (left.conj().T @ self.overlaps) / (
             np.einsum("ij,ij->j", left.conj(), right)
         )
-        estimates = (np.asarray(_dot(self.measurement[None], v)[0]) @ right) * weights
+        estimates = (self.measured @ right) * weights
         reference = abs(complex(jnp.vdot(self.measurement, self.start)))
         order = [int(j) for j in np.argsort(-values.real)]
         seen = [j for j in order if abs(estimates[j]) >= _AMPLITUDE_TOL * reference]
@@ -288,12 +310,12 @@ class _Search:
     def pair(self, ritz: _Ritz, j: int) -> tuple[jax.Array, jax.Array]:
         """Get the Ritz vector u and its residual r = (1 - Q Q^dagger) L u - theta u."""
         s = jnp.asarray(ritz.right[:, j])
-        u = jnp.tensordot(s, jnp.stack(self.basis), axes=1)
-        r = jnp.tensordot(s, jnp.stack(self.images), axes=1) - ritz.values[j] * u
+        u = jnp.tensordot(s, self.basis, axes=1)
+        r = jnp.tensordot(s, self.images, axes=1) - ritz.values[j] * u
         return u, r
 
-    def lock(self, u: jax.Array, ritz: _Ritz) -> None:
-        """Extend the Schur form with u, and restart the search space from the next Ritz vectors."""
+    def extend(self, u: jax.Array) -> None:
+        """Extend the Schur form with u, of unit norm and orthogonal to the locked vectors."""
         image = apply_eigen(self.eigen, u, jnp.asarray(0j))
         self.applications += 1
         column = np.asarray(_dot(jnp.stack([*self.locked, u]), image[None])[:, 0])
@@ -303,25 +325,41 @@ class _Search:
         grown[:, n] = column
         self.schur = grown
         self.locked.append(u)
-        restart = [
-            jnp.tensordot(jnp.asarray(ritz.right[:, j]), jnp.stack(self.basis), axes=1)
-            for j in ritz.order[1 : 1 + _RESTART]
-        ]
-        self.basis, self.images = [], []
-        for x in restart:
-            self.expand(x)
 
-    def truncate(self, n: int) -> None:
-        self.locked, self.schur = self.locked[:n], self.schur[:n, :n]
+    def lock(self, u: jax.Array, ritz: _Ritz) -> None:
+        """Extend the Schur form with u, the Ritz vector V s of ritz.order[0], and restart the search space from the next Ritz vectors.
+
+        The restart vectors V y, for y the next Ritz vectors made orthonormal
+        to s and each other, are orthogonal to u, and their images
+        (1 - u u^dagger) W y follow from those of V, with no application of L.
+        """
+        self.extend(u)
+        s_0 = ritz.right[:, ritz.order[0]]
+        rest = ritz.right[:, ritz.order[1 : 1 + _RESTART]]
+        q, r = np.linalg.qr(rest - np.outer(s_0, s_0.conj() @ rest))
+        q = jnp.asarray(q[:, np.abs(np.diag(r)) > _INDEPENDENT])
+        basis = jnp.tensordot(q.T, self.basis, axes=1)
+        images = jnp.tensordot(q.T, self.images, axes=1)
+        images -= jnp.tensordot(_dot(u[None], images)[0], u[None], axes=0)[:, 0]
+        self.basis, self.images = basis, images
+        q = np.asarray(q)
+        # The images lose only their part along u, to which V q is orthogonal
+        self.projected = q.conj().T @ self.projected @ q
+        self.overlaps = q.conj().T @ self.overlaps
+        self.measured = np.matmul(self.measured, q)
+        if not len(self.basis):
+            # No other Ritz vector is seen, as at dK = 0, where X_0 is the
+            # steady state: search on in what is left of X_0, if anything
+            self.expand(self.start, scale=float(jnp.linalg.norm(self.start)))
 
     def modes(self, rtol: float) -> list[Mode]:
-        """Get the modes from the Schur form, slowest first, with their coefficients to rtol of |X_0|.
+        """Get the modes from the Schur form, slowest first, with their amplitudes from coefficients to rtol of |X_0|.
 
-        Each eigenvector is only accurate to its residual, |r| ~ rtol |lambda|,
+        Each eigenvector is only accurate to its residual, |r| ~ mode_rtol |lambda|,
         which leaks a little of it onto the slower modes. The coefficients are
         taken on what remains of X_0 as each mode is removed, fastest first, so
-        the slowest, which would take longest to step through, are removed
-        exactly.
+        that the slowest are removed exactly. A failed coefficient solve
+        raises a RuntimeError (`refine`).
         """
         if not self.locked:
             return []
@@ -341,154 +379,85 @@ class _Search:
             )
             self.coefficient_applications += applications
             remainder -= coefficient * vector
-            modes.append(
-                Mode(
-                    rate=complex(rates[j]),
-                    vector=vector,
-                    coefficient=coefficient,
-                    amplitude=amplitude,
-                )
-            )
+            modes.append(Mode(rate=complex(rates[j]), amplitude=amplitude))
         return modes[::-1]
 
 
-@dataclass(kw_only=True)
-class _CostState:
-    """The progress of a `CostCut`, in applications of L."""
-
-    rule: CostCut
-    begin: int
-    since: int
-    """The count at the last mode found."""
-    per_mode: float = 0.0
-    best_saving: float = 0.0
-    group: tuple[float, int, int, float] | None = None
-    """Re lambda of the group being found, the count it began at, the modes found before it, and its budget."""
-
-    def saving(self, ritz: _Ritz, j: int) -> tuple[float, int]:
-        """Get the applications saved by finding the group of Ritz pair j, and its size."""
-        re = ritz.values.real
-        members = [i for i in ritz.order if abs(re[i] - re[j]) <= _PARTNER * abs(re[j])]
-        beyond = [i for i in ritz.order if re[i] < re[j] - _PARTNER * abs(re[j])]
-        stop = self.rule.stop
-
-        def end(i: int) -> float:
-            return math.log(max(abs(ritz.weights[i]), stop) / stop) / max(
-                abs(re[i]), 1e-300
-            )
-
-        without = max([self.rule.start_time, *(end(i) for i in members + beyond)])
-        with_group = max([self.rule.start_time, *(end(i) for i in beyond)])
-        return self.rule.step_rate * (without - with_group), len(members)
-
-    def done(
-        self, search: _Search, ritz: _Ritz, j: int, count: int, *, rough: bool
-    ) -> bool:
-        """Decide whether to stop before finding Ritz pair j, dropping any group over its budget."""
-        saving, size = self.saving(ritz, j)
-        re = ritz.values.real[j]
-        if self.group is not None and abs(re - self.group[0]) <= _PARTNER * abs(
-            self.group[0]
-        ):
-            if count - self.group[1] > self.group[3]:
-                search.truncate(self.group[2])
-                return True
-            return False
-        self.best_saving = max(self.best_saving, saving)
-        if count - self.since > self.best_saving:
-            return True
-        if rough:
-            if self.rule.cost_factor * size * self.per_mode > saving:
-                return True
-            self.group = (re, self.since, len(search.locked), saving)
-        return False
-
-    def found(self, count: int, n_locked: int) -> None:
-        self.since, self.best_saving = count, 0.0
-        self.per_mode = (count - self.begin) / n_locked
-
-
-def find_slow_modes(  # ruff:ignore[too-many-arguments]
+def find_slow_modes(
     eigen: EigenLiouvillian,
     start: jax.Array,
     measurement: jax.Array,
     selection: Selection,
     *,
-    rtol: float,
-    coefficient_rtol: float,
+    config: EvolutionConfig,
 ) -> tuple[list[Mode], dict[str, int]]:
-    """Get the slowest modes of <measurement, exp(L t) start>, slowest first, by Jacobi-Davidson, and the applications of L to find them and their coefficients.
-
-    Jacobi-Davidson targets the Ritz value of largest real part in a search
-    space V, and expands V by an approximate solution of the correction
-    equation (1 - u u^dagger)(L - theta)(1 - u u^dagger) t = -r: a few
-    BiCGSTAB iterations, preconditioned by the exact inverse of the no-jump
-    part (`_projected_solve`). The mode itself is projected out, so the
-    equation stays well conditioned as theta converges. A mode is locked once
-    |r| <= rtol |theta|, or round off, into a partial Schur form, and the
-    search continues outside it. Modes the measurement does not see are
-    skipped, and the selection decides when to stop.
+    """Get the slowest modes of <measurement, exp(L t) start>, slowest first, by Jacobi-Davidson (`_search`), and the applications of L to find them and their coefficients.
 
     The coefficients are one bordered solve per mode (`_get_amplitude`),
     counted apart. It needs no time steps, and no solve near a slow
     eigenvalue, which is badly conditioned: the slowest mode of the ISF of lithium on Cu(110) in
     2D costs 380-780 applications of L, where a shift-invert Arnoldi method
     needs 5,000-12,000.
+    """
+    search = _search(eigen, start, measurement, selection, config=config)
+    # The coefficients to well below the error allowed in an evolution
+    return search.modes(0.1 * config.stop), {
+        "modes": search.applications,
+        "coefficients": search.coefficient_applications,
+    }
+
+
+def _search(
+    eigen: EigenLiouvillian,
+    start: jax.Array,
+    measurement: jax.Array,
+    selection: Selection,
+    *,
+    config: EvolutionConfig,
+) -> _Search:
+    """Find the slowest modes of <measurement, exp(L t) start> as a partial Schur form, by Jacobi-Davidson.
+
+    Jacobi-Davidson targets the Ritz value of largest real part in a search
+    space V, and expands V by an approximate solution of the correction
+    equation (1 - u u^dagger)(L - theta)(1 - u u^dagger) t = -r: a few
+    GMRES iterations, preconditioned by the exact inverse of the no-jump
+    part (`_projected_solve`). The mode itself is projected out, so the
+    equation stays well conditioned as theta converges. A mode is locked once
+    |r| <= config.mode_rtol |theta|, or round off, into a partial Schur form,
+    and the search continues outside it. Modes the measurement does not see
+    are skipped, and the selection decides when to stop.
 
     Raises
     ------
     RuntimeError
-        If a mode does not converge in _MAX_OUTER iterations.
+        If a mode does not converge in _MAX_OUTER iterations, or its search
+        stagnates.
     """
     search = _Search(eigen=eigen, start=start, measurement=measurement)
     floor = 1e3 * np.finfo(float).eps * float(jnp.abs(eigen.rates).max())
     target = selection.n_modes if isinstance(selection, ModeCount) else _MAX_MODES
-    cost = (
-        _CostState(rule=selection, begin=0, since=0)
-        if isinstance(selection, CostCut)
-        else None
-    )
     search.expand(start)
     iterations = 0
-    while len(search.locked) < target:
+    # The search space is empty once X_0 is in the span of the modes locked
+    while len(search.locked) < target and len(search.basis):
         ritz = search.ritz()
         j = ritz.order[0]
         theta = complex(ritz.values[j])
         u, r = search.pair(ritz, j)
         norm = float(jnp.linalg.norm(r))
-        rough = norm <= _ROUGH * abs(theta)
         if (
             isinstance(selection, RateCut)
             and search.locked
-            and rough
+            and norm <= _ROUGH * abs(theta)
             and theta.real < -selection.rate
         ):
             break
-        if cost is not None and cost.done(
-            search, ritz, j, search.applications, rough=rough
-        ):
-            break
-        if norm <= max(rtol * abs(theta), floor):
+        if norm <= max(config.mode_rtol * abs(theta), floor):
             search.lock(u, ritz)
-            if cost is not None:
-                cost.found(search.applications, len(search.locked))
             iterations = 0
             continue
         iterations += 1
-        if iterations > _MAX_OUTER:
+        if iterations > _MAX_OUTER or not search.correct(u, r, theta):
             msg = f"Jacobi-Davidson did not converge: |r| {norm:.1e} at {theta:.4e}"
             raise RuntimeError(msg)
-        correction, inner = _projected_solve(
-            eigen,
-            jnp.stack([*search.locked, u]),
-            -r,
-            jnp.asarray(theta),
-            jnp.asarray(_INNER_RTOL),
-            maxiter=_INNER_MAXITER,
-        )
-        search.applications += 2 * int(inner)
-        search.expand(correction)
-    return search.modes(coefficient_rtol), {
-        "modes": search.applications,
-        "coefficients": search.coefficient_applications,
-    }
+    return search

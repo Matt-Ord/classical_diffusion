@@ -22,8 +22,10 @@ from classical_diffusion.caldeira_leggett._liouvillian import (
 from classical_diffusion.simulation import IsfResult
 
 if TYPE_CHECKING:
-    from classical_diffusion.caldeira_leggett._config import CaldeiraLeggettConfig
-    from classical_diffusion.caldeira_leggett._evolution import EvolutionConfig
+    from classical_diffusion.caldeira_leggett._config import (
+        CaldeiraLeggettConfig,
+        EvolutionConfig,
+    )
     from classical_diffusion.caldeira_leggett._model import ComplexArray, FloatArray
     from classical_diffusion.system import UnitSystem
 
@@ -57,21 +59,18 @@ def get_isf(  # ruff:ignore[too-many-arguments]
     *,
     delta_k: tuple[float, ...],
     units: UnitSystem,
-    friction: float,
     isf_config: EvolutionConfig,
 ) -> IsfResult:
     """Get the ISF Tr[O^dagger X(t)], where X(t) evolves from the initial state, at the times and scattering vector in the units.
 
-    The evolution is its slow modes, exactly, plus a stepper on the rest
-    (`get_reduced_evolution`), with the friction in the units.
+    The evolution is by two-sided Lanczos (`get_reduced_evolution`).
     """
     o = jnp.asarray(observable)
     evolution = get_reduced_evolution(
-        liouvillian,
+        get_eigen_liouvillian(liouvillian),
         jnp.asarray(initial),
         lambda x: jnp.sum(o.conj() * x),
         times,
-        friction=friction,
         config=isf_config,
     )
     return IsfResult(times=times, isf=evolution.values, delta_k=delta_k, units=units)
@@ -151,7 +150,7 @@ def get_diffusion_coefficient(
     derivative: Operators,
     steady_state: ComplexArray,
     config: CaldeiraLeggettConfig,
-) -> float:
+) -> tuple[float, ComplexArray]:
     """Get the diffusion coefficient D along a direction, from the curvature of the dephasing rate at dK = 0.
 
     The slowest eigenvalue of L(theta) (`_get_twist`) is -D theta^2 +
@@ -163,7 +162,8 @@ def get_diffusion_coefficient(
     This is a Green-Kubo formula for the master equation, which needs a single
     linear solve rather than an ISF which decays only slowly at small dK. It
     is the long time slope of the mean square displacement over 2
-    (`get_rms`).
+    (`get_rms`). The response X_1 = L_0^+ L_1 rho_ss is returned with it,
+    as the mean square displacement needs it too.
     """
     twist = _get_twist(operators, derivative, steady_state)
     response = _get_response(
@@ -172,7 +172,7 @@ def get_diffusion_coefficient(
         jnp.asarray(steady_state),
         config,
     )
-    return _get_diffusion_from_response(twist, response)
+    return _get_diffusion_from_response(twist, response), np.asarray(response)
 
 
 def _get_diffusion_from_response(twist: _Twist, response: jax.Array) -> float:
@@ -207,8 +207,8 @@ def get_rms(  # ruff:ignore[too-many-arguments]
     direction: tuple[float, ...],
     units: UnitSystem,
     config: CaldeiraLeggettConfig,
-    friction: float,
     isf_config: EvolutionConfig,
+    response: ComplexArray | None = None,
 ) -> RmsResult:
     """Get the mean square displacement <(x(t) - x(0))^2> along a direction, at the times from zero.
 
@@ -231,22 +231,25 @@ def get_rms(  # ruff:ignore[too-many-arguments]
 
     Only the last term evolves, from a state which decays, as for an ISF
     (`get_reduced_evolution`), rather than the growing integral. It costs two
-    linear solves and one evolution, with the friction in the units.
+    linear solves and one evolution, or one solve if X_1 (response) is
+    given.
     """
     twist = _get_twist(operators, derivative, steady_state)
     eigen = get_eigen_liouvillian(twist.liouvillian)
     rho = jnp.asarray(steady_state)
-    first = _get_response(eigen, twist.drift, rho, config)
+    first = (
+        _get_response(eigen, twist.drift, rho, config)
+        if response is None
+        else jnp.asarray(response)
+    )
     second = _get_response(eigen, first, rho, config)
     diffusion = _get_diffusion_from_response(twist, first)
     decay = get_reduced_evolution(
-        twist.liouvillian,
+        eigen,
         second,
         lambda x: _trace(apply_liouvillian(twist.first_derivative, x)),
         times,
-        friction=friction,
         config=isf_config,
-        steady_state=rho,
     ).values.real
     mean_square = 2 * diffusion * times + 2 * (decay[0] - decay)
     return RmsResult(

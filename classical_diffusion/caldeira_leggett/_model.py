@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import scipy.linalg
 import scipy.ndimage
 import scipy.optimize
 
@@ -51,12 +50,12 @@ class Model:
     """The direction c and weight w of each pair of Lindblad operators e^{+-i q x}, q = c @ cell_reciprocal."""
     reciprocal_vectors: IntArray
     """The reciprocal lattice vectors G of the potential in the plane wave basis, (n_plane_waves, n_dim)."""
-    max_energy: float
-    """Every band whose lowest energy is within this of the saddle, or the ground state if it is higher, is kept."""
-    extra_bands: int
-    """extra_bands**n_dim more bands are kept above those within max_energy."""
     saddle_energy: float
     """The energy at which the classically allowed region first connects a site to its periodic images (`get_saddle_energy`)."""
+    cutoff: float
+    """Every band whose lowest energy is within this (k_B T) of the saddle, or the ground state if it is higher, is kept (`get_bands`)."""
+    plane_wave_factor: float
+    """The plane waves reach this times the kinetic energy that a particle at the cutoff can have, its height above the minimum of the potential."""
 
     @property
     def n_dim(self) -> int:
@@ -88,14 +87,39 @@ def get_kappa(n_periods: int, n_dim: int) -> IntArray:
     return np.mod(np.stack(index, axis=-1) + n_periods // 2, n_periods) - n_periods // 2
 
 
+MAX_PLANE_WAVES = 5000
+"""The most plane waves at one crystal momentum.
+
+The Hamiltonian in them is dense, and building and diagonalizing it takes
+about 50 n^2 bytes: 1.2 GB at the limit. A system which needs more is
+classical, and has thousands of bands: xenon on Pt(111) in 2D at 121 K
+needs 10,411 already in the first guess of the cutoff, which took over
+3 GB in 7 s, before the first band was found.
+"""
+
+
 def get_reciprocal_vectors(reciprocal: FloatArray, radius: float) -> IntArray:
-    """Get the integer vectors G of every reciprocal lattice vector with |G @ reciprocal| up to radius."""
+    """Get the integer vectors G of every reciprocal lattice vector with |G @ reciprocal| up to radius.
+
+    Raises
+    ------
+    ValueError
+        If there are more than MAX_PLANE_WAVES of them.
+    """
     n_dim = reciprocal.shape[0]
     # |k| >= s_min |G|, where s_min is the smallest singular value
     s_min = np.linalg.svd(reciprocal, compute_uv=False).min()
     n_max = int(np.ceil(radius / s_min))
     grid = np.array(list(itertools.product(range(-n_max, n_max + 1), repeat=n_dim)))
-    return grid[np.linalg.norm(grid @ reciprocal, axis=-1) <= radius]
+    vectors = grid[np.linalg.norm(grid @ reciprocal, axis=-1) <= radius]
+    if len(vectors) > MAX_PLANE_WAVES:
+        msg = (
+            f"The bands need {len(vectors)} plane waves, more than {MAX_PLANE_WAVES}: "
+            "the system is too heavy or too hot for the band basis, which is "
+            "then classical (use Langevin dynamics)"
+        )
+        raise ValueError(msg)
+    return vectors
 
 
 def get_hamiltonian(
@@ -250,8 +274,8 @@ def _is_percolating(allowed: np.ndarray) -> bool:
     return False
 
 
-def get_saddle_energy(potential: Terms, n_dim: int) -> float:
-    """Get the lowest energy E at which the region V < E connects a site to its periodic image along some lattice vector.
+def get_saddle_energy(potential: Terms, n_dim: int) -> tuple[float, float]:
+    """Get the lowest energy E at which the region V < E connects a site to its periodic image along some lattice vector, and the minimum of the potential.
 
     This is the energy of the saddle a particle must cross to diffuse along
     its easiest direction, found by bisection between the minimum and maximum
@@ -267,62 +291,26 @@ def get_saddle_energy(potential: Terms, n_dim: int) -> float:
             high = middle
         else:
             low = middle
-    return high
+    return high, float(values.min())
 
 
-_PLANE_WAVE_FACTOR = 2.5
-_PLANE_WAVE_TOL = 1e-3
-
-
-def get_plane_wave_energy(  # ruff:ignore[too-many-arguments]
-    reciprocal: FloatArray,
-    potential: Terms,
+def build_model(
+    system: PeriodicSystem,
+    config: CaldeiraLeggettConfig,
     *,
-    max_energy: float,
-    extra_bands: int,
-    saddle_energy: float,
-    potential_minimum: float,
-) -> float:
-    """Get the kinetic energy cutoff of the plane waves which resolves the bands up to max_energy, and extra_bands more.
+    cutoff: float,
+    plane_wave_factor: float,
+) -> Model:
+    """Build the model of a periodic system, in natural units, for bands up to the cutoff above the saddle (`Model.cutoff`).
 
     A state of energy E has a kinetic energy of at most E - V_min where it is
-    classically allowed, and its plane wave components fall off beyond that.
-    The highest band kept is max_energy above the higher of the ground state
-    and the saddle energy (`get_bands`), so the cutoff is a multiple of its
-    height above V_min. How high the potential rises beyond that does not
-    matter: a band below the top of the potential never reaches it.
-
-    With a factor of 2.5 the diffusion constant of lithium on Cu(111) at
-    140 K is converged to 1e-8 and that of hydrogen at 150 K to 0.2%, where
-    a cutoff of max_energy + 2 k_B T is wrong by 3e-4 and by a factor of 11.
-
-    The zero point energy is that of the lowest band at zero crystal momentum,
-    found in the plane waves of a single period of the potential, with a cutoff
-    which is raised until it is consistent. The highest band kept is taken
-    there too, extra_bands above the last within max_energy.
+    classically allowed, and its plane wave components fall off beyond that,
+    so the plane waves reach plane_wave_factor times the height of the
+    cutoff above the minimum of the potential, measured from the saddle
+    (the ground state, from which the cutoff is measured if it is higher, is
+    not known until the bands are). How high the potential rises beyond that
+    does not matter: a band below the top of the potential never reaches it.
     """
-    cutoff = _PLANE_WAVE_FACTOR * max_energy
-    for _ in range(20):
-        hamiltonian = get_hamiltonian(
-            np.zeros((1, len(reciprocal))),
-            get_reciprocal_vectors(reciprocal, np.sqrt(2 * cutoff)),
-            reciprocal,
-            potential,
-        )[0]
-        energies = scipy.linalg.eigvalsh(hamiltonian)
-        top = max(float(energies[0]), saddle_energy) + max_energy
-        index = int(np.count_nonzero(energies < top)) + extra_bands - 1
-        top = max(top, float(energies[min(index, len(energies) - 1)]))
-        previous, cutoff = cutoff, _PLANE_WAVE_FACTOR * (top - potential_minimum)
-        if abs(cutoff - previous) < _PLANE_WAVE_TOL * cutoff:
-            break
-    # Rounded, so that the basis does not depend on the last digits of the
-    # zero point energy, which can change with the number of threads
-    return round(cutoff, 6)
-
-
-def build_model(system: PeriodicSystem, config: CaldeiraLeggettConfig) -> Model:
-    """Build the model of a periodic system, in natural units."""
     kbt = system.kbt
     time = system.units.hbar / kbt
     length = system.units.hbar / np.sqrt(system.m * kbt)
@@ -341,20 +329,10 @@ def build_model(system: PeriodicSystem, config: CaldeiraLeggettConfig) -> Model:
         )
     couplings = get_couplings(reciprocal)
     n_periods = get_period_count(reciprocal, couplings, config.friction_tol)
-    saddle_energy = get_saddle_energy(tuple(potential), len(system.lattice_vectors))
-    plane_wave_energy = (
-        get_plane_wave_energy(
-            reciprocal,
-            tuple(potential),
-            max_energy=config.max_energy,
-            extra_bands=config.extra_bands ** len(reciprocal),
-            saddle_energy=saddle_energy,
-            # The constant of the system puts the minimum of its potential at zero
-            potential_minimum=-system.params[-1] / kbt,
-        )
-        if config.plane_wave_energy is None
-        else config.plane_wave_energy
+    saddle_energy, minimum = get_saddle_energy(
+        tuple(potential), len(system.lattice_vectors)
     )
+    plane_wave_energy = plane_wave_factor * (saddle_energy + cutoff - minimum)
     # Every crystal momentum shares the vectors G, so they reach the kinetic
     # energy cutoff around the crystal momentum furthest from zero. A shift
     # across the edge of the zone of the cell maps G to G + dG, with dG one of
@@ -374,7 +352,7 @@ def build_model(system: PeriodicSystem, config: CaldeiraLeggettConfig) -> Model:
         friction=system.units.frequency_into(system.gamma, units),
         couplings=couplings,
         reciprocal_vectors=get_reciprocal_vectors(reciprocal, radius),
-        max_energy=config.max_energy,
-        extra_bands=config.extra_bands,
         saddle_energy=saddle_energy,
+        cutoff=cutoff,
+        plane_wave_factor=plane_wave_factor,
     )
