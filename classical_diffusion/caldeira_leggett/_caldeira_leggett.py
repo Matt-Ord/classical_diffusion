@@ -14,6 +14,7 @@ from classical_diffusion._results import (
     check_mode_count,
     fold_times,
     get_selection,
+    get_unit_direction,
 )
 from classical_diffusion.caldeira_leggett._bands import (
     Bands,
@@ -644,8 +645,7 @@ def _get_derivative(
     """Get the operators, their twist derivative along the direction (by default the first axis), and its unit vector."""
     couplings = get_couplings(model, bands)
     operators = get_operators(bands.energies, couplings)
-    unit = np.eye(model.n_dim)[0] if direction is None else np.asarray(direction, float)
-    unit /= np.linalg.norm(unit)
+    unit = get_unit_direction(model.n_dim, direction)
     velocity = get_velocity(model, bands, unit)
     derivative = get_twist_derivative(bands.energies, couplings, operators, velocity)
     return operators, derivative, unit

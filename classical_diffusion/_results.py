@@ -128,6 +128,12 @@ def get_long_time_isf(slow_modes: SlowModes, times: FloatArray) -> IsfResult:
     )
 
 
+def get_unit_direction(n_dim: int, direction: tuple[float, ...] | None) -> FloatArray:
+    """Get the unit vector along a direction, by default the first axis."""
+    unit = np.eye(n_dim)[0] if direction is None else np.asarray(direction, float)
+    return unit / np.linalg.norm(unit)
+
+
 @dataclass(frozen=True, kw_only=True)
 class FoldedTimes:
     """Any real times, in any order, as the magnitudes |t| to evolve to, unique and increasing from zero."""
