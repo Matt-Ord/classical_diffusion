@@ -20,6 +20,12 @@ _NARROWEST = 128
 """The fewest roots of a block that the Aberth sweeps take (`_aberth`)."""
 _LEAF = 48
 """The most rows of the blocks at the bottom of the divide and conquer, whose roots start from their diagonals."""
+_CLUSTER = 1e-3
+"""The distance between roots, times the time t their poles last (`_merge`), below which they are a cluster whose weights only their moments define."""
+_LASTING = 20.0
+"""The decay, exp(-_LASTING), after which a pole no longer counts (`_merge`)."""
+_MOMENTS = 4
+"""The moments of a cluster of roots that its weights match (`_merge`)."""
 _CONTOUR = 16
 """The points of the contour integral for the moments of a cluster of roots (`_merge`)."""
 _STALLED = 1e-9
@@ -307,7 +313,7 @@ def _pairwise(
 
 
 def _clusters(roots: jax.Array, width: jax.Array) -> jax.Array:
-    """Get the smallest index in the cluster of each root: the roots linked by distances below width."""
+    """Get the smallest index in the cluster of each root: the roots linked by distances below the smaller of their widths."""
     index = jnp.arange(roots.shape[0])
 
     def spread(state: tuple[jax.Array, jax.Array]) -> tuple[jax.Array, jax.Array]:
@@ -315,7 +321,12 @@ def _clusters(roots: jax.Array, width: jax.Array) -> jax.Array:
 
         def least(total: jax.Array, distance: jax.Array, offset: int) -> jax.Array:
             part = jax.lax.dynamic_slice_in_dim(labels, offset, distance.shape[1])
-            linked = jnp.where(distance < width, part[None, :], index.shape[0])
+            near = jax.lax.dynamic_slice_in_dim(width, offset, distance.shape[1])
+            linked = jnp.where(
+                distance < jnp.minimum(width[:, None], near[None, :]),
+                part[None, :],
+                index.shape[0],
+            )
             return jnp.minimum(total, linked.min(axis=1))
 
         new = _pairwise(roots, roots, least, labels)
@@ -333,33 +344,36 @@ def _merge(  # ruff:ignore[too-many-locals]
     weights: jax.Array,
     alpha: jax.Array,
     coupling: jax.Array,
-    width: jax.Array,
+    span: jax.Array,
 ) -> jax.Array:
-    """Get the weights with those of each cluster of roots closer than width replaced by its moments, from a contour integral.
+    """Get the weights with those of each cluster of close roots replaced by the least-norm ones with its first _MOMENTS moments, from a contour integral.
 
     Two-sided Lanczos without rebiorthogonalization makes copies of its
-    converged poles, a few within 1e-9 to 1e-7 of each other (hydrogen on
+    converged poles, a few within 1e-13 to 1e-7 of each other (hydrogen on
     Cu(111) in 1D at 0.3 |G| and 1500 steps, ||T|| 2e3). There the weight
     of each copy is ill conditioned, the twisted factorizations of the
     copies do not split it consistently, and their sum was 1e-4 wrong
-    (eig, backward stable, splits it consistently). Only the sum
-    M_0 = sum w_i and the first moment M_1 = sum w_i (lambda_i - c) about
-    the center c matter, while |lambda_i - c| t is small:
+    (eig, backward stable, splits it consistently). Only the moments
+    M_n = sum w_i (lambda_i - c)^n about the center c matter, while
+    |lambda_i - c| t is small over the times t that exp(lambda t) lasts,
+    t_j = min(span, _LASTING / |Re lambda_j|): two roots are linked if
+    closer than _CLUSTER / t_j for both. Then
     M_n = (2 pi i)^-1 oint (z - c)^n f(z) dz on a circle about c, of radius
     the geometric mean of the size of the cluster and its distance to the
-    nearest other root, by the trapezoid rule on _CONTOUR points (error
-    (size / distance)^(_CONTOUR / 2)), with f evaluated as a continued
-    fraction, accurate away from the roots. The weights of the cluster are
-    then the least-norm ones with these two moments,
-    w_i = M_0 / k + M_1 conj(lambda_i - c) / sum_i |lambda_i - c|^2. A
-    cluster has at least two roots, so at most half the roots lead one.
+    nearest other root, by the trapezoid rule on _CONTOUR points, with f
+    evaluated as a continued fraction, accurate away from the roots (to
+    eps ||T|| / radius relative: a radius set by the time t_j rather than
+    the span keeps it large enough; with the span, underdamped hydrogen at
+    |G| over 2000 ps linked copies 5e-11 apart but not their twins 4e-7
+    away, and the radius 5e-9 left the weights 5e-5 wrong). A cluster has
+    at least two roots, so at most half the roots lead one.
     """
     size = roots.shape[0]
-    labels = _clusters(roots, width)
+    lasting = jnp.minimum(span, _LASTING / jnp.maximum(-roots.real, _LASTING / span))
+    labels = _clusters(roots, _CLUSTER / lasting)
     members = jax.ops.segment_sum(jnp.ones(size), labels, size)
     centers = jax.ops.segment_sum(roots, labels, size) / jnp.maximum(members, 1)
     offsets = roots - centers[labels]
-    spread = jax.ops.segment_sum(jnp.abs(offsets) ** 2, labels, size)
     extent = jax.ops.segment_max(jnp.abs(offsets), labels, size)
     # The clusters of two or more roots first, at most size / 2 of them
     leaders = jnp.argsort(members <= 1, stable=True)[: size // 2]
@@ -372,8 +386,8 @@ def _merge(  # ruff:ignore[too-many-locals]
 
     distance = _pairwise(center, roots, nearest, jnp.full(center.shape, jnp.inf))
     radius = jnp.sqrt(jnp.maximum(extent[leaders], 1e-9 * distance) * distance)
-    shifts = radius[:, None] * jnp.exp(2j * jnp.pi * jnp.arange(_CONTOUR) / _CONTOUR)
-    points = (center[:, None] + shifts).ravel()
+    unit = jnp.exp(2j * jnp.pi * jnp.arange(_CONTOUR) / _CONTOUR)
+    points = (center[:, None] + radius[:, None] * unit).ravel()
 
     def fraction(
         value: jax.Array, row: tuple[jax.Array, jax.Array]
@@ -384,35 +398,38 @@ def _merge(  # ruff:ignore[too-many-locals]
     values, _ = jax.lax.scan(
         fraction, jnp.zeros_like(points), (alpha, coupling), reverse=True
     )
-    values = values.reshape(shifts.shape)
+    values = radius[:, None] * values.reshape(-1, _CONTOUR)
+    powers = jnp.arange(_MOMENTS)
+    # The moments in units of the radius, M_n / radius^n
     moments = (
-        jnp.zeros((size, 2), roots.dtype)
-        .at[leaders]
-        .set(
-            jnp.stack(
-                [(shifts * values).mean(axis=1), (shifts**2 * values).mean(axis=1)],
-                axis=1,
-            )
-        )[labels]
+        unit[None, None, :] ** (powers[None, :, None] + 1) * values[:, None, :]
+    ).mean(axis=2)
+    scaled = jnp.zeros(size, roots.real.dtype).at[leaders].set(radius)[labels]
+    vandermonde = (offsets / jnp.where(scaled > 0, scaled, 1))[:, None] ** powers[
+        None, :
+    ]
+    gram = jax.ops.segment_sum(
+        vandermonde[:, :, None] * vandermonde.conj()[:, None, :], labels, size
+    )[leaders]
+    coefficients = jnp.einsum("ckn,cn->ck", jnp.linalg.pinv(gram, rtol=1e-12), moments)
+    full = (
+        jnp.zeros((size, _MOMENTS), roots.dtype).at[leaders].set(coefficients)[labels]
     )
-    clustered = members[labels] > 1
-    merged = moments[:, 0] / members[labels] + moments[:, 1] * jnp.conj(
-        offsets
-    ) / jnp.where(spread[labels] > 0, spread[labels], 1)
-    return jnp.where(clustered, merged, weights)
+    merged = jnp.sum(vandermonde.conj() * full, axis=1)
+    return jnp.where(members[labels] > 1, merged, weights)
 
 
 def _poles(
-    alpha: jax.Array, coupling: jax.Array, width: jax.Array
+    alpha: jax.Array, coupling: jax.Array, span: jax.Array
 ) -> tuple[jax.Array, jax.Array]:
     """Get the roots and weights by jitted parts, each level of the divide and conquer compiled once for its shape (with the block size traced), with no transfer to the host between them."""
     roots = _roots(alpha, coupling)
     weights = _weights(roots, alpha, coupling)
-    return roots, _merge(roots, weights, alpha, coupling, width)
+    return roots, _merge(roots, weights, alpha, coupling, span)
 
 
 def get_poles(
-    alpha: ComplexArray, coupling: ComplexArray, *, width: float
+    alpha: ComplexArray, coupling: ComplexArray, *, span: float
 ) -> tuple[jax.Array, jax.Array]:
     """Get the eigenvalues lambda_j of T and their weights w_j, e_1^T (s - T)^-1 e_1 = sum_j w_j / (s - lambda_j), in O(m^2), on the device.
 
@@ -422,9 +439,9 @@ def get_poles(
     the Ehrlich-Aberth iteration (`_aberth`) on the recurrence of its
     leading minors, from those of its two halves, recursively (`_roots`);
     the weights from the twisted factorization at each root
-    (`_chunk_weights`), except for clusters of roots closer than width,
-    whose weights come from their moments (`_merge`). All of it is jitted
+    (`_chunk_weights`), except for clusters of close roots, whose weights
+    come from their moments over the span of times (`_merge`). All of it is jitted
     and stays on the device (`_poles`), padded (`_padded`): the weights of
     the padding are zero.
     """
-    return _poles(*_padded(alpha, coupling), jnp.asarray(width))
+    return _poles(*_padded(alpha, coupling), jnp.asarray(span))

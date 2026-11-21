@@ -93,8 +93,6 @@ in 1D and 2D (15 cases, stop 1e-4, 1e-6 and 1e-8, replayed from stored
 coefficients) with an error of up to 1.4 stop (sodium in 1D at 0.3 |G|,
 1e-8); with two, of up to 0.35 stop, for one block more.
 """
-_CLUSTER = 1e-3
-"""The distance between poles, times the span, below which they are a cluster whose weights only the first two moments define (`get_poles`)."""
 _SPLIT_SEED = 2026
 """The seed of the vector that splits a measurement on a breakdown."""
 
@@ -352,9 +350,8 @@ class _Poles:
 
         The poles and residues come from T_m in O(m^2) (`get_poles`), where
         LAPACK's eig takes O(m^3): 1.3 s at m = 575 (sodium on Cu(111) in
-        1D, three evaluations) and 40 s at m = 3,000. Copies of a pole closer
-        than _CLUSTER / span are merged into their first two moments. All of
-        it is jitted, on the device.
+        1D, three evaluations) and 40 s at m = 3,000. Copies of a pole are
+        merged into their moments. All of it is jitted, on the device.
 
         L has no growing mode, so a pole with Re lambda > 0 is spurious, or a
         pole of rate zero (the steady state at dK = 0 or a multiple of |G|)
@@ -367,7 +364,7 @@ class _Poles:
         rates, weights = get_poles(
             np.asarray(lanczos.alpha),
             lanczos.coupling,
-            width=_CLUSTER / span,
+            span=span,
         )
         residues = lanczos.scale * weights
         chunk = max(1, min(len(times), 2**22 // len(rates)))
