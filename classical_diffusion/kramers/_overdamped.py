@@ -1,17 +1,24 @@
 # cspell: ignore btol lsqr tocsr vdot
-"""The overdamped limit of the Langevin equation, the Smoluchowski equation, solved by Gauss quadrature of its symmetrised generator."""
+"""The overdamped limit of the Langevin equation, the Smoluchowski equation, solved by Lanczos on its symmetrised generator."""
 
 import dataclasses
+import operator
 from typing import TYPE_CHECKING
 
 import numpy as np
-import scipy.linalg
 import scipy.sparse
 import scipy.sparse.linalg
 
-from classical_diffusion._results import RmsResult, SlowModes
+from classical_diffusion._results import (
+    RmsResult,
+    SlowModes,
+    fold_times,
+    get_selection,
+    get_unit_direction,
+    select_modes,
+)
 from classical_diffusion.kramers._config import DEFAULT_CONFIG, KramersConfig
-from classical_diffusion.kramers._lanczos import Quadrature, get_lanczos_quadrature
+from classical_diffusion.kramers._lanczos import LanczosProblem, get_modal_sum
 from classical_diffusion.kramers._model import (
     Model,
     build_model,
@@ -31,6 +38,7 @@ from classical_diffusion.util import timed
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from classical_diffusion._modal import ModalSum
     from classical_diffusion.kramers._model import ComplexArray, FloatArray, IntArray
     from classical_diffusion.langevin._system import PeriodicSystem
 
@@ -69,63 +77,61 @@ class _Generator:
         return -2j * k * self.amplitude
 
 
-def _get_generator(
-    system: PeriodicSystem, delta_k: FloatArray, config: KramersConfig
-) -> tuple[Model, _Generator]:
-    model = build_model(system)
-    vectors = get_plane_waves(model, config.basis_tol)
-    return model, _Generator(model, vectors, delta_k)
-
-
-def _converged_on(
-    times: FloatArray, tol: float
-) -> Callable[[Quadrature, Quadrature], bool]:
-    def isf(q: Quadrature) -> FloatArray:
-        return np.exp(-np.outer(times, np.maximum(q.nodes, 0))) @ q.weights
-
-    t_max = float(times[-1])
-
-    def converged(a: Quadrature, b: Quadrature) -> bool:
-        # A Ritz value off by its residual r changes its term by up to
-        # w r max_t t e^{-lambda t}, so every term must be resolved over the times as well as
-        # the sum agree between blocks
-        nodes = np.maximum(b.nodes, 1e-300)
-        # |d/d lambda e^{-lambda t}| = t e^{-lambda t}, largest at t = 1 / lambda
-        sensitivity = np.where(
-            nodes * t_max > 1, 1 / (np.e * nodes), t_max * np.exp(-nodes * t_max)
-        )
-        unresolved = np.max(b.weights * np.minimum(1.0, b.residuals * sensitivity))
-        return bool(
-            unresolved < 0.1 * tol and np.max(np.abs(isf(a) - isf(b))) < 0.1 * tol
-        )
-
-    return converged
-
-
-def _scaled_delta_k(
+def scaled_delta_k(
     system: PeriodicSystem, model: Model, delta_k: tuple[float, ...]
 ) -> FloatArray:
+    """Get dK in the natural units of the model."""
     return np.asarray(delta_k, dtype=float) / system.units.length_into(1.0, model.units)
 
 
-def _get_isf_quadrature(
+_BLOCK = 8
+"""The Lanczos steps between evaluations of the modal sum."""
+
+
+def _get_modes(  # ruff:ignore[too-many-arguments]
+    apply: Callable[[ComplexArray], ComplexArray],
+    start: ComplexArray,
+    norm: float,
+    times: FloatArray,
+    *,
+    error: Callable[[ModalSum, ModalSum], float],
+    tol: float,
+) -> ModalSum:
+    """Get <u| e^{L t} |u> / norm as a modal sum, by Lanczos on the Hermitian -L (`get_modal_sum`)."""
+    modal = get_modal_sum(
+        LanczosProblem(
+            apply=apply,
+            parity=None,
+            rates_of=operator.neg,
+            span=float(times[-1]),
+            error=error,
+            tolerance=tol,
+            block=_BLOCK,
+        ),
+        start,
+    )
+    return dataclasses.replace(modal, residues=modal.residues / norm)
+
+
+def _get_isf_modes(
     system: PeriodicSystem,
     delta_k: tuple[float, ...],
     times: FloatArray,
     config: KramersConfig,
-) -> tuple[Model, Quadrature]:
+) -> ModalSum:
+    """Get the ISF as a modal sum, converged until it changes by less than config.tol / 10 at the times."""
     model = build_model(system)
-    vectors = get_plane_waves(model, config.basis_tol)
-    generator = _Generator(model, vectors, _scaled_delta_k(system, model, delta_k))
-    quadrature = get_lanczos_quadrature(
+    vectors = get_plane_waves(model, config.amplitude_tol)
+    generator = _Generator(model, vectors, scaled_delta_k(system, model, delta_k))
+    return _get_modes(
         generator.apply,
         generator.amplitude,
-        converged=_converged_on(times, config.tol),
-    )
-    return model, dataclasses.replace(
-        quadrature,
-        nodes=np.maximum(quadrature.nodes, 0),
-        weights=quadrature.weights / generator.norm,
+        generator.norm,
+        times,
+        error=lambda a, b: (
+            float(np.max(np.abs(a.values(times) - b.values(times)))) / generator.norm
+        ),
+        tol=0.1 * config.tol,
     )
 
 
@@ -145,8 +151,9 @@ def solve_isf_overdamped(
     A = grad - i K + grad V / 2, Hermitian, so the ISF
     I(K, t) = <w| e^{L t} |w> / <w|w>, w = e^{-V / 2}, is a sum of decaying
     exponentials. Their rates and weights are the Gauss quadrature of the
-    spectral measure of -L in w (`get_lanczos_quadrature`), extended until
-    the ISF at the times changes by less than config.tol / 10.
+    spectral measure of -L in w, by the Lanczos method (`get_modal_sum`),
+    extended until the ISF at the times changes by less than config.tol / 10
+    over two blocks of steps.
 
     Parameters
     ----------
@@ -155,24 +162,26 @@ def solve_isf_overdamped(
     delta_k
         The scattering wavevector, in the units of the system.
     times
-        The times of the ISF, in the units of the system, increasing from zero.
+        The times of the ISF, in the units of the system: any real times, in
+        any order. The ISF is real and even in t.
     config
         The convergence, see `KramersConfig`.
 
     Raises
     ------
     ValueError
-        If the times do not increase from zero.
-    """
-    times = np.asarray(times, dtype=np.float64)
-    if times[0] != 0 or np.any(np.diff(times) <= 0):
-        msg = "The times must increase from zero"
-        raise ValueError(msg)
+        If the times are not a one dimensional array of finite numbers.
+    """  # ruff:ignore[docstring-extraneous-exception]
+    folded = fold_times(times)
     model = build_model(system)
-    natural = system.units.time_into(times, model.units)
-    _, quadrature = _get_isf_quadrature(system, delta_k, natural, config)
-    isf = np.exp(-np.outer(natural, quadrature.nodes)) @ quadrature.weights
-    return IsfResult(times=times, isf=isf, delta_k=delta_k, units=system.units)
+    natural = system.units.time_into(folded.magnitudes, model.units)
+    isf = _get_isf_modes(system, delta_k, natural, config).values(natural).real
+    return IsfResult(
+        times=folded.times,
+        isf=folded.hermitian(isf),
+        delta_k=delta_k,
+        units=system.units,
+    )
 
 
 @timed
@@ -185,65 +194,40 @@ def get_slow_modes_overdamped(
 ) -> SlowModes:
     """Get the slowest modes of the overdamped ISF of a periodic system at dK, I(t) = sum_j a_j exp(lambda_j t).
 
-    The modes are those of the Gauss quadrature of `solve_isf_overdamped`,
-    converged at the times 0 to 100 / (D_0 |G|^2) of the shortest reciprocal
-    vector G, every mode by default.
-    """
+    The modes are those of `solve_isf_overdamped`, converged at the times
+    0 to 100 / (D_0 |G|^2) of the shortest reciprocal vector G.
+
+    Parameters
+    ----------
+    system
+        The periodic system.
+    delta_k
+        The scattering wavevector, in the units of the system.
+    n_modes
+        The number of modes, by default every mode slower than SLOW_RATE of
+        the friction, and at least one.
+    config
+        The convergence, see `KramersConfig`.
+
+    Raises
+    ------
+    ValueError
+        If n_modes is negative.
+    """  # ruff:ignore[docstring-extraneous-exception]
     model = build_model(system)
+    selection = get_selection(n_modes, model.friction)
     g = float(np.min(np.linalg.norm(model.reciprocal, axis=-1)))
     window = np.linspace(0, 100 * model.friction / g**2, 400)
-    _, quadrature = _get_isf_quadrature(system, delta_k, window, config)
-    count = len(quadrature.nodes) if n_modes is None else n_modes
+    rates, amplitudes = select_modes(
+        *_get_isf_modes(system, delta_k, window, config).kept, selection
+    )
     natural = model.units.time_into(1.0, system.units)
     return SlowModes(
         system=system,
         delta_k=tuple(delta_k),
-        rates=-quadrature.nodes[:count].astype(complex) / natural,
-        amplitudes=quadrature.weights[:count].astype(complex),
+        rates=rates / natural,
+        amplitudes=amplitudes,
     )
-
-
-def _direction(model: Model, direction: tuple[float, ...] | None) -> FloatArray:
-    unit = np.eye(model.n_dim)[0] if direction is None else np.asarray(direction, float)
-    return unit / np.linalg.norm(unit)
-
-
-def _get_force_quadrature(
-    system: PeriodicSystem,
-    direction: tuple[float, ...] | None,
-    config: KramersConfig,
-    converged: Callable[[Quadrature, Quadrature], bool],
-) -> tuple[Model, _Generator, FloatArray, Quadrature]:
-    """Get the quadrature of the measure of -L at K = 0 in the force amplitude (e . grad V) w, over <w|w>."""
-    model, generator = _get_generator(
-        system, np.zeros(build_model(system).n_dim), config
-    )
-    unit = _direction(model, direction)
-    force = generator.force_amplitude(unit)
-    w = generator.amplitude / np.sqrt(generator.norm)
-    force -= w * np.vdot(w, force)
-    if np.linalg.norm(force) == 0:
-        # A flat potential: no force
-        return (
-            model,
-            generator,
-            unit,
-            Quadrature(nodes=np.ones(1), weights=np.zeros(1), residuals=np.zeros(1)),
-        )
-    quadrature = get_lanczos_quadrature(
-        generator.deflated(), force, converged=converged
-    )
-    return (
-        model,
-        generator,
-        unit,
-        dataclasses.replace(quadrature, weights=quadrature.weights / generator.norm),
-    )
-
-
-def _inverse_moment(q: Quadrature) -> float:
-    keep = q.nodes > 0
-    return float(np.sum(q.weights[keep] / q.nodes[keep]))
 
 
 @timed
@@ -258,8 +242,7 @@ def get_diffusion_constant_overdamped(
     D = D_0 - D_0^2 int_0^inf <F(t) F(0)> dt / (k_B T)^2 along the direction e,
     F = e . grad V, found as a least squares residual, a sum of squares, so
     that it is accurate relative to itself however far below D_0
-    (`_get_diffusion_ratio`). In 1D it is the Lifson-Jackson formula
-    D_0 / (<e^V> <e^{-V}>), exactly.
+    (`_get_diffusion_ratio`).
 
     Parameters
     ----------
@@ -276,8 +259,9 @@ def get_diffusion_constant_overdamped(
         The diffusion constant, in the units of the system.
     """
     model = build_model(system)
-    unit = _direction(model, direction)
-    ratio = _get_diffusion_ratio(model, unit, config, system=system)
+    ratio = _get_diffusion_ratio(
+        model, get_unit_direction(model.n_dim, direction), config
+    )
     length = model.units.length_into(1.0, system.units)
     return (
         ratio * length**2 / (model.friction * model.units.time_into(1.0, system.units))
@@ -285,71 +269,31 @@ def get_diffusion_constant_overdamped(
 
 
 _MAX_ROUNDS = 12
-_CANCELLATION_LIMIT = 1e-8
-"""The D / D_0 below which the difference D_0 - D_0^2 <F w| (-L)^{-1} |F w> / <w|w> loses more than 1e-8 of D to round off, where D is found as a least squares residual instead."""
-_DENSE_LIMIT = 4000
-"""The most plane waves for which the least squares problem of D is solved by a full QR factorisation."""
-
-
-def _get_residual_norm(gradient: ComplexArray, field: ComplexArray) -> float:
-    """Get min_u |field - A u|^2, as the norm of the part of field outside the range of A, with no difference of large terms.
-
-    A full QR factorisation A = [Q_1 Q_2] [R; 0] gives the residual as
-    Q_2^dag field, whose norm is accurate relative to itself, however small,
-    where |field|^2 - |Q_1^dag field|^2 would lose it to round off.
-    """
-    q, _ = scipy.linalg.qr(gradient, mode="full")
-    rank = gradient.shape[1]
-    return float(np.sum(np.abs(q[:, rank:].conj().T @ field) ** 2))
+_LSQR_TOL = 1e-10
+"""The relative residual of the normal equations at which LSQR stops (`_get_diffusion_ratio`): the error of the least squares residual is quadratic in that of the solution."""
 
 
 def _get_diffusion_ratio(
-    model: Model,
-    unit: FloatArray,
-    config: KramersConfig,
-    *,
-    system: PeriodicSystem,
+    model: Model, unit: FloatArray, config: KramersConfig
 ) -> float:
-    """Get D / D_0 = min_u |e w - A u|^2 / <w|w>, with A = grad + grad V / 2 at K = 0.
+    """Get D / D_0 = min_u |e w - A u|^2 / <w|w>, with A = grad + grad V / 2 at K = 0, growing the plane waves until it converges.
 
     D = D_0 - D_0^2 <F w| (-L)^{-1} |F w> / <w|w> with F w = A^dag (e w),
     and -L = D_0 A^dag A, so D / D_0 is the norm of the part of e w outside
     the range of A, over <w|w>: the least squares residual, a sum of
     squares. It is accurate relative to itself even for deep barriers,
     where D is many orders below D_0 and the difference of the two terms
-    would be lost to round off. The radius of the plane waves grows by 1.3
-    until D changes by less than config.tol of itself.
-    """
-    if model.n_dim == 1:
-        return _get_lifson_jackson_ratio(model, config.tol)
-    d0 = 1 / model.friction
-
-    def converged(a: Quadrature, b: Quadrature) -> bool:
-        # A Ritz value off by its residual r changes w / lambda by up to
-        # w r / lambda^2
-        nodes = np.maximum(b.nodes, 1e-300)
-        unresolved = d0 * np.max(
-            b.weights * np.minimum(1 / nodes, b.residuals / nodes**2)
-        )
-        change = d0 * abs(_inverse_moment(a) - _inverse_moment(b))
-        return bool(max(unresolved, change) < 1e-2 * config.tol)
-
-    _, _, _, quadrature = _get_force_quadrature(system, tuple(unit), config, converged)
-    ratio = 1 - d0 * _inverse_moment(quadrature)
-    if ratio > _CANCELLATION_LIMIT:
-        return ratio
-    return _get_residual_ratio(model, unit, config)
-
-
-def _get_residual_ratio(model: Model, unit: FloatArray, config: KramersConfig) -> float:
-    """Get D / D_0 as the least squares residual min_u |e w - A u|^2 / <w|w>, growing the plane waves until it converges.
+    would be lost to round off: for lithium across the rows of Cu(110),
+    D = 5.9e-15 D_0. The least squares problem is solved by LSQR, and the
+    residual e w - A u formed explicitly. The radius of the plane waves
+    grows by 1.3 until D changes by less than config.tol of itself.
 
     Raises
     ------
     RuntimeError
         If D does not converge in the plane waves.
     """
-    vectors = get_plane_waves(model, config.basis_tol)
+    vectors = get_plane_waves(model, config.amplitude_tol)
     radius = float(np.max(np.linalg.norm(vectors @ model.reciprocal, axis=-1)))
     previous = None
     for _ in range(_MAX_ROUNDS):
@@ -363,21 +307,17 @@ def _get_residual_ratio(model: Model, unit: FloatArray, config: KramersConfig) -
         rows = np.array([index[tuple(int(i) for i in v)] for v in get_rows(vectors)])
         field = np.zeros((model.n_dim, len(extended)), dtype=np.complex128)
         field[:, rows] = unit[:, None] * w[None, :]
-        stacked = gradient.reshape(-1, len(vectors))
-        if len(vectors) <= _DENSE_LIMIT:
-            residual = _get_residual_norm(stacked, field.reshape(-1))
-        else:
-            solution = scipy.sparse.linalg.lsqr(
-                scipy.sparse.csr_array(stacked),
-                field.reshape(-1),
-                atol=0,
-                btol=0,
-                conlim=0,
-                iter_lim=20 * len(vectors),
-            )[0]
-            residual = float(
-                np.sum(np.abs(field.reshape(-1) - stacked @ solution) ** 2)
-            )
+        field = field.reshape(-1)
+        stacked = scipy.sparse.csr_array(gradient.reshape(-1, len(vectors)))
+        solution = scipy.sparse.linalg.lsqr(
+            stacked,
+            field,
+            atol=_LSQR_TOL,
+            btol=_LSQR_TOL,
+            conlim=0,
+            iter_lim=20 * len(vectors),
+        )[0]
+        residual = float(np.sum(np.abs(field - stacked @ solution) ** 2))
         ratio = residual / float(np.vdot(w, w).real)
         if previous is not None and abs(ratio - previous) <= config.tol * abs(ratio):
             return ratio
@@ -390,43 +330,20 @@ def _get_residual_ratio(model: Model, unit: FloatArray, config: KramersConfig) -
     raise RuntimeError(msg)
 
 
-def _get_lifson_jackson_ratio(model: Model, tol: float) -> float:
-    """Get D / D_0 = 1 / (<e^V> <e^{-V}>) in 1D (Lifson and Jackson 1962).
-
-    The averages over a period are found by the trapezoid rule, which
-    converges exponentially for a smooth periodic integrand, on a grid
-    doubled until D changes by less than tol / 100 of itself. Both are
-    taken relative to the minimum and maximum of V, so that neither
-    overflows for a deep barrier.
-    """
-    n_grid = 256
-    previous = None
-    while True:
-        u = np.arange(n_grid) / n_grid
-        values = np.zeros(n_grid, dtype=np.complex128)
-        for g, v_g in model.potential:
-            values += v_g * np.exp(2j * np.pi * g[0] * u)
-        v = values.real
-        low, high = float(v.min()), float(v.max())
-        ratio = np.exp(low - high) / (
-            np.mean(np.exp(v - high)) * np.mean(np.exp(low - v))
-        )
-        if previous is not None and abs(ratio - previous) <= 1e-2 * tol * ratio:
-            return float(ratio)
-        previous = ratio
-        n_grid *= 2
-
-
 def _mean_square(
-    q: Quadrature, d0: float, diffusion: float, times: FloatArray
+    modes: ModalSum, d0: float, diffusion: float, times: FloatArray
 ) -> FloatArray:
-    """2 D t + 2 D_0^2 sum_j w_j (1 - e^{-l_j t}) / l_j^2.
+    """2 D t + 2 D_0^2 sum_j w_j (1 - e^{-l_j t}) / l_j^2, for the modes of the force correlation, w_j e^{-l_j t}.
 
     This is 2 D_0 t - 2 D_0^2 sum_j w_j [t / l_j - (1 - e^{-l_j t}) / l_j^2]
     with D = D_0 - D_0^2 sum_j w_j / l_j, written as a sum of positive terms.
+    A pole at l_j = 0 is the null vector w of -L, which the start does not
+    hold, seen through round off.
     """
-    keep = q.nodes > 0
-    nodes, weights = q.nodes[keep], q.weights[keep]
+    rates, residues = modes.kept
+    nodes = -rates.real
+    keep = nodes > 0
+    nodes, weights = nodes[keep], residues[keep].real
     memory = (-np.expm1(-nodes * times[:, None])) / nodes**2
     return 2 * diffusion * times + 2 * d0**2 * (memory @ weights)
 
@@ -442,52 +359,69 @@ def solve_rms_overdamped(
     """Get the mean square displacement of a periodic system along a direction, in the overdamped limit of the Langevin equation.
 
     <(x(t) - x(0))^2> = 2 D_0 t - 2 D_0^2 int_0^t (t - u) <F(u) F(0)> du,
-    with the force correlation from the Gauss quadrature at K = 0 in F w,
-    which is 2 D t + 2 D_0^2 sum_j w_j (1 - e^{-l_j t}) / l_j^2 in its nodes
-    l_j and weights w_j, with D from `get_diffusion_constant_overdamped`: a
-    sum of positive terms, accurate however far D is below D_0. The
-    quadrature is extended until the mean square displacement at the times
-    changes by less than config.tol / 10 of itself.
+    with the force correlation <F w| e^{L t} |F w> / <w|w> at K = 0 as a
+    modal sum (`get_modal_sum`, on -L deflated of its null vector w), which
+    is 2 D t + 2 D_0^2 sum_j w_j (1 - e^{-l_j t}) / l_j^2 in its rates l_j
+    and weights w_j, with D from `get_diffusion_constant_overdamped`: a sum
+    of positive terms, accurate however far D is below D_0. The modal sum is
+    extended until the mean square displacement at the times changes by less
+    than config.tol / 10 of itself over two blocks of steps.
+
+    Parameters
+    ----------
+    system
+        The periodic system.
+    times
+        The times, in the units of the system: any real times, in any order.
+        The mean square displacement is even in t.
+    direction
+        The direction along which x is measured, by default the first axis.
+    config
+        The convergence, see `KramersConfig`.
 
     Raises
     ------
     ValueError
-        If the times do not increase from zero.
-    """
-    times = np.asarray(times, dtype=np.float64)
-    if times[0] != 0 or np.any(np.diff(times) <= 0):
-        msg = "The times must increase from zero"
-        raise ValueError(msg)
+        If the times are not a one dimensional array of finite numbers.
+    """  # ruff:ignore[docstring-extraneous-exception]
+    folded = fold_times(times)
     model = build_model(system)
-    natural = system.units.time_into(times, model.units)
-    d0 = 1 / model.friction
-    diffusion = d0 * _get_diffusion_ratio(
-        model, _direction(model, direction), config, system=system
-    )
-    t = float(natural[-1])
-
-    def converged(a: Quadrature, b: Quadrature) -> bool:
-        reference = _mean_square(b, d0, diffusion, natural)[1:]
-        change = _mean_square(a, d0, diffusion, natural)[1:] - reference
-        # A Ritz value off by its residual r changes its term of the mean
-        # square displacement by up to 2 D_0^2 w r min(t^2, 2 / lambda^3)
-        nodes = np.maximum(b.nodes, 1e-300)
-        unresolved = (
-            2 * d0**2 * np.max(b.weights * b.residuals * np.minimum(t**2, 2 / nodes**3))
-        )
-        scale = np.maximum(np.abs(reference), 1e-300)
-        return bool(
-            max(unresolved / scale.min(), np.max(np.abs(change) / scale))
-            < 0.1 * config.tol
-        )
-
-    model, _, unit, quadrature = _get_force_quadrature(
-        system, direction, config, converged
-    )
+    natural = system.units.time_into(folded.magnitudes, model.units)
+    unit = get_unit_direction(model.n_dim, direction)
     length = model.units.length_into(1.0, system.units)
+    d0 = 1 / model.friction
+    diffusion = d0 * _get_diffusion_ratio(model, unit, config)
+    vectors = get_plane_waves(model, config.amplitude_tol)
+    generator = _Generator(model, vectors, np.zeros(model.n_dim))
+    force = generator.force_amplitude(unit)
+    w = generator.amplitude / np.sqrt(generator.norm)
+    force -= w * np.vdot(w, force)
+    if len(natural) == 1 or np.linalg.norm(force) == 0:
+        # Only t = 0, or a flat potential, with no force
+        mean_square = 2 * diffusion * natural
+    else:
+
+        def change(a: ModalSum, b: ModalSum) -> float:
+            # Relative to the mean square displacement itself
+            reference = _mean_square(b, d0, diffusion, natural)[1:]
+            difference = _mean_square(a, d0, diffusion, natural)[1:] - reference
+            return float(np.max(np.abs(difference) / np.abs(reference)))
+
+        modes = _get_modes(
+            generator.deflated(),
+            force,
+            generator.norm,
+            natural,
+            error=lambda a, b: change(
+                dataclasses.replace(a, residues=a.residues / generator.norm),
+                dataclasses.replace(b, residues=b.residues / generator.norm),
+            ),
+            tol=0.1 * config.tol,
+        )
+        mean_square = _mean_square(modes, d0, diffusion, natural)
     return RmsResult(
-        times=times,
-        mean_square=_mean_square(quadrature, d0, diffusion, natural) * length**2,
+        times=folded.times,
+        mean_square=folded.even(mean_square) * length**2,
         direction=tuple(unit),
         units=system.units,
     )

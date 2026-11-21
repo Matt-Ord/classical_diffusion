@@ -5,7 +5,12 @@ the Langevin ensembles of `classical_diffusion.langevin` with no sampling
 error, to a tolerance (`KramersConfig`).
 """
 
-from classical_diffusion._results import RmsResult, SlowModes, get_long_time_isf
+from classical_diffusion._results import (
+    SLOW_RATE,
+    RmsResult,
+    SlowModes,
+    get_long_time_isf,
+)
 from classical_diffusion.kramers._config import DEFAULT_CONFIG, KramersConfig
 from classical_diffusion.kramers._kramers import (
     get_diffusion_constant,
@@ -22,6 +27,7 @@ from classical_diffusion.kramers._overdamped import (
 
 __all__ = [
     "DEFAULT_CONFIG",
+    "SLOW_RATE",
     "KramersConfig",
     "RmsResult",
     "SlowModes",

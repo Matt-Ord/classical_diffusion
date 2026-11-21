@@ -10,8 +10,13 @@ class KramersConfig:
 
     tol: float = 1e-6
     """The absolute error of the ISF, I(0) = 1, and the relative error of the diffusion constant and mean square displacement."""
-    basis_tol: float = 1e-8
-    """The norm of the components of the equilibrium amplitude e^{-V / 2} left out of the plane waves, relative to its norm (`get_plane_waves`)."""
+    amplitude_tol: float = 1e-8
+    """The norm of the components of the equilibrium amplitude e^{-V / 2} left out of the first plane waves, relative to its norm (`get_plane_waves`).
+
+    Not the error of the result, which `tol` sets: the plane waves then grow
+    until the result changes by less than `tol`. (In `caldeira_leggett`,
+    `basis_tol` is the error of the result from the basis.)
+    """
 
     @override
     def __hash__(self) -> int:

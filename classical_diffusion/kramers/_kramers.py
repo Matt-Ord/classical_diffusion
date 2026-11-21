@@ -1,6 +1,7 @@
 # cspell: ignore splu spsolve tocsc
 """The Kramers equation of a periodic system: its ISF, mean square displacement, diffusion constant and slow modes, as sums of modes."""
 
+import dataclasses
 from dataclasses import dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING
@@ -9,19 +10,24 @@ import numpy as np
 import scipy.sparse
 import scipy.sparse.linalg
 
-from classical_diffusion._results import SLOW_RATE, RmsResult, SlowModes
+from classical_diffusion._modal import ModalSum
+from classical_diffusion._results import (
+    RmsResult,
+    SlowModes,
+    fold_times,
+    get_selection,
+    get_unit_direction,
+    select_modes,
+)
 from classical_diffusion.kramers._config import DEFAULT_CONFIG, KramersConfig
+from classical_diffusion.kramers._lanczos import LanczosProblem, get_modal_sum
 from classical_diffusion.kramers._model import (
     Model,
     build_model,
     get_plane_waves,
     get_plane_waves_within,
 )
-from classical_diffusion.kramers._modes import Modes, get_modes
-from classical_diffusion.kramers._overdamped import (
-    _direction,
-    _scaled_delta_k,
-)
+from classical_diffusion.kramers._overdamped import scaled_delta_k
 from classical_diffusion.kramers._real import build_real_operator, get_start
 from classical_diffusion.kramers._smoluchowski import get_amplitude, get_grid_size
 from classical_diffusion.kramers._stepping import (
@@ -68,7 +74,7 @@ def get_initial_basis(
 ) -> Basis:
     """Get a first guess of the basis which converges the ISF.
 
-    The plane waves resolve e^{-V / 2} to config.basis_tol, with a margin
+    The plane waves resolve e^{-V / 2} to config.amplitude_tol, with a margin
     that grows as gamma^{-1/3}, and |K| more: as the friction falls, the
     distribution is drawn into ever finer filaments in phase space before
     the friction smooths it. The Hermite order is 12 / sqrt(gamma) (in units
@@ -76,7 +82,7 @@ def get_initial_basis(
     narrowed Hermite functions (`get_width`) the order which converges the
     ISF and D of hydrogen, lithium and xenon in 1D grows as gamma^{-1/2}.
     """
-    vectors = get_plane_waves(model, config.basis_tol)
+    vectors = get_plane_waves(model, config.amplitude_tol)
     radius = float(np.max(np.linalg.norm(vectors @ model.reciprocal, axis=-1)))
     margin = 1 + 0.15 * model.friction ** (-1 / 3)
     return Basis(
@@ -129,7 +135,7 @@ def _build_problem(model: Model, basis: Basis, delta_k: FloatArray) -> _Problem:
 
 def _converge_basis[R](
     initial: Basis,
-    compute: Callable[[Basis], R],
+    compute_new: Callable[[Basis], R],
     change: Callable[[R, R], float],
     tol: float,
     max_rounds: int = 12,
@@ -141,6 +147,14 @@ def _converge_basis[R](
     RuntimeError
         If the basis does not converge within max_rounds.
     """
+    known = dict[Basis, R]()
+
+    def compute(basis: Basis) -> R:
+        # A basis grown along one direction only was computed in the last round
+        if basis not in known:
+            known[basis] = compute_new(basis)
+        return known[basis]
+
     basis = initial
     result = compute(basis)
     for _ in range(max_rounds):
@@ -164,35 +178,53 @@ def _converge_basis[R](
     raise RuntimeError(msg)
 
 
-def _modes_converged_on(
-    times: FloatArray, tol: float
-) -> Callable[[Modes, Modes], bool]:
-    return lambda a, b: bool(np.max(np.abs(a(times) - b(times))) < tol)
+def _get_modes(
+    problem: _Problem,
+    start: FloatArray,
+    times: FloatArray,
+    error: Callable[[ModalSum, ModalSum], float],
+    tol: float,
+) -> ModalSum:
+    """Get the correlation [u, e^{L t} u] / <w|w> = u^T J e^{L t} u / <w|w> as a modal sum, by Lanczos on (shift - L)^-1 in the form x^T J y.
+
+    The shift maps the slow modes, close to the origin, to the largest
+    eigenvalues of the inverse, which the Lanczos method finds first, so a
+    few tens of solves give the correlation at every time.
+    """
+    modal = get_modal_sum(
+        LanczosProblem(
+            apply=problem.solve,
+            parity=problem.parity,
+            rates_of=lambda mu: _SHIFT - 1 / mu,
+            span=float(times[-1]),
+            error=error,
+            tolerance=tol,
+        ),
+        start,
+    )
+    return dataclasses.replace(modal, residues=modal.residues / problem.norm)
 
 
 def _get_isf_modes(
     model: Model, delta_k: FloatArray, times: FloatArray, config: KramersConfig
-) -> Modes:
-    def compute(basis: Basis) -> Modes:
+) -> ModalSum:
+    def change(a: ModalSum, b: ModalSum) -> float:
+        return float(np.max(np.abs(a.values(times) - b.values(times)), initial=0.0))
+
+    def compute(basis: Basis) -> ModalSum:
         problem = _build_problem(model, basis, delta_k)
-        modes = get_modes(
-            problem.solve,
-            problem.start(),
-            problem.parity,
-            _SHIFT,
-            converged=_modes_converged_on(times, 1e-2 * config.tol),
-        )
-        return Modes(
-            rates=modes.rates,
-            weights=modes.weights / problem.norm,
-            n_solves=modes.n_solves,
+        start = problem.start()
+        scale = float(start @ start)
+        return _get_modes(
+            problem,
+            start,
+            times,
+            lambda a, b: change(a, b) / scale,
+            1e-2 * config.tol,
         )
 
     _, modes = _converge_basis(
-        get_initial_basis(model, delta_k, config),
-        compute,
-        lambda a, b: float(np.max(np.abs(a(times) - b(times)))),
-        config.tol,
+        get_initial_basis(model, delta_k, config), compute, change, config.tol
     )
     return modes
 
@@ -237,7 +269,7 @@ def _get_isf(
     model: Model, delta_k: FloatArray, times: FloatArray, config: KramersConfig
 ) -> FloatArray:
     if not _is_stepped(model):
-        return _get_isf_modes(model, delta_k, times, config)(times)
+        return _get_isf_modes(model, delta_k, times, config).values(times).real
 
     basis = get_initial_stepped_basis(model, delta_k, config)
     for _ in range(_MAX_STEPPED_ROUNDS):
@@ -397,22 +429,22 @@ def solve_isf(
     delta_k
         The scattering wavevector, in the units of the system.
     times
-        The times of the ISF, in the units of the system, increasing from zero.
+        The times of the ISF, in the units of the system: any real times, in
+        any order. The classical ISF is real and even in t, so it is found
+        once, at each |t|.
     config
         The convergence, see `KramersConfig`.
 
     Raises
     ------
     ValueError
-        If the times do not increase from zero, or at zero friction beyond 1D.
-    """
-    times = np.asarray(times, dtype=np.float64)
-    if times[0] != 0 or np.any(np.diff(times) <= 0):
-        msg = "The times must increase from zero"
-        raise ValueError(msg)
+        If the times are not a one dimensional array of finite numbers, or
+        at zero friction beyond 1D.
+    """  # ruff:ignore[docstring-extraneous-exception]
+    folded = fold_times(times)
     model = build_model(system)
-    natural = system.units.time_into(times, model.units)
-    scaled = _scaled_delta_k(system, model, delta_k)
+    natural = system.units.time_into(folded.magnitudes, model.units)
+    scaled = scaled_delta_k(system, model, delta_k)
     if model.friction == 0:
         _check_zero_friction(model)
         orbits = build_orbits(
@@ -421,7 +453,12 @@ def solve_isf(
         isf = np.real(orbits.isf(natural, tol=config.tol))
     else:
         isf = _get_isf(model, scaled, natural, config)
-    return IsfResult(times=times, isf=isf, delta_k=delta_k, units=system.units)
+    return IsfResult(
+        times=folded.times,
+        isf=folded.hermitian(isf),
+        delta_k=delta_k,
+        units=system.units,
+    )
 
 
 @timed
@@ -438,42 +475,49 @@ def get_slow_modes(
     20 / gamma. Beyond 1D, the start is stepped to 4 / gamma, by when the
     fast modes have decayed, and the slow modes are the Ritz pairs of the
     Krylov space of what is left, each with its weight in the ISF from the
-    J-symmetry of L, (u^T J r)^2 / (r^T J r) / <w|w>. By default every mode
-    which decays more slowly than SLOW_RATE of the friction, and at least
-    one.
+    J-symmetry of L, (u^T J r)^2 / (r^T J r) / <w|w>.
+
+    Parameters
+    ----------
+    system
+        The periodic system.
+    delta_k
+        The scattering wavevector, in the units of the system.
+    n_modes
+        The number of modes, by default every mode slower than SLOW_RATE of
+        the friction, and at least one.
+    config
+        The convergence, see `KramersConfig`.
 
     Raises
     ------
     ValueError
-        At zero friction, where the ISF does not decay.
+        If n_modes is negative, or at zero friction, where the ISF does not
+        decay.
     """
     model = build_model(system)
+    selection = get_selection(n_modes, model.friction)
     if model.friction == 0:
         msg = "At zero friction the ISF does not decay, and has no slow modes"
         raise ValueError(msg)
-    scaled = _scaled_delta_k(system, model, delta_k)
-    if _is_stepped(model):
-        rates, weights = _get_stepped_slow_modes(model, scaled, config)
-    else:
-        window = np.linspace(0, 20 / model.friction, 200)
-        modes = _get_isf_modes(model, scaled, window, config)
-        rates, weights = modes.rates, modes.weights
-    # A Ritz value of a mode the start barely holds can land right of the
-    # axis, or anywhere, with no weight
-    real = (rates.real <= 0) & (np.abs(weights) > _WEIGHT_FLOOR)
-    rates, weights = rates[real], weights[real]
-    order = np.argsort(-rates.real)
-    rates, weights = rates[order], weights[order]
-    if n_modes is None:
-        n_modes = max(
-            1, int(np.count_nonzero(rates.real > -SLOW_RATE * model.friction))
-        )
+    scaled = scaled_delta_k(system, model, delta_k)
+    window = 20 / model.friction
+    modes = (
+        ModalSum.of(*_get_stepped_slow_modes(model, scaled, config), window, config.tol)
+        if _is_stepped(model)
+        else _get_isf_modes(model, scaled, np.linspace(0, window, 200), config)
+    )
+    rates, weights = modes.kept
+    # A Ritz value of a mode the start barely holds can land anywhere, with
+    # no weight
+    seen = np.abs(weights) > _WEIGHT_FLOOR
+    rates, weights = select_modes(rates[seen], weights[seen], selection)
     natural = model.units.time_into(1.0, system.units)
     return SlowModes(
         system=system,
         delta_k=tuple(delta_k),
-        rates=rates[:n_modes] / natural,
-        amplitudes=weights[:n_modes],
+        rates=rates / natural,
+        amplitudes=weights,
     )
 
 
@@ -627,7 +671,7 @@ def get_diffusion_constant(
         _check_zero_friction(model)
         # Running orbits move ballistically forever
         return float("inf")
-    unit = _direction(model, direction)
+    unit = get_unit_direction(model.n_dim, direction)
     _, diffusion = _converge_basis(
         get_initial_basis(model, np.zeros(model.n_dim), config),
         (lambda basis: _get_stepped_diffusion(model, basis, unit, config.tol))
@@ -655,25 +699,43 @@ def solve_rms(
     each integrated exactly. The modes and basis converge until the mean
     square displacement changes by less than config.tol of its value.
 
+    Parameters
+    ----------
+    system
+        The periodic system.
+    times
+        The times, in the units of the system: any real times, in any order.
+        The mean square displacement is even in t.
+    direction
+        The direction along which x is measured, by default the first axis.
+    config
+        The convergence, see `KramersConfig`.
+
     Raises
     ------
     ValueError
-        If the times do not increase from zero.
-    """
-    times = np.asarray(times, dtype=np.float64)
-    if times[0] != 0 or np.any(np.diff(times) <= 0):
-        msg = "The times must increase from zero"
-        raise ValueError(msg)
+        If the times are not a one dimensional array of finite numbers, or
+        at zero friction beyond 1D.
+    """  # ruff:ignore[docstring-extraneous-exception]
+    folded = fold_times(times)
     model = build_model(system)
-    natural = system.units.time_into(times, model.units)
-    unit = _direction(model, direction)
+    natural = system.units.time_into(folded.magnitudes, model.units)
+    unit = get_unit_direction(model.n_dim, direction)
+    length = model.units.length_into(1.0, system.units)
+    if len(natural) == 1:
+        # Only t = 0
+        return RmsResult(
+            times=folded.times,
+            mean_square=folded.even(np.zeros(1)),
+            direction=tuple(unit),
+            units=system.units,
+        )
     if model.friction == 0:
         _check_zero_friction(model)
         orbits = build_orbits(series_from_model(model), 0.0, tol=config.tol)
-        length = model.units.length_into(1.0, system.units)
         return RmsResult(
-            times=times,
-            mean_square=orbits.msd(natural, tol=config.tol) * length**2,
+            times=folded.times,
+            mean_square=folded.even(orbits.msd(natural, tol=config.tol)) * length**2,
             direction=tuple(unit),
             units=system.units,
         )
@@ -698,19 +760,17 @@ def solve_rms(
                 tol=1e-2 * config.tol * min(1.0, float(natural[1]) ** 2),
             )
         problem = _build_problem(model, basis, np.zeros(model.n_dim))
-        v = problem.start(unit)
-        modes = get_modes(
-            problem.solve,
-            v,
-            problem.parity,
-            _SHIFT,
-            converged=lambda a, b: (
-                change(-2 * a.double_integral(natural), -2 * b.double_integral(natural))
-                < 1e-2 * config.tol
-            ),
-        )
         # J v = -v, so the modes are of -v^T e^{L t} v
-        return -2 * modes.double_integral(natural) / problem.norm
+        modes = _get_modes(
+            problem,
+            problem.start(unit),
+            natural,
+            lambda a, b: change(
+                a.double_integral(natural).real, b.double_integral(natural).real
+            ),
+            1e-2 * config.tol,
+        )
+        return -2 * modes.double_integral(natural).real
 
     _, mean_square = _converge_basis(
         get_initial_basis(model, np.zeros(model.n_dim), config),
@@ -718,10 +778,9 @@ def solve_rms(
         change,
         config.tol,
     )
-    length = model.units.length_into(1.0, system.units)
     return RmsResult(
-        times=times,
-        mean_square=mean_square * length**2,
+        times=folded.times,
+        mean_square=folded.even(mean_square) * length**2,
         direction=tuple(unit),
         units=system.units,
     )

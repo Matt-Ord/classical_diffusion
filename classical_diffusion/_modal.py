@@ -5,6 +5,7 @@ from math import factorial
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import scipy.linalg
 
 if TYPE_CHECKING:
     from classical_diffusion._results import ComplexArray, FloatArray
@@ -26,11 +27,10 @@ def get_poles(
     """
     m = len(alpha)
     tridiagonal = (
-        np.diag(np.asarray(alpha, dtype=complex))
-        + np.diag(np.asarray(upper[: m - 1], dtype=complex), 1)
-        + np.diag(np.asarray(lower[: m - 1], dtype=complex), -1)
+        np.diag(alpha) + np.diag(upper[: m - 1], 1) + np.diag(lower[: m - 1], -1)
     )
-    poles, vectors = np.linalg.eig(tridiagonal)
+    # LAPACK in real arithmetic where T is real
+    poles, vectors = scipy.linalg.eig(tridiagonal)
     first = np.zeros(m, complex)
     first[0] = 1
     return poles, scale * vectors[0] * np.linalg.solve(vectors, first)
@@ -85,7 +85,8 @@ class ModalSum:
         rest are dropped (`dropped`), and the caller must count their weight
         in its error.
         """
-        growth = np.abs(residues) * np.expm1(np.maximum(rates.real, 0) * span)
+        # Capped where it would overflow: such a pole is dropped either way
+        growth = np.abs(residues) * np.expm1(np.clip(rates.real * span, 0, 700))
         return ModalSum(rates=rates, residues=residues, stable=growth <= tolerance)
 
     @property
