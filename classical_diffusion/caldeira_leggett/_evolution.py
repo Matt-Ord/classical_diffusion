@@ -1,6 +1,6 @@
 """The time evolution of a measurement of exp(L t) X_0, by two-sided Lanczos (Pade via Lanczos)."""
 
-# cspell: ignore vdot fori finfo Strakos Tichy Liouvillians Feldmann Freund
+# cspell: ignore vdot fori finfo Strakos Tichy Liouvillians Feldmann Freund rebiorthogonalization
 import warnings
 from dataclasses import dataclass, field
 from functools import partial
