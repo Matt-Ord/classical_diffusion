@@ -81,7 +81,7 @@ class SteadyState:
     response: ComplexArray
     """The response X_1 = L_0^+ L_1 rho_ss from which D is found, which the mean square displacement also needs."""
     error: float
-    """The estimated error of D from the basis, relative to D (`_get_basis_error`)."""
+    """The estimated error of D from the basis, relative to D (`_get_basis`)."""
 
 
 def _get_steady_state_path(
@@ -113,30 +113,33 @@ for hydrogen, lithium and sodium on Cu(111) in 1D and 2D are 12-30 k_B T.
 """
 _PLANE_WAVE_FACTOR = 2.5
 """The first plane wave factor (`Model.plane_wave_factor`), raised by 1.5 if the plane waves are what limit D."""
-_SAFETY = 100.0
-"""The error of D relative to D_free per unit of population left at the edge of the basis (`_get_basis_error`).
+_SAFETY = 600.0
+"""The error of D relative to D_free per unit of population left at the edge of the basis, before it is measured (`_get_basis`).
 
-Measured against bands to 40-150 k_B T (`~/cd-agents/adaptive`), the
-error of D over the population of the highest band times D_free / D is,
-where the error is 1e-6 to 1e-3: 19-80 for hydrogen on Cu(111) in 1D,
-0.3-20 lithium, 9-11 sodium, 60-140 hydrogen in 2D, 5-13 lithium in 2D,
-6-12 a nearly free particle, 11-160 lithium at 300 K, 27-90 xenon at
-121 K, 200-310 CO at 150 K and 220-240 hydrogen at 50 K (deep
-tunnelling). It grows slowly as the error falls. 100 bounds it on the
-benchmark systems; the hydrogen at 50 K stops with D 2.4 times the
-tolerance out. A bound on all (500) would cost lithium in 2D 220 bands
-rather than 185, 2.3 times as much per application of L.
+Against bands to 40-150 k_B T (`~/cd-agents/adaptive`), the error of D
+over the population of the highest band times D_free / D is, where the
+error is 1e-6 to 1e-2: 2-80 for hydrogen on Cu(111) in 1D, 0.3-20
+lithium, 9-11 sodium, 2-140 hydrogen in 2D, 5-13 lithium in 2D, 6-12 a
+nearly free particle, 11-160 lithium at 300 K, 27-90 xenon at 121 K,
+200-310 CO at 150 K, 220-240 hydrogen at 50 K (deep tunnelling) and
+170-580 potassium at 300 K. 600 bounds it on all, but is 50 times too
+much for lithium, so it is measured for each system instead.
 """
+_MARGIN = 3.0
+"""The margin on the measured ratio of the error of D to the population at the edge (`_get_basis`).
+
+Within a system the ratio grows by up to 3 as the population falls by 4
+decades (2-10 times as it falls by 8).
+"""
+_FLOOR = 3.0
+"""The smallest ratio of the error of D to the population at the edge, should D change by less between two bases."""
+_FIRST_STEP = 10.0
+"""The most the population at the edge is lowered by before the ratio is measured."""
 _MAX_TRIES = 20
 
 
-def _get_basis_error(
-    model: Model,
-    bands: Bands,
-    density: ComplexArray,
-    diffusion: float,
-) -> tuple[float, float, float]:
-    """Get the estimated error of D relative to D, and the populations at the edge of the bands and of the plane waves.
+def _get_edge(model: Model, bands: Bands, density: ComplexArray) -> tuple[float, float]:
+    """Get the populations at the edge of the bands and of the plane waves.
 
     D is a small difference of terms of order D_free = k_B T / m gamma, each
     of which needs the bands above a state to complete it (the f-sum rule).
@@ -146,16 +149,11 @@ def _get_basis_error(
     """
     population = np.real(np.einsum("kaa->ka", density))
     top = abs(float(population[:, -1].sum()))
-    plane_waves = abs(float(np.sum(population * get_edge_weight(model, bands))))
-    free = 1 / model.friction
-    error = (
-        _SAFETY * (top + plane_waves) * free / abs(diffusion) if diffusion else np.inf
-    )
-    return error, top, plane_waves
+    return top, abs(float(np.sum(population * get_edge_weight(model, bands))))
 
 
-def _get_growth(energies: FloatArray, population: FloatArray, ratio: float) -> float:
-    """Get how far to raise the cutoff (k_B T) to lower the population of the highest band by twice ratio.
+def _get_growth(energies: FloatArray, population: FloatArray, factor: float) -> float:
+    """Get how far to raise the cutoff (k_B T) to lower the population of the highest band by a factor.
 
     The population falls about exponentially with the energy of the band,
     as exp(-E) in a Gibbs state, but more slowly where the friction mixes
@@ -168,10 +166,10 @@ def _get_growth(energies: FloatArray, population: FloatArray, ratio: float) -> f
     rate = 1.0
     if np.count_nonzero(near) > 2:  # ruff:ignore[magic-value-comparison]
         rate = -float(np.polyfit(lowest[near], np.log(weight[near]), 1)[0])
-    return max(np.log(2 * ratio) / float(np.clip(rate, 0.2, 2.0)), 2.0)
+    return max(np.log(factor) / float(np.clip(rate, 0.5, 2.0)), 2.0)
 
 
-def _get_basis(
+def _get_basis(  # ruff:ignore[too-many-locals]
     system: PeriodicSystem,
     config: CaldeiraLeggettConfig,
     direction: tuple[float, ...] | None,
@@ -180,11 +178,16 @@ def _get_basis(
     """Get the steady state in bands raised until D along the direction (by default the first axis) has an estimated error below config.basis_tol.
 
     From a cutoff of _START above the saddle (or that of start), each try
-    finds the steady state and D, and estimates the error of D from the
-    population it leaves in the highest band and on the outermost plane
-    waves (`_get_basis_error`). The plane waves are raised if they hold more
-    of it, and otherwise the cutoff, by as much as the population falls
-    with the energy of the bands needs (`_get_growth`).
+    finds the steady state and D. The error of D is the population at the
+    edge of the basis (`_get_edge`), p, times D_free / D, times a ratio
+    which differs from system to system by over 100, so it is measured:
+    once two tries have found D_1 and D_2, the error of D_1 is about
+    |D_2 - D_1|, which gives the ratio, and _MARGIN times the largest
+    measured (and at least _FLOOR) estimates the error of each later try.
+    Before that _SAFETY bounds it, and the population is lowered by at most
+    _FIRST_STEP. The plane waves are raised if they hold more of the
+    population at the edge, and otherwise the cutoff, by as much as the
+    population falls with the energy of the bands needs (`_get_growth`).
 
     Raises
     ------
@@ -193,6 +196,8 @@ def _get_basis(
     """
     cutoff = _START if start is None else start.model.cutoff
     factor = _PLANE_WAVE_FACTOR if start is None else start.model.plane_wave_factor
+    last: tuple[float, float] | None = None
+    ratio = None
     for _ in range(_MAX_TRIES):
         model = build_model(system, config, cutoff=cutoff, plane_wave_factor=factor)
         energies = get_energies(model)
@@ -202,7 +207,13 @@ def _get_basis(
         diffusion, response = get_diffusion_coefficient(
             operators, derivative, density, config
         )
-        error, top, plane_waves = _get_basis_error(model, bands, density, diffusion)
+        top, plane_waves = _get_edge(model, bands, density)
+        free = 1 / model.friction
+        if last is not None:
+            measured = _MARGIN * abs(diffusion - last[1]) / (last[0] * free)
+            ratio = max(ratio or _FLOOR, measured)
+        scale = (top + plane_waves) * free / max(abs(diffusion), 1e-300)
+        error = (_SAFETY if ratio is None else ratio) * scale
         if error <= config.basis_tol:
             return SteadyState(
                 model=model,
@@ -212,19 +223,21 @@ def _get_basis(
                 response=response,
                 error=error,
             )
+        last = (top + plane_waves, diffusion)
         if plane_waves > top:
             factor *= 1.5
-        else:
-            cutoff = get_next_cutoff(
-                model,
-                energies,
-                cutoff
-                + _get_growth(
-                    bands.energies,
-                    np.real(np.einsum("kaa->ka", density)),
-                    error / config.basis_tol,
-                ),
-            )
+            continue
+        lower = 2 * error / config.basis_tol
+        cutoff = get_next_cutoff(
+            model,
+            energies,
+            cutoff
+            + _get_growth(
+                bands.energies,
+                np.real(np.einsum("kaa->ka", density)),
+                lower if ratio is not None else min(lower, _FIRST_STEP),
+            ),
+        )
     msg = f"The basis did not reach an error of {config.basis_tol:.0e} in D"
     raise RuntimeError(msg)
 
@@ -669,7 +682,8 @@ def _get_state(
     diffusion, response = get_diffusion_coefficient(
         operators, derivative, density, config
     )
-    error, *_ = _get_basis_error(model, bands, density, diffusion)
+    # The error of the steady state's D scaled to this D (`_get_basis`)
+    error = state.error * abs(state.diffusion / diffusion)
     if error > config.basis_tol:
         return _get_basis(system, config, direction, state)
     return dataclasses.replace(
