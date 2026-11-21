@@ -1,6 +1,6 @@
 """The time evolution of a measurement of exp(L t) X_0, by two-sided Lanczos (Pade via Lanczos)."""
 
-# cspell: ignore vdot fori finfo Strakos Tichy Liouvillians Feldmann Freund rebiorthogonalization
+# cspell: ignore vdot fori finfo jitted LAPACK's Strakos Tichy Liouvillians Feldmann Freund rebiorthogonalization
 import warnings
 from dataclasses import dataclass, field
 from functools import partial
@@ -17,6 +17,10 @@ from classical_diffusion.caldeira_leggett._linear import (
     from_eigen,
     to_eigen,
 )
+from classical_diffusion.caldeira_leggett._tridiagonal import (
+    continued_fraction,
+    get_poles,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -29,20 +33,18 @@ _BLOCK = 25
 
 The coefficients of a block are one transfer to the host. The transfer
 function at 1 / span is a continued fraction of the tridiagonal, O(m), and
-only once it agrees is the tridiagonal diagonalized, O(m^3) (`_Poles`).
+only once it agrees are the poles of the tridiagonal found, O(m^2) (`_Poles`).
 """
 _SPREAD = 16
 """The fraction of the steps so far, 1 / _SPREAD, below which two evaluations of F_m are not apart (`_evolve`).
 
-An evaluation diagonalizes T_m, O(m^3): 40 s at m = 3,000. Hydrogen at 1000
-times its mass on Cu(111) in 1D (141 bands) needs 3,400 steps at 0.3 |G|,
-and evaluating after every block of _BLOCK steps took 950 s. Up to
+An evaluation finds the poles of T_m, O(m^2): about 1 s at m = 1,500. Up to
 m = 800 (every benchmark case) the evaluations stay a block apart.
 """
 _TRANSFER_BLOCK = 10
 """The steps of each block of the solve for the transfer function, which converges in tens of steps."""
 _MAX_STEPS = 5000
-"""The most Lanczos steps, where T_m takes 400 MB and its eigen-decomposition about 1.6 GB and minutes.
+"""The most Lanczos steps.
 
 Underdamped hydrogen (gamma = 0.01 / ps, 150 K) over 2000 ps needs 1,000 to
 2,300 steps, hydrogen at 1000 times its mass on Cu(111) in 1D 3,800, and
@@ -91,6 +93,8 @@ in 1D and 2D (15 cases, stop 1e-4, 1e-6 and 1e-8, replayed from stored
 coefficients) with an error of up to 1.4 stop (sodium in 1D at 0.3 |G|,
 1e-8); with two, of up to 0.35 stop, for one block more.
 """
+_CLUSTER = 1e-3
+"""The distance between poles, times the span, below which they are a cluster whose weights only the first two moments define (`get_poles`)."""
 _SPLIT_SEED = 2026
 """The seed of the vector that splits a measurement on a breakdown."""
 
@@ -293,35 +297,68 @@ class _Lanczos:
             # so has a relative error of eps magnitude / |beta delta|
             self.roundoff += _EPS * abs(magnitude) / abs(beta * delta)
 
-    def tridiagonal(self) -> ComplexArray:
+    @property
+    def coupling(self) -> ComplexArray:
+        """beta_k delta_k, the products of the off-diagonals of T_m."""
         m = self.steps
-        return (
-            np.diag(self.alpha)
-            + np.diag(self.beta[: m - 1], 1)
-            + np.diag(self.delta[: m - 1], -1)
-        )
+        return np.asarray(self.beta[: m - 1]) * np.asarray(self.delta[: m - 1])
 
     def transfer(self, s: ComplexArray) -> ComplexArray:
-        """Get scale e_1^T (s - T_m)^-1 e_1 at each s, as a continued fraction from the last step back."""
-        value = np.zeros_like(s, dtype=complex)
-        for j in range(self.steps - 1, -1, -1):
-            coupling = self.beta[j] * self.delta[j] if j < self.steps - 1 else 0
-            value = 1 / (s - self.alpha[j] - coupling * value)
-        return self.scale * value
+        """Get scale e_1^T (s - T_m)^-1 e_1 at each s, O(m) each."""
+        return self.scale * continued_fraction(np.asarray(self.alpha), self.coupling, s)
+
+
+@partial(jax.jit, static_argnames=("chunk",))
+def _evaluate(  # ruff:ignore[too-many-arguments]
+    rates: jax.Array,
+    residues: jax.Array,
+    times: jax.Array,
+    span: jax.Array,
+    tolerance: jax.Array,
+    *,
+    chunk: int,
+) -> tuple[jax.Array, jax.Array]:
+    """Get whether each pole is kept (`_Poles.of`) and sum_j r_j exp(lambda_j t) over those, chunk times at a time."""
+    growth = jnp.abs(residues) * jnp.expm1(jnp.maximum(rates.real, 0) * span)
+    stable = growth <= tolerance
+    # A dropped pole may grow by exp(1e3) over the span: inf times 0
+    kept, decaying = jnp.where(stable, residues, 0), jnp.where(stable, rates, 0)
+    values = jax.lax.map(
+        lambda part: jnp.exp(part[:, None] * decaying[None, :]) @ kept,
+        times.reshape(-1, chunk),
+    )
+    return stable, values.ravel()
 
 
 @dataclass(frozen=True, kw_only=True)
 class _Poles:
-    """The poles and residues of T_m: the measurement of exp(L t) X_0 is about sum_j residues_j exp(rates_j t)."""
+    """The poles and residues of T_m, on the device: the measurement of exp(L t) X_0 is about sum_j residues_j exp(rates_j t)."""
 
-    rates: ComplexArray
-    residues: ComplexArray
-    stable: np.ndarray
+    rates: jax.Array
+    residues: jax.Array
+    stable: jax.Array
     """Whether each pole is kept (`of`)."""
+    values: jax.Array
+    """The measurement at the times."""
+    steps: int
+    """The steps of the recurrence."""
 
     @staticmethod
-    def of(lanczos: _Lanczos, span: float, tolerance: float) -> _Poles:
-        """Get the poles of T_m, keeping those that decay, or grow by less than the tolerance over the span.
+    def of(
+        lanczos: _Lanczos,
+        times: FloatArray,
+        span: float,
+        tolerance: float,
+        last: _Poles | None,
+    ) -> _Poles:
+        """Get the poles of T_m, keeping those that decay, or grow by less than the tolerance over the span, and F_m at the times.
+
+        The poles and residues come from T_m in O(m^2) (`get_poles`), where
+        LAPACK's eig takes O(m^3): 1.3 s at m = 575 (sodium on Cu(111) in
+        1D, three evaluations) and 40 s at m = 3,000. Copies of a pole closer
+        than _CLUSTER / span are merged into their first two moments. The
+        roots start from those of the last evaluation. All of it is jitted,
+        on the device.
 
         L has no growing mode, so a pole with Re lambda > 0 is spurious, or a
         pole of rate zero (the steady state at dK = 0 or a multiple of |G|)
@@ -331,39 +368,48 @@ class _Poles:
         by at most |r| (exp(Re lambda span) - 1) over the span; the rest are
         dropped, and their weight must be below the tolerance.
         """
-        rates, vectors = np.linalg.eig(lanczos.tridiagonal())
-        first = np.zeros(len(rates), complex)
-        first[0] = 1
-        residues = lanczos.scale * vectors[0] * np.linalg.solve(vectors, first)
-        growth = np.abs(residues) * np.expm1(np.maximum(rates.real, 0) * span)
-        return _Poles(rates=rates, residues=residues, stable=growth <= tolerance)
+        rates, weights = get_poles(
+            np.asarray(lanczos.alpha),
+            lanczos.coupling,
+            width=_CLUSTER / span,
+            previous=None if last is None else (last.rates, last.steps),
+        )
+        residues = lanczos.scale * weights
+        chunk = max(1, min(len(times), 2**22 // len(rates)))
+        padded = np.concatenate([times, np.zeros(-len(times) % chunk)])
+        stable, values = _evaluate(
+            rates,
+            residues,
+            jnp.asarray(padded),
+            jnp.asarray(span),
+            jnp.asarray(tolerance),
+            chunk=chunk,
+        )
+        return _Poles(
+            rates=rates,
+            residues=residues,
+            stable=stable,
+            values=values[: len(times)],
+            steps=lanczos.steps,
+        )
 
     @property
     def dropped(self) -> float:
         """The weight of the dropped poles."""
-        return float(np.abs(self.residues[~self.stable]).sum())
-
-    def values(self, times: FloatArray) -> ComplexArray:
-        """Get sum_j r_j exp(lambda_j t) over the stable poles, a chunk of times at a time."""
-        rates, residues = self.rates[self.stable], self.residues[self.stable]
-        chunk = max(1, 2**22 // max(len(rates), 1))
-        return np.concatenate(
-            [
-                np.exp(np.outer(times[i : i + chunk], rates)) @ residues
-                for i in range(0, len(times), chunk)
-            ]
-        )
+        return float(jnp.where(self.stable, 0, jnp.abs(self.residues)).sum())
 
     def slowest(self, weight: float) -> ComplexArray:
         """Get the slowest kept poles of residue above weight, slowest first."""
-        seen = self.stable & (np.abs(self.residues) > weight)
-        rates = self.rates[seen]
+        rates = np.asarray(self.rates)[
+            np.asarray(self.stable) & (np.abs(np.asarray(self.residues)) > weight)
+        ]
         return rates[np.argsort(-rates.real)][:_SLOWEST]
 
     def transfer(self, s: float) -> complex:
         """Get the Laplace transform of `values` at s."""
-        stable = self.stable
-        return complex(np.sum(self.residues[stable] / (s - self.rates[stable])))
+        return complex(
+            jnp.where(self.stable, self.residues / (s - self.rates), 0).sum()
+        )
 
 
 def get_transfer(
@@ -485,6 +531,7 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
     )
     lanczos = _Lanczos(eigen=eigen, start=start, measurement=measurement)
     last, agreed, transforms, due = None, 0, np.zeros(0, complex), 0
+    poles = None
     broken = False
     progress = _Progress(tolerance=tolerance, floor=_ROUNDOFF * tolerance / stop)
     while lanczos.steps < _MAX_STEPS:
@@ -520,8 +567,8 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
         # Evaluations O(m^3) at least m / _SPREAD steps apart, so that their
         # cost is at most about 6 times that of the last
         due = lanczos.steps + max(_BLOCK, lanczos.steps // _SPREAD // _BLOCK * _BLOCK)
-        poles = _Poles.of(lanczos, 1 / s, tolerance)
-        values = poles.values(times)
+        poles = _Poles.of(lanczos, times, 1 / s, tolerance, poles)
+        values = poles.values
         # T_m is exact once the space is invariant, so only then need F_m
         # not be compared with the last block
         changed = (
@@ -529,7 +576,7 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
             if lanczos.invariant
             else np.inf
             if last is None
-            else float(np.abs(values - last).max(initial=0.0))
+            else float(jnp.abs(values - last).max(initial=0.0))
         )
         error = max(
             changed,
@@ -548,7 +595,7 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
                 )
             progress.warn("The evolution")
             return Evolution(
-                values=values,
+                values=np.asarray(values),
                 rates=poles.slowest(tolerance),
                 applications={
                     "lanczos": lanczos.applications,
