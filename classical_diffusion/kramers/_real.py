@@ -41,26 +41,14 @@ def get_momentum_reach(model: Model) -> float:
 
 @functools.cache
 def _get_momentum_reach(potential: tuple, n_dim: int) -> float:
-    saddle = get_saddle_energy(
+    saddle, minimum = get_saddle_energy(
         tuple((g, float(np.real(v))) for g, v in potential), n_dim
     )
-    minimum = _get_potential_minimum(potential, n_dim)
     return float(np.sqrt(2 * (saddle - minimum + _MARGIN)))
 
 
 _MARGIN = 25.0
 """The energy above the saddle, in units of k_B T, up to which the Hermite functions resolve the momentum."""
-
-
-def _get_potential_minimum(potential: tuple, n_dim: int) -> float:
-    n_grid = 64 if n_dim < 3 else 24  # ruff:ignore[magic-value-comparison]
-    u = np.stack(
-        np.meshgrid(*[np.arange(n_grid) / n_grid] * n_dim, indexing="ij"), axis=-1
-    )
-    values = np.zeros(u.shape[:-1], dtype=np.complex128)
-    for g, v in potential:
-        values += v * np.exp(2j * np.pi * (u @ np.array(g, dtype=float)))
-    return float(values.real.min())
 
 
 def get_width(max_order: int, reach: float) -> float:
