@@ -413,9 +413,9 @@ def solve_isf(
     """Solve the Caldeira-Leggett master equation of a periodic system, and get its ISF.
 
     The ISF I(delta_k, t) = Tr[e^{i delta_k x} V(t) (rho e^{-i delta_k x})]
-    of the steady state rho is found exactly at every time, as its slow
-    modes plus a stepper on the rest (`get_reduced_evolution`). The solver
-    is deterministic, so the ISF has no error.
+    of the steady state rho is found at every time to isf_config.stop, by
+    two-sided Lanczos (Pade via Lanczos, `get_reduced_evolution`). The
+    solver is deterministic, so the ISF has no statistical error.
 
     At negative times the ISF of the steady state is, by the quantum
     regression theorem, I(-t) = <e^{-i delta_k x(t)} e^{i delta_k x(0)}> =
@@ -477,7 +477,6 @@ def solve_isf(
         system.units.time_into(magnitudes, sector.model.units),
         delta_k=tuple(sector.delta_k),
         units=sector.model.units,
-        friction=_get_friction(system, sector.model),
         isf_config=isf_config,
     )
     # The ISF at exactly the given times, rather than at their round trip
@@ -531,7 +530,12 @@ def get_slow_modes(
     (`get_long_time_isf`). Modes the ISF does not see are skipped. It needs
     no time steps: for lithium on Cu(110) in 2D, 600-700 applications of L,
     3 times fewer than a matrix pencil fit to 10 / friction of the ISF,
-    which also misfits the hopping rate at large dK.
+    which also misfits the hopping rate at large dK. The slow modes are
+    also poles of the two-sided Lanczos recurrence of `solve_isf`, where
+    their rates converge to 1e-8 early, but certifying each eigenvector to
+    isf_config.mode_rtol from the recurrence took 2.6-7 times the
+    applications of L of Jacobi-Davidson for H and Li on Cu(111) in 1D, and
+    13-17 times for Na.
 
     Parameters
     ----------
@@ -541,9 +545,8 @@ def get_slow_modes(
         The scattering wavevector, in the units of the system.
     n_modes
         The number of modes, by default every mode slower than SLOW_RATE of
-        the friction, and at least one. `solve_isf` may find more, any mode
-        which is cheaper to find than to step through, but always these. At
-        dK = 0 the only mode seen is the steady state, so fewer are found.
+        the friction, and at least one. At dK = 0 the only mode seen is the
+        steady state, so fewer are found.
     config
         The basis and linear solves, see `CaldeiraLeggettConfig`.
     isf_config
@@ -767,7 +770,6 @@ def solve_rms(
         direction=tuple(unit),
         units=model.units,
         config=config,
-        friction=_get_friction(system, model),
         isf_config=isf_config,
         response=state.response,
     )

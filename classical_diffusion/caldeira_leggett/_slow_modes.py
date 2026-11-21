@@ -1,7 +1,6 @@
 """The slowest modes of a measurement of exp(L t) X_0, by Jacobi-Davidson with a partial Schur form, in the eigenvectors of K."""
 
 # cspell: ignore maxiter bicgstab vdot eigenpair finfo
-import math
 from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, Literal
@@ -29,16 +28,12 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, kw_only=True)
 class Mode:
-    """An eigenpair L r = lambda r, |r| = 1, and its weight in a measurement of exp(L t) X_0."""
+    """An eigenvalue lambda of L and its weight in a measurement of exp(L t) X_0."""
 
     rate: complex
     """lambda."""
-    vector: jax.Array
-    """r, in the eigenvectors of K."""
-    coefficient: complex
-    """c, the weight of r in X_0 (or in what remains of it once the faster modes are removed)."""
     amplitude: complex
-    """a = measure(r) c, the weight of exp(lambda t) in the measurement."""
+    """a = measure(r) c for the eigenvector r and its weight c in X_0, the weight of exp(lambda t) in the measurement."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -55,34 +50,7 @@ class RateCut:
     rate: float
 
 
-@dataclass(frozen=True, kw_only=True)
-class CostCut:
-    """Every mode which costs fewer applications of L to find than to step through.
-
-    The modes are taken in groups of nearly equal Re lambda, conjugate or
-    degenerate partners, which only shorten the stepping together. The
-    stepping stops when the slowest mode left, of weight c, has decayed to
-    stop, at ln(|c| / stop) / |Re lambda|, and not before start_time, which is
-    stepped already. A group is found if its estimated cost, cost_factor
-    times its size times the applications per mode so far (none for the
-    first), is below step_rate times the time it saves. A group which costs
-    more than that is dropped, so a group is never worse than twice its
-    saving. A search is also abandoned once it has cost more than the best
-    saving seen since the last mode: without that cap, the MSD of lithium on
-    Cu(111) in 2D finds its first group (at 4.6 friction, which saves 121
-    applications of L) for 464 applications rather than giving up after 121,
-    which the other 14 benchmark cases never reach.
-    """
-
-    step_rate: float
-    """The applications of L per unit time of stepping."""
-    start_time: float
-    stop: float
-    cost_factor: float
-    """The margin on the estimated cost of a mode, which varies from mode to mode (`_evolution._ESTIMATED` times `_COST_FACTOR`)."""
-
-
-type Selection = ModeCount | RateCut | CostCut
+type Selection = ModeCount | RateCut
 
 _AMPLITUDE_TOL = 1e-8
 """The smallest amplitude of a mode, relative to the measurement at t = 0, below which it is not looked for: modes the measurement cannot see, such as the steady state at dK = 0."""
@@ -103,20 +71,14 @@ _MAX_OUTER = 60
 _MAX_MODES = 50
 _ROUGH = 0.1
 """The relative residual of a Ritz pair below which a selection is decided on it, as its value and weight are then close."""
-_PARTNER = 0.05
-"""The relative difference of Re lambda within which modes are a group."""
 _RESTART = 20
 """The most Ritz vectors kept when the search space restarts after a mode is found.
 
 The restart needs no application of L (`_Search.lock`), and keeping 20
-rather than 5 keeps more of the partners of a group: over H, Li and Na on
-Cu(111) in 1D and H in 2D (ISF at 0.3 and 0.05 |G| and MSD, 2 seeds), 2.7%
-fewer applications of L.
+rather than 5 keeps more of the partners of a conjugate or degenerate
+group: over H, Li and Na on Cu(111) in 1D and H in 2D, 2.7% fewer
+applications of L.
 """
-_WEIGHT = 0.1
-"""The weight of a mode in an evolution, relative to |X_0|, below which it is found to a looser residual (`_get_mode_rtol`)."""
-_LOOSEST = 1e-3
-"""The loosest relative residual of a mode."""
 _INDEPENDENT = 1e-8
 """The norm of a restart vector, once orthogonalized, below which it is dropped."""
 _STAGNATION = 1e-14
@@ -257,8 +219,6 @@ class _Search:
     eigen: EigenLiouvillian
     start: jax.Array
     measurement: jax.Array
-    blind: bool = False
-    """Whether to look for every mode, rather than those the measurement sees."""
     locked: list[jax.Array] = field(default_factory=list)
     schur: ComplexArray = field(default_factory=lambda: np.zeros((0, 0), complex))
     basis: jax.Array = field(init=False)
@@ -338,16 +298,8 @@ class _Search:
         )
         estimates = (self.measured @ right) * weights
         reference = abs(complex(jnp.vdot(self.measurement, self.start)))
-        # A blind search looks for the mode with most weight in the start (the
-        # remainder of a stepping, which a mode not found decays slowly in)
-        order = [
-            int(j) for j in np.argsort(-np.abs(weights) if self.blind else -values.real)
-        ]
-        seen = [
-            j
-            for j in order
-            if self.blind or abs(estimates[j]) >= _AMPLITUDE_TOL * reference
-        ]
+        order = [int(j) for j in np.argsort(-values.real)]
+        seen = [j for j in order if abs(estimates[j]) >= _AMPLITUDE_TOL * reference]
         return _Ritz(
             values=values,
             right=right,
@@ -400,25 +352,14 @@ class _Search:
             # steady state: search on in what is left of X_0, if anything
             self.expand(self.start, scale=float(jnp.linalg.norm(self.start)))
 
-    def truncate(self, n: int) -> None:
-        self.locked, self.schur = self.locked[:n], self.schur[:n, :n]
-
-    def modes(self, rtol: float, *, optional: bool) -> list[Mode]:
-        """Get the modes from the Schur form, slowest first, with their coefficients to rtol of |X_0|.
+    def modes(self, rtol: float) -> list[Mode]:
+        """Get the modes from the Schur form, slowest first, with their amplitudes from coefficients to rtol of |X_0|.
 
         Each eigenvector is only accurate to its residual, |r| ~ mode_rtol |lambda|,
         which leaks a little of it onto the slower modes. The coefficients are
         taken on what remains of X_0 as each mode is removed, fastest first, so
-        the slowest, which would take longest to step through, are removed
-        exactly. If the modes are optional, a mode whose coefficient solve
-        fails is left in the remainder, which the stepper takes: the
-        coefficient of each other mode is that of its left eigenvector, which
-        the mode left in does not change.
-
-        Raises
-        ------
-        RuntimeError
-            If a coefficient solve fails, and the modes are not optional.
+        that the slowest are removed exactly. A failed coefficient solve
+        raises a RuntimeError (`refine`).
         """
         if not self.locked:
             return []
@@ -428,142 +369,18 @@ class _Search:
         for j in np.argsort(rates.real):
             vector = jnp.tensordot(jnp.asarray(vectors[:, j]), q, axes=1)
             vector /= jnp.linalg.norm(vector)
-            try:
-                amplitude, coefficient, applications = _get_amplitude(
-                    self.eigen,
-                    complex(rates[j]),
-                    vector,
-                    remainder,
-                    measurement=self.measurement,
-                    rtol=rtol,
-                )
-            except RuntimeError:
-                if not optional:
-                    raise
-                continue
+            amplitude, coefficient, applications = _get_amplitude(
+                self.eigen,
+                complex(rates[j]),
+                vector,
+                remainder,
+                measurement=self.measurement,
+                rtol=rtol,
+            )
             self.coefficient_applications += applications
             remainder -= coefficient * vector
-            modes.append(
-                Mode(
-                    rate=complex(rates[j]),
-                    vector=vector,
-                    coefficient=coefficient,
-                    amplitude=amplitude,
-                )
-            )
+            modes.append(Mode(rate=complex(rates[j]), amplitude=amplitude))
         return modes[::-1]
-
-
-@dataclass(kw_only=True)
-class _CostState:
-    """The progress of a `CostCut`, in applications of L."""
-
-    rule: CostCut
-    since: int = 0
-    """The count at the last mode found."""
-    per_mode: float = 0.0
-    best_saving: float = 0.0
-    group: tuple[float, int, int, float] | None = None
-    """Re lambda of the group being found, the count it began at, the modes found before it, and its budget."""
-
-    def saving(self, ritz: _Ritz, j: int) -> tuple[float, int]:
-        """Get the applications saved by finding the group of Ritz pair j, and its size."""
-        re = ritz.values.real
-        members = [i for i in ritz.order if abs(re[i] - re[j]) <= _PARTNER * abs(re[j])]
-        beyond = [i for i in ritz.order if re[i] < re[j] - _PARTNER * abs(re[j])]
-        stop = self.rule.stop
-
-        def end(i: int) -> float:
-            return math.log(max(abs(ritz.weights[i]), stop) / stop) / max(
-                abs(re[i]), 1e-300
-            )
-
-        without = max([self.rule.start_time, *(end(i) for i in members + beyond)])
-        with_group = max([self.rule.start_time, *(end(i) for i in beyond)])
-        return self.rule.step_rate * (without - with_group), len(members)
-
-    def done(
-        self, search: _Search, ritz: _Ritz, j: int, count: int, *, rough: bool
-    ) -> bool:
-        """Decide whether to stop before finding Ritz pair j, dropping any group over its budget."""
-        saving, size = self.saving(ritz, j)
-        re = ritz.values.real[j]
-        if self.group is not None and abs(re - self.group[0]) <= _PARTNER * abs(
-            self.group[0]
-        ):
-            if count - self.group[1] > self.group[3]:
-                search.truncate(self.group[2])
-                return True
-            return False
-        self.best_saving = max(self.best_saving, saving)
-        if count - self.since > self.best_saving:
-            return True
-        if rough:
-            if self.rule.cost_factor * size * self.per_mode > saving:
-                return True
-            self.group = (re, self.since, len(search.locked), saving)
-        return False
-
-    def found(self, count: int, n_locked: int) -> None:
-        self.since, self.best_saving = count, 0.0
-        self.per_mode = count / n_locked
-
-
-@dataclass(frozen=True, kw_only=True)
-class Schur:
-    """A partial Schur form L Q = Q T of the slow modes, Q an orthonormal stack of states and T upper triangular."""
-
-    vectors: jax.Array
-    """Q, (k, ...), in the eigenvectors of K."""
-    matrix: ComplexArray
-    """T, (k, k)."""
-
-
-def find_slow_schur(  # ruff:ignore[too-many-arguments]
-    eigen: EigenLiouvillian,
-    start: jax.Array,
-    measurement: jax.Array,
-    selection: Selection,
-    *,
-    config: EvolutionConfig,
-    seed: jax.Array | None = None,
-    prior: Schur | None = None,
-    blind: bool = False,
-    scale: float = 1.0,
-) -> tuple[Schur, int]:
-    """Get a partial Schur form of the slowest modes of <measurement, exp(L t) start> (`find_slow_modes`) without their coefficients, and the applications of L.
-
-    It extends a prior Schur form, if any, and looks for every mode rather
-    than those the measurement sees if blind. The weights of the modes are
-    scale times those in start, relative to |X_0| (`_get_mode_rtol`).
-    """
-    search = _search(
-        eigen,
-        start,
-        measurement,
-        selection,
-        config=config,
-        seed=seed,
-        prior=prior,
-        blind=blind,
-        scale=scale,
-    )
-    vectors = (
-        jnp.stack(search.locked)
-        if search.locked
-        else jnp.zeros((0, *start.shape), start.dtype)
-    )
-    return Schur(vectors=vectors, matrix=search.schur), search.applications
-
-
-def get_schur_of(eigen: EigenLiouvillian, vector: jax.Array) -> Schur:
-    """Get the Schur form of one known eigenvector, such as the steady state."""
-    vector /= jnp.linalg.norm(vector)
-    image = apply_eigen(eigen, vector, jnp.asarray(0j))
-    return Schur(
-        vectors=vector[None],
-        matrix=np.array([[complex(jnp.vdot(vector, image))]]),
-    )
 
 
 def find_slow_modes(
@@ -583,43 +400,20 @@ def find_slow_modes(
     needs 5,000-12,000.
     """
     search = _search(eigen, start, measurement, selection, config=config)
-    # The coefficients to well below the stop of the stepping
-    return search.modes(0.1 * config.stop, optional=isinstance(selection, CostCut)), {
+    # The coefficients to well below the error allowed in an evolution
+    return search.modes(0.1 * config.stop), {
         "modes": search.applications,
         "coefficients": search.coefficient_applications,
     }
 
 
-def _get_mode_rtol(mode_rtol: float, ritz: _Ritz, j: int, scale: float | None) -> float:
-    """Get the residual of Ritz pair j, relative to |theta|, at which to lock it.
-
-    The modes of an evolution are evolved exactly in their span, and a mode
-    of weight c (relative to |X_0|, scale |X_0| / |start|) and relative
-    residual e leaves an error of about c e over its lifetime. A mode of
-    weight below _WEIGHT is found to (_WEIGHT / c) mode_rtol, at most
-    _LOOSEST, and the others, such as the hop, to mode_rtol: over the cases
-    of _RESTART, 6.5% fewer applications of L, with the same largest error
-    against the reference ISF (9.4e-8). Without a scale (`get_slow_modes`),
-    every mode is found to mode_rtol.
-    """
-    if scale is None:
-        return mode_rtol * abs(ritz.values[j])
-    weight = abs(ritz.weights[j]) * scale
-    factor = min(_WEIGHT / max(weight, 1e-300), _LOOSEST / mode_rtol)
-    return mode_rtol * max(factor, 1.0) * abs(ritz.values[j])
-
-
-def _search(  # ruff:ignore[too-many-arguments]
+def _search(
     eigen: EigenLiouvillian,
     start: jax.Array,
     measurement: jax.Array,
     selection: Selection,
     *,
     config: EvolutionConfig,
-    seed: jax.Array | None = None,
-    prior: Schur | None = None,
-    blind: bool = False,
-    scale: float | None = None,
 ) -> _Search:
     """Find the slowest modes of <measurement, exp(L t) start> as a partial Schur form, by Jacobi-Davidson.
 
@@ -631,31 +425,18 @@ def _search(  # ruff:ignore[too-many-arguments]
     equation stays well conditioned as theta converges. A mode is locked once
     |r| <= config.mode_rtol |theta|, or round off, into a partial Schur form,
     and the search continues outside it. Modes the measurement does not see
-    are skipped, and the selection decides when to stop. The search begins
-    from a seed if given, rather than X_0, and extends a prior Schur form. A
-    blind search looks for every mode, the one with most weight in X_0
-    first, rather than for those the measurement sees.
+    are skipped, and the selection decides when to stop.
 
     Raises
     ------
     RuntimeError
         If a mode does not converge in _MAX_OUTER iterations, or its search
-        stagnates, unless the selection is a `CostCut`: its modes only save
-        time steps, so it keeps the modes locked before, each exact, and the
-        stepper takes the rest.
+        stagnates.
     """
-    search = _Search(eigen=eigen, start=start, measurement=measurement, blind=blind)
-    if prior is not None:
-        search.locked = list(prior.vectors)
-        search.schur = np.array(prior.matrix)
-    known_count = len(search.locked)
+    search = _Search(eigen=eigen, start=start, measurement=measurement)
     floor = 1e3 * np.finfo(float).eps * float(jnp.abs(eigen.rates).max())
     target = selection.n_modes if isinstance(selection, ModeCount) else _MAX_MODES
-    cost = _CostState(rule=selection) if isinstance(selection, CostCut) else None
-    # From a seed rather than X_0, such as X_0 stepped through the probe, in
-    # which the fastest modes have decayed: over the cases of _RESTART, 4.7%
-    # fewer applications of L
-    search.expand(start if seed is None else seed)
+    search.expand(start)
     iterations = 0
     # The search space is empty once X_0 is in the span of the modes locked
     while len(search.locked) < target and len(search.basis):
@@ -664,30 +445,19 @@ def _search(  # ruff:ignore[too-many-arguments]
         theta = complex(ritz.values[j])
         u, r = search.pair(ritz, j)
         norm = float(jnp.linalg.norm(r))
-        rough = norm <= _ROUGH * abs(theta)
         if (
             isinstance(selection, RateCut)
             and search.locked
-            and rough
+            and norm <= _ROUGH * abs(theta)
             and theta.real < -selection.rate
         ):
             break
-        if cost is not None and cost.done(
-            search, ritz, j, search.applications, rough=rough
-        ):
-            break
-        if norm <= max(_get_mode_rtol(config.mode_rtol, ritz, j, scale), floor):
+        if norm <= max(config.mode_rtol * abs(theta), floor):
             search.lock(u, ritz)
-            if cost is not None:
-                cost.found(search.applications, len(search.locked) - known_count)
             iterations = 0
             continue
         iterations += 1
         if iterations > _MAX_OUTER or not search.correct(u, r, theta):
-            if cost is not None:
-                # The modes only save time steps, and each one locked is
-                # exact: the stepper takes the rest
-                break
             msg = f"Jacobi-Davidson did not converge: |r| {norm:.1e} at {theta:.4e}"
             raise RuntimeError(msg)
     return search

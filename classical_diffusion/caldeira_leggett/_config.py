@@ -56,23 +56,15 @@ DEFAULT_CONFIG = CaldeiraLeggettConfig()
 
 @dataclass(frozen=True, kw_only=True)
 class EvolutionConfig:
-    """The convergence of an ISF or mean square displacement (`get_reduced_evolution`), and of the slow modes (`get_slow_modes`).
-
-    Each sets an accuracy. Which modes are found to save time steps is
-    decided by fixed rules (`_evolution._PROBE`, `_CHECK`, `_COST_FACTOR`).
-    """
+    """The convergence of an ISF or mean square displacement (`get_reduced_evolution`), and of the slow modes (`get_slow_modes`)."""
 
     stop: float = 1e-6
-    """The norm of what is left of X_0, relative to |X_0|, below which it is no longer stepped."""
-    step_rtol: float = 1e-8
-    """The relative tolerance of each step of the Krylov exponential stepper."""
-    step_atol: float = 1e-9
-    """The absolute tolerance of each step, relative to |X_0| (as the stop is).
+    """The error allowed in the measurement at each time, relative to its value at t = 0.
 
-    The ISF has |X_0| = 0.2-0.3 in the eigenvectors of K (H, Li and Na on Cu(111)),
-    so 1e-9 is close to the absolute 1e-10 it replaces; an MSD has |X_0| = 5e-3 (H in
-    2D), for which 1e-10 relative cost 11% more applications of L than 1e-9 and
-    gave the same errors.
+    The evolution is by two-sided Lanczos, which stops once the measurement
+    at the times changes by less than this over two blocks of steps, and
+    its Laplace transform at 1 / span agrees with one found directly
+    (`get_reduced_evolution`).
     """
     mode_rtol: float = 1e-6
     """The relative residual |L r - lambda r| / |lambda| of each slow mode."""

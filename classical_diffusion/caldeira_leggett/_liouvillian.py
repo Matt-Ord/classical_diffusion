@@ -308,18 +308,26 @@ def apply_liouvillian(liouvillian: Liouvillian, x: jax.Array) -> jax.Array:
 
 
 def add_jumps(
-    out: jax.Array, x: jax.Array, jumps: tuple[jax.Array, jax.Array, jax.Array]
+    out: jax.Array,
+    x: jax.Array,
+    jumps: tuple[jax.Array, jax.Array, jax.Array],
+    *,
+    gather: bool = False,
 ) -> jax.Array:
     """Add the jumps J X J'^dagger of a state to out, for the jumps (J, J'^dagger, sources) of a Liouvillian.
 
     The jumps are added one at a time, which holds a few states at once
-    rather than one for each jump, at no cost in speed.
+    rather than one for each jump, at no cost in speed. If gather, each
+    jump takes X from its index (J X[index] J'^dagger at each kappa) rather
+    than putting the product there, as the jumps of the adjoint do.
     """
 
     def add_jump(
         out: jax.Array, jump: tuple[jax.Array, jax.Array, jax.Array]
     ) -> tuple[jax.Array, None]:
-        ket, bra_dagger, sources = jump
-        return out + (ket @ x @ bra_dagger)[sources], None
+        ket, bra_dagger, index = jump
+        if gather:
+            return out + ket @ x[index] @ bra_dagger, None
+        return out + (ket @ x @ bra_dagger)[index], None
 
     return jax.lax.scan(add_jump, out, jumps)[0]

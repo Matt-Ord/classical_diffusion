@@ -59,13 +59,11 @@ def get_isf(  # ruff:ignore[too-many-arguments]
     *,
     delta_k: tuple[float, ...],
     units: UnitSystem,
-    friction: float,
     isf_config: EvolutionConfig,
 ) -> IsfResult:
     """Get the ISF Tr[O^dagger X(t)], where X(t) evolves from the initial state, at the times and scattering vector in the units.
 
-    The evolution is its slow modes, exactly, plus a stepper on the rest
-    (`get_reduced_evolution`), with the friction in the units.
+    The evolution is by two-sided Lanczos (`get_reduced_evolution`).
     """
     o = jnp.asarray(observable)
     evolution = get_reduced_evolution(
@@ -73,7 +71,6 @@ def get_isf(  # ruff:ignore[too-many-arguments]
         jnp.asarray(initial),
         lambda x: jnp.sum(o.conj() * x),
         times,
-        friction=friction,
         config=isf_config,
     )
     return IsfResult(times=times, isf=evolution.values, delta_k=delta_k, units=units)
@@ -210,7 +207,6 @@ def get_rms(  # ruff:ignore[too-many-arguments]
     direction: tuple[float, ...],
     units: UnitSystem,
     config: CaldeiraLeggettConfig,
-    friction: float,
     isf_config: EvolutionConfig,
     response: ComplexArray | None = None,
 ) -> RmsResult:
@@ -235,8 +231,8 @@ def get_rms(  # ruff:ignore[too-many-arguments]
 
     Only the last term evolves, from a state which decays, as for an ISF
     (`get_reduced_evolution`), rather than the growing integral. It costs two
-    linear solves and one evolution, with the friction in the units, or one
-    solve if X_1 (response) is given.
+    linear solves and one evolution, or one solve if X_1 (response) is
+    given.
     """
     twist = _get_twist(operators, derivative, steady_state)
     eigen = get_eigen_liouvillian(twist.liouvillian)
@@ -253,9 +249,7 @@ def get_rms(  # ruff:ignore[too-many-arguments]
         second,
         lambda x: _trace(apply_liouvillian(twist.first_derivative, x)),
         times,
-        friction=friction,
         config=isf_config,
-        steady_state=rho,
     ).values.real
     mean_square = 2 * diffusion * times + 2 * (decay[0] - decay)
     return RmsResult(

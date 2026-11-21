@@ -51,6 +51,12 @@ class EigenLiouvillian:
     bra_inverse_dagger: jax.Array
     trace: jax.Array
     """W = (B^dagger A)^T, so that Tr[X] = sum(W * Y)."""
+    adjoint_ket: jax.Array
+    """The transformed jumps of L^dagger, K_j^dagger, stored as jumps_ket (`apply_adjoint`)."""
+    adjoint_bra_dagger: jax.Array
+    """B_j^dagger, the bra side of the jumps of L^dagger."""
+    targets: jax.Array
+    """(n_ops, n_kappa), the index of the kappa each jump reaches from kappa, the inverse of sources."""
 
 
 def get_eigen_liouvillian(liouvillian: Liouvillian) -> EigenLiouvillian:
@@ -64,14 +70,17 @@ def get_eigen_liouvillian(liouvillian: Liouvillian) -> EigenLiouvillian:
     sources = np.asarray(liouvillian.sources)
     # The jump j takes kappa to targets[j, kappa], as sources[j, targets[j, kappa]] = kappa
     targets = np.argsort(sources, axis=-1)
-    jumps_ket = np.asarray(liouvillian.jumps_ket)
-    jumps_bra_dagger = np.asarray(liouvillian.jumps_bra_dagger)
+    jumps_ket = a_inverse[targets] @ np.asarray(liouvillian.jumps_ket) @ a
+    jumps_bra_dagger = (
+        b_dagger @ np.asarray(liouvillian.jumps_bra_dagger) @ b_inverse_dagger[targets]
+    )
     return EigenLiouvillian(
         rates=jnp.asarray(-1j * (mu[:, :, None] - nu.conj()[:, None, :])),
-        jumps_ket=_parts(a_inverse[targets] @ jumps_ket @ a),
-        jumps_bra_dagger=_parts(
-            b_dagger @ jumps_bra_dagger @ b_inverse_dagger[targets]
-        ),
+        jumps_ket=_parts(jumps_ket),
+        jumps_bra_dagger=_parts(jumps_bra_dagger),
+        adjoint_ket=_parts(_dagger(jumps_ket)),
+        adjoint_bra_dagger=_parts(_dagger(jumps_bra_dagger)),
+        targets=jnp.asarray(targets),
         sources=jnp.asarray(sources),
         ket_vectors=jnp.asarray(a),
         ket_inverse=jnp.asarray(a_inverse),
@@ -89,6 +98,10 @@ Per application of L, complex against real products: 2D Li (139 bands)
 0.10 ms, as XLA spends longer on each small product than on its
 arithmetic.
 """
+
+
+def _dagger(x: np.ndarray) -> np.ndarray:
+    return x.conj().swapaxes(-1, -2)
 
 
 def _parts(x: np.ndarray) -> jax.Array:
@@ -146,6 +159,38 @@ def apply_eigen(eigen: EigenLiouvillian, y: jax.Array, shift: jax.Array) -> jax.
         real += out[0][sources]
         imaginary += out[1][sources]
     return (eigen.rates - shift) * y + (real + 1j * imaginary)
+
+
+@jax.jit
+def apply_adjoint(eigen: EigenLiouvillian, w: jax.Array, shift: jax.Array) -> jax.Array:
+    """Apply (L - shift)^dagger to a state in the eigenvectors, the adjoint of `apply_eigen` in <w, y> = sum(conj(w) * y).
+
+    As L Y[kappa] = Z Y[kappa] + sum_j K_j[s] Y[s] B_j[s] with s the source of
+    kappa, L^dagger W[s] = conj(Z) W[s] + sum_j K_j[s]^dagger W[t_j(s)]
+    B_j[s]^dagger with t_j(s) the target of s: the same products, as many
+    as for L.
+    """
+    rates = (eigen.rates - shift).conj()
+    if eigen.adjoint_ket.ndim == w.ndim + 1:
+        return add_jumps(
+            rates * w,
+            w,
+            (eigen.adjoint_ket, eigen.adjoint_bra_dagger, eigen.targets),
+            gather=True,
+        )
+    barrier = jax.lax.optimization_barrier
+    real, imaginary = jnp.zeros(w.shape), jnp.zeros(w.shape)
+    for ket, bra_dagger, targets in zip(
+        eigen.adjoint_ket, eigen.adjoint_bra_dagger, eigen.targets, strict=True
+    ):
+        moved = w[targets]
+        parts = barrier((moved.real, moved.imag, moved.real + moved.imag))
+        left = _product(tuple(ket), parts)
+        left = barrier((*left, left[0] + left[1]))
+        out = _product(left, tuple(bra_dagger))
+        real += out[0]
+        imaginary += out[1]
+    return rates * w + (real + 1j * imaginary)
 
 
 def bicgstab(
