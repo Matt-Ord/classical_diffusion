@@ -7,6 +7,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from classical_diffusion._results import RmsResult
 from classical_diffusion.caldeira_leggett._evolution import get_reduced_evolution
 from classical_diffusion.caldeira_leggett._linear import (
     EigenLiouvillian,
@@ -180,22 +181,6 @@ def _get_diffusion_from_response(twist: _Twist, response: jax.Array) -> float:
         _trace(apply_liouvillian(twist.first_derivative, response))
     )
     return -rate.real
-
-
-@dataclass(frozen=True, kw_only=True)
-class RmsResult:
-    """The mean square displacement <(x(t) - x(0))^2> along a direction."""
-
-    times: FloatArray
-    mean_square: FloatArray
-    direction: tuple[float, ...]
-    """The unit vector along which x is measured."""
-    units: UnitSystem
-
-    @property
-    def rms(self) -> FloatArray:
-        """The root mean square displacement."""
-        return np.sqrt(self.mean_square)
 
 
 def get_rms(  # ruff:ignore[too-many-arguments]

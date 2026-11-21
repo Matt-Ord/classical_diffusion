@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import scipy.linalg
 
+from classical_diffusion._results import ModeCount, RateCut, Selection
 from classical_diffusion.caldeira_leggett._linear import (
     INNER_RTOL,
     MAXITER,
@@ -35,22 +36,6 @@ class Mode:
     amplitude: complex
     """a = measure(r) c for the eigenvector r and its weight c in X_0, the weight of exp(lambda t) in the measurement."""
 
-
-@dataclass(frozen=True, kw_only=True)
-class ModeCount:
-    """Exactly n_modes modes."""
-
-    n_modes: int
-
-
-@dataclass(frozen=True, kw_only=True)
-class RateCut:
-    """Every mode with Re lambda > -rate, and at least one."""
-
-    rate: float
-
-
-type Selection = ModeCount | RateCut
 
 _AMPLITUDE_TOL = 1e-8
 """The smallest amplitude of a mode, relative to the measurement at t = 0, below which it is not looked for: modes the measurement cannot see, such as the steady state at dK = 0."""
