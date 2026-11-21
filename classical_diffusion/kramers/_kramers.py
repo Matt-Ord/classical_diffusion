@@ -264,6 +264,8 @@ def _get_isf(
 
 
 _MAX_STEPPED_ROUNDS = 12
+_TAIL_RATIOS = {1: (3.0, 2.0), 2: (100.0, 20.0)}
+"""The Hermite tail and the square of the plane wave tail, over the tolerance, below which the basis is kept, by dimension (`_Tails`)."""
 _FAR = 100.0
 _GROW_FAR = 1.6
 
@@ -278,7 +280,10 @@ class _Tails:
     the error of the ISF was below 0.2 times the Hermite tail and 0.3 times
     the square of the plane wave tail, so the basis is kept when these are
     below 3 and 2 times the tolerance, beyond what the start state holds in
-    the top shells.
+    the top shells. In 2D (lithium on Cu(111) at 10 times its friction, to
+    order 24 and radius 11) the error was below 3e-3 times the Hermite tail
+    and 0.03 times the square of the plane wave tail, so there the limits
+    are 100 and 20 times the tolerance (`_TAIL_RATIOS`).
     """
 
     def __init__(self, problem: _SteppedProblem, basis: Basis, model: Model) -> None:
@@ -289,6 +294,7 @@ class _Tails:
         lengths = np.linalg.norm(vectors @ model.reciprocal, axis=-1)
         self._outer = lengths >= 0.85 * basis.radius
         self._shape = problem.operator.shape
+        self._hermite_ratio, self._plane_wave_ratio = _TAIL_RATIOS[min(model.n_dim, 2)]
         self.hermite = 0.0
         self.plane_wave = 0.0
         # The equilibrium itself reaches the top shells: the narrowed Hermite
@@ -313,8 +319,8 @@ class _Tails:
             return _GROW if tail < _FAR * allowed else _GROW_FAR
 
         return (
-            factor(self.hermite, 3 * tol + 2 * self._hermite_floor),
-            factor(self.plane_wave**2, 2 * tol),
+            factor(self.hermite, self._hermite_ratio * tol + 2 * self._hermite_floor),
+            factor(self.plane_wave**2, self._plane_wave_ratio * tol),
         )
 
     def update(self, state: FloatArray) -> None:
