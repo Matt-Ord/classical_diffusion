@@ -252,19 +252,20 @@ def _get_isf(
             tol=1e-2 * config.tol,
             monitor=tails.update,
         )
-        grow_order = tails.hermite >= 3 * config.tol
-        grow_radius = tails.plane_wave**2 >= 2 * config.tol
-        if not (grow_order or grow_radius):
+        grow_order, grow_radius = tails.excess(config.tol)
+        if grow_order == grow_radius == 1:
             return result.values / problem.norm
         basis = Basis(
-            max_order=basis.grow_order().max_order if grow_order else basis.max_order,
-            radius=basis.grow_radius().radius if grow_radius else basis.radius,
+            max_order=int(np.ceil(basis.max_order * grow_order)),
+            radius=basis.radius * grow_radius,
         )
     msg = "The basis did not converge"
     raise RuntimeError(msg)
 
 
 _MAX_STEPPED_ROUNDS = 12
+_FAR = 100.0
+_GROW_FAR = 1.6
 
 
 class _Tails:
@@ -276,7 +277,8 @@ class _Tails:
     xenon on Cu(111) and Pt(111) in 1D, at 0.1 to 10 times their friction,
     the error of the ISF was below 0.2 times the Hermite tail and 0.3 times
     the square of the plane wave tail, so the basis is kept when these are
-    below 3 and 2 times the tolerance.
+    below 3 and 2 times the tolerance, beyond what the start state holds in
+    the top shells.
     """
 
     def __init__(self, problem: _SteppedProblem, basis: Basis, model: Model) -> None:
@@ -289,6 +291,31 @@ class _Tails:
         self._shape = problem.operator.shape
         self.hermite = 0.0
         self.plane_wave = 0.0
+        # The equilibrium itself reaches the top shells: the narrowed Hermite
+        # functions hold the Maxwellian only to its value at their reach,
+        # e^{-reach^2 / 4}, whatever their order. Only what the dynamics
+        # adds to that is an error of the cut
+        self.update(problem.start())
+        self._hermite_floor = self.hermite
+        self.hermite = 0.0
+
+    def excess(self, tol: float) -> tuple[float, float]:
+        """Get the factors by which to grow the Hermite order and plane wave radius: 1 where the tail is within tolerance, 1.3 near it, and 1.6 more than 100 times beyond it.
+
+        The tails fall at least exponentially with the order and radius once
+        they resolve the state, so far beyond the tolerance a larger step
+        saves runs of the time steps.
+        """
+
+        def factor(tail: float, allowed: float) -> float:
+            if tail < allowed:
+                return 1.0
+            return _GROW if tail < _FAR * allowed else _GROW_FAR
+
+        return (
+            factor(self.hermite, 3 * tol + 2 * self._hermite_floor),
+            factor(self.plane_wave**2, 2 * tol),
+        )
 
     def update(self, state: FloatArray) -> None:
         x = state.reshape(self._shape)
@@ -476,13 +503,12 @@ def _get_stepped_slow_modes(  # ruff:ignore[too-many-locals]
             tol=1e-2 * config.tol,
             monitor=tails.update,
         )
-        grow_order = tails.hermite >= 3 * config.tol
-        grow_radius = tails.plane_wave**2 >= 2 * config.tol
-        if not (grow_order or grow_radius):
+        grow_order, grow_radius = tails.excess(config.tol)
+        if grow_order == grow_radius == 1:
             break
         basis = Basis(
-            max_order=basis.grow_order().max_order if grow_order else basis.max_order,
-            radius=basis.grow_radius().radius if grow_radius else basis.radius,
+            max_order=int(np.ceil(basis.max_order * grow_order)),
+            radius=basis.radius * grow_radius,
         )
     else:
         msg = "The basis did not converge"
