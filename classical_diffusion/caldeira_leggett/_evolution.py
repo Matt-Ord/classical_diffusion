@@ -31,6 +31,14 @@ The coefficients of a block are one transfer to the host. The transfer
 function at 1 / span is a continued fraction of the tridiagonal, O(m), and
 only once it agrees is the tridiagonal diagonalized, O(m^3) (`_Poles`).
 """
+_SPREAD = 16
+"""The fraction of the steps so far, 1 / _SPREAD, below which two evaluations of F_m are not apart (`_evolve`).
+
+An evaluation diagonalizes T_m, O(m^3): 40 s at m = 3,000. Hydrogen at 1000
+times its mass on Cu(111) in 1D (141 bands) needs 3,400 steps at 0.3 |G|,
+and evaluating after every block of _BLOCK steps took 950 s. Up to
+m = 800 (every benchmark case) the evaluations stay a block apart.
+"""
 _TRANSFER_BLOCK = 10
 """The steps of each block of the solve for the transfer function, which converges in tens of steps."""
 _MAX_STEPS = 4000
@@ -448,7 +456,7 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
         eigen, start, measurement, s, _TRANSFER_TOL * tolerance / s
     )
     lanczos = _Lanczos(eigen=eigen, start=start, measurement=measurement)
-    last, agreed, transforms = None, 0, np.zeros(0, complex)
+    last, agreed, transforms, due = None, 0, np.zeros(0, complex), 0
     progress = _Progress(tolerance=tolerance, floor=_ROUNDOFF * tolerance / stop)
     while lanczos.steps < _MAX_STEPS:
         try:
@@ -476,6 +484,11 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
                 progress.errors.append(screen)
             last, agreed = None, 0
             continue
+        if not lanczos.invariant and lanczos.steps < due:
+            continue
+        # Evaluations O(m^3) at least m / _SPREAD steps apart, so that their
+        # cost is at most about 6 times that of the last
+        due = lanczos.steps + max(_BLOCK, lanczos.steps // _SPREAD // _BLOCK * _BLOCK)
         # A pole that grows by less than 1 + stop over the span is kept
         poles = _Poles.of(lanczos, stop * s)
         values = poles.values(times)
