@@ -1,6 +1,6 @@
 """The eigenvalues of a nonsymmetric tridiagonal matrix and the weights of its first row and column, in O(m^2), by the Ehrlich-Aberth iteration."""
 
-# cspell: ignore Ehrlich Aberth Bini Gemignani Tisseur csgraph finfo stebz fori Appl unconverged Dhillon rebiorthogonalization oint lstsq jitted LAPACK's argnums
+# cspell: ignore Ehrlich Aberth Bini Gemignani Tisseur csgraph finfo stebz fori Appl unconverged Dhillon rebiorthogonalization oint lstsq jitted LAPACK's argnums pinv
 from functools import partial
 from typing import TYPE_CHECKING
 
