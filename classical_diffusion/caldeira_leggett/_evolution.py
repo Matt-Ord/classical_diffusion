@@ -340,8 +340,6 @@ class _Poles:
     """Whether each pole is kept (`of`)."""
     values: jax.Array
     """The measurement at the times."""
-    steps: int
-    """The steps of the recurrence."""
 
     @staticmethod
     def of(
@@ -349,16 +347,14 @@ class _Poles:
         times: FloatArray,
         span: float,
         tolerance: float,
-        last: _Poles | None,
     ) -> _Poles:
         """Get the poles of T_m, keeping those that decay, or grow by less than the tolerance over the span, and F_m at the times.
 
         The poles and residues come from T_m in O(m^2) (`get_poles`), where
         LAPACK's eig takes O(m^3): 1.3 s at m = 575 (sodium on Cu(111) in
         1D, three evaluations) and 40 s at m = 3,000. Copies of a pole closer
-        than _CLUSTER / span are merged into their first two moments. The
-        roots start from those of the last evaluation. All of it is jitted,
-        on the device.
+        than _CLUSTER / span are merged into their first two moments. All of
+        it is jitted, on the device.
 
         L has no growing mode, so a pole with Re lambda > 0 is spurious, or a
         pole of rate zero (the steady state at dK = 0 or a multiple of |G|)
@@ -372,7 +368,6 @@ class _Poles:
             np.asarray(lanczos.alpha),
             lanczos.coupling,
             width=_CLUSTER / span,
-            previous=None if last is None else (last.rates, last.steps),
         )
         residues = lanczos.scale * weights
         chunk = max(1, min(len(times), 2**22 // len(rates)))
@@ -390,7 +385,6 @@ class _Poles:
             residues=residues,
             stable=stable,
             values=values[: len(times)],
-            steps=lanczos.steps,
         )
 
     @property
@@ -537,7 +531,6 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
     )
     lanczos = _Lanczos(eigen=eigen, start=start, measurement=measurement)
     last, agreed, transforms, due = None, 0, jnp.zeros(0, complex), 0
-    poles = None
     broken = False
     progress = _Progress(tolerance=tolerance, floor=_ROUNDOFF * tolerance / stop)
     while lanczos.steps < _MAX_STEPS:
@@ -575,7 +568,7 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
         # Evaluations O(m^3) at least m / _SPREAD steps apart, so that their
         # cost is at most about 6 times that of the last
         due = lanczos.steps + max(_BLOCK, lanczos.steps // _SPREAD // _BLOCK * _BLOCK)
-        poles = _Poles.of(lanczos, times, 1 / s, tolerance, poles)
+        poles = _Poles.of(lanczos, times, 1 / s, tolerance)
         values = poles.values
         # T_m is exact once the space is invariant, so only then need F_m
         # not be compared with the last block

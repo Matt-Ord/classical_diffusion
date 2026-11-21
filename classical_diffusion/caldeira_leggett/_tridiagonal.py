@@ -157,17 +157,17 @@ def _aberth(
         width //= 4
 
 
-def _roots(
-    alpha: jax.Array, coupling: jax.Array, guesses: jax.Array | None
-) -> jax.Array:
-    """Get the eigenvalues of the padded tridiagonal, from guesses or by divide and conquer.
+def _roots(alpha: jax.Array, coupling: jax.Array) -> jax.Array:
+    """Get the eigenvalues of the padded tridiagonal by divide and conquer.
 
-    Without guesses, the blocks of at most _LEAF rows start from their
-    diagonals; then each level merges pairs of blocks, from the roots of
-    both halves (the tridiagonal is the two blocks plus a rank two
-    coupling), up to the whole. With guesses (the roots of T_m before m
-    grew, `get_poles`), only the last level is needed: on sodium on Cu(111)
-    in 1D at m = 575 from m = 550, 0.15 s against 0.45 s.
+    The blocks of at most _LEAF rows start from their diagonals; then each
+    level merges pairs of blocks, from the roots of both halves (the
+    tridiagonal is the two blocks plus a rank two coupling), up to the
+    whole. Starting the last level from the roots of the last evaluation
+    instead (and the diagonal of the new rows) was 3 times faster, but on
+    underdamped hydrogen (gamma 0.01 / ps) at m = 1,600-2,400, where copies
+    of poles sit 1e-13 apart, it left the weights 1e-6 to 1e-5 wrong, and
+    the evolution then needed 2.6 times the steps or did not converge.
     """
     size = alpha.shape[0]
     scale = jnp.abs(alpha).max() + jnp.sqrt(jnp.abs(coupling).max())
@@ -175,12 +175,9 @@ def _roots(
     # Distinct guesses, as Aberth needs
     jitter = 1e-8 * scale * jnp.exp(2.4j * jnp.arange(size))
     block = size
-    if guesses is None:
-        while block > _LEAF:
-            block //= 2
-        roots = alpha + jitter
-    else:
-        roots = guesses + jitter * 1e-4
+    while block > _LEAF:
+        block //= 2
+    roots = alpha + jitter
     while True:
         roots = _aberth(roots, alpha, above, jnp.asarray(block))
         if block == size:
@@ -406,20 +403,16 @@ def _merge(  # ruff:ignore[too-many-locals]
 
 
 def _poles(
-    alpha: jax.Array, coupling: jax.Array, width: jax.Array, guesses: jax.Array | None
+    alpha: jax.Array, coupling: jax.Array, width: jax.Array
 ) -> tuple[jax.Array, jax.Array]:
-    """Get the roots and weights by jitted parts, each level of the divide and conquer compiled once for its shape (the last also serves the warm start), with no transfer to the host between them."""
-    roots = _roots(alpha, coupling, guesses)
+    """Get the roots and weights by jitted parts, each level of the divide and conquer compiled once for its shape (with the block size traced), with no transfer to the host between them."""
+    roots = _roots(alpha, coupling)
     weights = _weights(roots, alpha, coupling)
     return roots, _merge(roots, weights, alpha, coupling, width)
 
 
 def get_poles(
-    alpha: ComplexArray,
-    coupling: ComplexArray,
-    *,
-    width: float,
-    previous: tuple[jax.Array, int] | None = None,
+    alpha: ComplexArray, coupling: ComplexArray, *, width: float
 ) -> tuple[jax.Array, jax.Array]:
     """Get the eigenvalues lambda_j of T and their weights w_j, e_1^T (s - T)^-1 e_1 = sum_j w_j / (s - lambda_j), in O(m^2), on the device.
 
@@ -427,19 +420,11 @@ def get_poles(
     off-diagonals beta_k delta_k = coupling_k, nonzero (unreduced). Its
     eigenvalues are the roots of its characteristic polynomial, found by
     the Ehrlich-Aberth iteration (`_aberth`) on the recurrence of its
-    leading minors, from those of its two halves, recursively, or from
-    previous = (the roots returned for T_{m'}, m'), m' < m, and the diagonal
-    of the rows since; the weights from the twisted factorization at each
-    root (`_chunk_weights`), except for clusters of roots closer than width,
+    leading minors, from those of its two halves, recursively (`_roots`);
+    the weights from the twisted factorization at each root
+    (`_chunk_weights`), except for clusters of roots closer than width,
     whose weights come from their moments (`_merge`). All of it is jitted
     and stays on the device (`_poles`), padded (`_padded`): the weights of
     the padding are zero.
     """
-    diagonal, padded = _padded(alpha, coupling)
-    guesses = None
-    if previous is not None:
-        roots, steps = previous
-        # The padding is left of every root
-        roots = roots[jnp.argsort(-roots.real)][:steps]
-        guesses = jnp.concatenate([roots, diagonal[steps:]])
-    return _poles(diagonal, padded, jnp.asarray(width), guesses)
+    return _poles(*_padded(alpha, coupling), jnp.asarray(width))
