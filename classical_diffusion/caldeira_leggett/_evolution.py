@@ -43,17 +43,19 @@ _TRANSFER_BLOCK = 10
 """The steps of each block of the solve for the transfer function, which converges in tens of steps."""
 _MAX_STEPS = 4000
 """The most Lanczos steps. Underdamped hydrogen (gamma = 0.01 / ps, 150 K) over 2000 ps needs 1,000."""
-_BREAKDOWN = 1e-12
-"""The cosine |<w, v>| / (|w| |v|) of the next pair of Lanczos vectors below which the recurrence has broken down.
+_BREAKDOWN = 100 * np.finfo(float).eps
+"""The cosine |<w, v>| / (|w| |v|) of the next pair of Lanczos vectors below which <w, v> is round off, and the recurrence has broken down.
 
-Over the benchmark (H, Li and Na on Cu(111) in 1D and 2D) and underdamped
-hydrogen, the smallest cosine before convergence was 3.8e-9 (median per
-case 3e-7 to 4e-5), and the results were unaffected: near breakdowns of
-the two-sided recurrence are common for these non-normal Liouvillians and
-harmless. An exact breakdown (for example a measurement orthogonal to
-X_0, F(0) = 0) is cured by splitting the measurement
-(`get_reduced_evolution`).
+Small cosines are common for these non-normal Liouvillians and mostly
+harmless: over the benchmark (H, Li and Na on Cu(111) in 1D and 2D) and
+underdamped hydrogen, the smallest before convergence was 3.8e-9 (median
+per case 3e-7 to 4e-5); at 3 |G| for hydrogen in 1D they fall to 1e-13
+and the ISF is still within 8e-7 of the reference, but a threshold of
+1e-12 stopped it. The error tests decide whether the recurrence has
+converged. An exact breakdown (a measurement orthogonal to X_0, F(0) = 0)
+is cured by splitting the measurement (`get_reduced_evolution`).
 """
+_EPS = float(np.finfo(float).eps)
 _INVARIANT = 1e-13
 """The norm of the next Lanczos vector, relative to the tridiagonal, below which the Krylov space is invariant and T_m exact."""
 _TRANSFER_TOL = 0.1
@@ -93,23 +95,26 @@ class _Progress:
     """The tolerance asked for, absolute."""
     floor: float
     """The error, absolute, below which a stall is round off (_ROUNDOFF)."""
+    precision: float = 0.0
+    """The error, absolute, that round off of the recurrence leaves (`_Lanczos.roundoff`)."""
     errors: list[float] = field(default_factory=list)
 
     @property
     def reached(self) -> float:
-        """The tolerance reached: the one asked for, or once stalled at its floor, twice the floor."""
-        n = len(self.errors)
-        if n <= _STALL:
-            return self.tolerance
+        """The tolerance that can be reached: the one asked for, or the precision of the recurrence, or once stalled at its floor, twice the floor."""
+        reached = max(self.tolerance, self.precision)
+        if len(self.errors) <= _STALL:
+            return reached
         recent, before = min(self.errors[-_STALL:]), min(self.errors[:-_STALL])
         if recent <= self.floor and recent >= 0.5 * before:
-            return max(self.tolerance, 2 * recent)
-        return self.tolerance
+            return max(reached, 2 * recent)
+        return reached
 
     def warn(self, what: str) -> None:
         if self.reached > self.tolerance:
             warnings.warn(
-                f"{what} stalled at {self.reached:.1e} (absolute) from round off, above the {self.tolerance:.1e} asked for",
+                f"{what} is accurate to about {self.reached:.1e} (absolute) from round"
+                f" off, above the {self.tolerance:.1e} asked for",
                 stacklevel=4,
             )
 
@@ -143,7 +148,7 @@ def _steps(
     steps: int,
     preconditioned: bool,
 ) -> tuple[tuple[jax.Array, ...], jax.Array]:
-    """Take steps of the two-sided Lanczos recurrence, and get the new carry and, for each step, alpha, beta, delta, |w_hat| and |w|.
+    """Take steps of the two-sided Lanczos recurrence, and get the new carry and, for each step, alpha, beta, delta, |w_hat|, |w| and sum |w_hat| |v_hat|.
 
     The right vectors v have unit norm and the left w are scaled so that
     <w, v> = 1. Then A V = V T + delta v_{m+1} e_m^T and
@@ -172,6 +177,7 @@ def _steps(
                     delta_next.astype(alpha.dtype),
                     jnp.linalg.norm(w_hat).astype(alpha.dtype),
                     jnp.linalg.norm(w).astype(alpha.dtype),
+                    jnp.sum(jnp.abs(w_hat) * jnp.abs(v_hat)).astype(alpha.dtype),
                 ]
             )
         )
@@ -185,7 +191,7 @@ def _steps(
         )
         return carry, recorded
 
-    out = jnp.zeros((steps, 5), carry[0].dtype)
+    out = jnp.zeros((steps, 6), carry[0].dtype)
     return jax.lax.fori_loop(0, steps, step, (carry, out))
 
 
@@ -206,6 +212,8 @@ class _Lanczos:
     beta: list[complex] = field(default_factory=list)
     delta: list[float] = field(default_factory=list)
     smallest_cosine: float = 1.0
+    roundoff: float = 0.0
+    """The relative error of the coefficients from round off: the sum over the steps of eps times the cancellation in <w_hat, v_hat> (`_Lanczos.extend`)."""
     invariant: bool = False
     """Whether the Krylov space is invariant, so that T_m is exact."""
     scale: complex = field(init=False)
@@ -255,7 +263,7 @@ class _Lanczos:
         )
         out = np.asarray(out)
         size = self.norm
-        for alpha, beta, delta, w_hat, w in out:
+        for alpha, beta, delta, w_hat, w, magnitude in out:
             self.alpha.append(complex(alpha))
             if (
                 not np.all(np.isfinite([alpha, beta, delta]))
@@ -271,6 +279,9 @@ class _Lanczos:
                 raise _BreakdownError
             self.beta.append(complex(beta))
             self.delta.append(float(delta.real))
+            # <w_hat, v_hat> = beta delta is a sum of terms up to magnitude,
+            # so has a relative error of eps magnitude / |beta delta|
+            self.roundoff += _EPS * abs(magnitude) / abs(beta * delta)
 
     def tridiagonal(self) -> ComplexArray:
         m = self.steps
@@ -295,21 +306,27 @@ class _Poles:
 
     rates: ComplexArray
     residues: ComplexArray
-    growth: float
-    """The largest Re lambda of a pole that is kept: one of rate zero, such as the steady state at dK = 0 or a multiple of |G|, comes out at +-1e-16."""
+    stable: np.ndarray
+    """Whether each pole is kept (`of`)."""
 
     @staticmethod
-    def of(lanczos: _Lanczos, growth: float) -> _Poles:
+    def of(lanczos: _Lanczos, span: float, tolerance: float) -> _Poles:
+        """Get the poles of T_m, keeping those that decay, or grow by less than the tolerance over the span.
+
+        L has no growing mode, so a pole with Re lambda > 0 is spurious, or a
+        pole of rate zero (the steady state at dK = 0 or a multiple of |G|)
+        that round off has moved: at 4 |G| for hydrogen on Cu(111) in 1D, where
+        the cosines of the recurrence fall to 1e-15, the plateau of weight
+        1.4e-4 comes out at Re lambda = 2.3e-6. Kept, a pole of residue r errs
+        by at most |r| (exp(Re lambda span) - 1) over the span; the rest are
+        dropped, and their weight must be below the tolerance.
+        """
         rates, vectors = np.linalg.eig(lanczos.tridiagonal())
         first = np.zeros(len(rates), complex)
         first[0] = 1
         residues = lanczos.scale * vectors[0] * np.linalg.solve(vectors, first)
-        return _Poles(rates=rates, residues=residues, growth=growth)
-
-    @property
-    def stable(self) -> np.ndarray:
-        """Whether each pole is kept. L has no growing mode, so a pole with Re lambda > growth is spurious, and is dropped."""
-        return self.rates.real <= self.growth
+        growth = np.abs(residues) * np.expm1(np.maximum(rates.real, 0) * span)
+        return _Poles(rates=rates, residues=residues, stable=growth <= tolerance)
 
     @property
     def dropped(self) -> float:
@@ -381,6 +398,7 @@ def get_transfer(
         if lanczos.invariant:
             return value, lanczos.applications
         progress.floor = _ROUNDOFF * abs(value)
+        progress.precision = lanczos.roundoff * abs(value)
         if last is not None:
             progress.errors.append(abs(value - last))
         agreed = (
@@ -457,15 +475,18 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
     )
     lanczos = _Lanczos(eigen=eigen, start=start, measurement=measurement)
     last, agreed, transforms, due = None, 0, np.zeros(0, complex), 0
+    broken = False
     progress = _Progress(tolerance=tolerance, floor=_ROUNDOFF * tolerance / stop)
     while lanczos.steps < _MAX_STEPS:
         try:
             lanczos.extend(_BLOCK)
         except _BreakdownError:
-            if last is None:
-                raise
-            # The steps before the breakdown are all there are
-            lanczos.invariant = True
+            # The steps before the breakdown are all there are: if they agree
+            # with the transform, as when F_m has decayed to round off within
+            # them, they are the evolution, and otherwise the measurement is
+            # split (`get_reduced_evolution`)
+            lanczos.invariant = broken = True
+        progress.precision = lanczos.roundoff * abs(lanczos.scale)
         current = _transforms(lanczos, s)
         compared = len(transforms) == len(current)
         screen = (
@@ -489,8 +510,7 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
         # Evaluations O(m^3) at least m / _SPREAD steps apart, so that their
         # cost is at most about 6 times that of the last
         due = lanczos.steps + max(_BLOCK, lanczos.steps // _SPREAD // _BLOCK * _BLOCK)
-        # A pole that grows by less than 1 + stop over the span is kept
-        poles = _Poles.of(lanczos, stop * s)
+        poles = _Poles.of(lanczos, 1 / s, tolerance)
         values = poles.values(times)
         # T_m is exact once the space is invariant, so only then need F_m
         # not be compared with the last block
@@ -510,6 +530,12 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
         agreed = agreed + 1 if error <= progress.reached else 0
         last = values
         if agreed >= (1 if lanczos.invariant else _AGREEMENTS):
+            if broken:
+                warnings.warn(
+                    f"The two-sided Lanczos recurrence broke down after {lanczos.steps}"
+                    f" steps, where F_m agreed with its transform to {error:.1e}",
+                    stacklevel=3,
+                )
             progress.warn("The evolution")
             return Evolution(
                 values=values,
@@ -566,7 +592,14 @@ def get_reduced_evolution(
 
     The recurrence has an accuracy floor in finite precision, from 1e-16 to
     2e-9 of |F(0)| on the benchmark: asked for less, it stops once its error
-    has stalled below _ROUNDOFF, with a warning of what it reached.
+    has stalled below _ROUNDOFF, with a warning of what it reached. The
+    floor is estimated as it goes, as eps times the cancellation in the
+    inner products <w, v> summed over the steps (`_Lanczos.roundoff`): it
+    is 1e-10 to 1e-9 on the benchmark, but at 4 |G| for hydrogen on
+    Cu(111) in 1D, where the ISF falls by 4 decades at once, the
+    cancellation reaches 1e9 and the estimate 2.0e-5, against an error of
+    2.2e-5 from the reference: the tolerance is raised to it, with a
+    warning.
 
     A serious breakdown of the recurrence (<w, v> = 0, as when F(0) = 0)
     belongs to the pair (X_0, g), and is cured by splitting the
