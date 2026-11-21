@@ -102,7 +102,9 @@ class _Progress:
     @property
     def reached(self) -> float:
         """The tolerance that can be reached: the one asked for, or the precision of the recurrence, or once stalled at its floor, twice the floor."""
-        reached = max(self.tolerance, self.precision)
+        # The estimate is of the order of the error: twice it, so that an
+        # error at the estimate does not stop each agreement
+        reached = max(self.tolerance, 2 * self.precision)
         if len(self.errors) <= _STALL:
             return reached
         recent, before = min(self.errors[-_STALL:]), min(self.errors[:-_STALL])
