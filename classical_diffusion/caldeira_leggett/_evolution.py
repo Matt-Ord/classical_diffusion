@@ -488,7 +488,13 @@ class Evolution:
 
     values: ComplexArray
     rates: ComplexArray
-    """The slowest poles of weight above the tolerance, slowest first, in natural units of 1 / time."""
+    """The slowest poles of weight above the tolerance, slowest first, in natural units of 1 / time.
+
+    They are only as accurate as F at the times needs them: for lithium on
+    Cu(111) in 2D at 0.3 |G|, the hop rate is 1.4e-5 relative off at stop 1e-6
+    and 5e-9 at stop 1e-8, against Jacobi-Davidson (`get_slow_modes`), whose
+    rate at mode_rtol 1e-6 is within 5e-9 of that at 1e-10.
+    """
     applications: dict[str, int]
     """The applications of L and of L^dagger: for the evolution (lanczos), and for the transfer function at 1 / span (transfer)."""
 
