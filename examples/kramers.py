@@ -25,7 +25,8 @@ def _with_friction(system: PeriodicSystem, gamma: float) -> PeriodicSystem:
 
 def main() -> None:
     """Plot the ISF at a quarter of the first reciprocal lattice vector."""
-    system = LITHIUM_COPPER_SYSTEM_1D.with_si_units()
+    # The built-in systems are in SI units
+    system = LITHIUM_COPPER_SYSTEM_1D
     spacing = float(np.linalg.norm(system.lattice_vectors))
     delta_k = (0.25 * 2 * np.pi / spacing,)
     times = np.linspace(0, 20e-12, 401)
