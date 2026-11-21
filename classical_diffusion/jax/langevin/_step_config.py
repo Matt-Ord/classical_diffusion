@@ -1,5 +1,4 @@
 import dataclasses
-import zlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, override
@@ -7,6 +6,8 @@ from typing import Any, override
 import diffrax as dfx
 import jax
 import jax.numpy as jnp
+
+from classical_diffusion.util import stable_hash
 
 type LevyArea = type[
     dfx.BrownianIncrement | dfx.SpaceTimeLevyArea | dfx.SpaceTimeTimeLevyArea
@@ -48,8 +49,7 @@ class StepConfig(ABC):
 
     @override
     def __hash__(self) -> int:
-        # Stable between runs, so it can be used in cache paths
-        return zlib.crc32(repr(self).encode("utf-8"))
+        return stable_hash(self)
 
 
 @jax.tree_util.register_dataclass
