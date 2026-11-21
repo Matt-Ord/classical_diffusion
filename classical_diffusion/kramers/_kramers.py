@@ -1,3 +1,4 @@
+# cspell: ignore splu spsolve tocsc
 """The Kramers equation of a periodic system: its ISF, mean square displacement, diffusion constant and slow modes, as sums of modes."""
 
 from dataclasses import dataclass
@@ -19,7 +20,6 @@ from classical_diffusion.kramers._model import (
 )
 from classical_diffusion.kramers._modes import Modes, get_modes
 from classical_diffusion.kramers._overdamped import (
-    _check_times,
     _direction,
     _scaled_delta_k,
 )
@@ -28,8 +28,8 @@ from classical_diffusion.kramers._smoluchowski import get_amplitude, get_grid_si
 from classical_diffusion.kramers._stepping import (
     MatrixFreeOperator,
     build_matrix_free_operator,
-    propagate_form,
     get_ritz_pairs,
+    propagate_form,
     propagate_state,
     solve_by_propagation,
 )
@@ -110,7 +110,7 @@ class _Problem:
         return scipy.sparse.linalg.splu((shifted - self.operator).tocsc()).solve
 
     def start(self, direction: FloatArray | None = None) -> FloatArray:
-        """w psi_0(p), or e . p w psi_0(p) for a direction, in the real form (`get_start`)."""
+        """Get w psi_0(p), or e . p w psi_0(p) for a direction, in the real form (`get_start`)."""
         return get_start(self.indices, self.width, self.amplitude, direction)
 
 
@@ -135,7 +135,13 @@ def _converge_basis[R](
     tol: float,
     max_rounds: int = 12,
 ) -> tuple[Basis, R]:
-    """Grow the Hermite order and the plane wave radius until neither changes the result by tol / 3."""
+    """Grow the Hermite order and the plane wave radius until neither changes the result by tol / 3.
+
+    Raises
+    ------
+    RuntimeError
+        If the basis does not converge within max_rounds.
+    """
     basis = initial
     result = compute(basis)
     for _ in range(max_rounds):
@@ -312,7 +318,13 @@ def get_initial_stepped_basis(
 
 
 def _check_zero_friction(model: Model) -> None:
-    """Raise unless the zero friction (Hamiltonian) solver applies: in 1D only."""
+    """Raise unless the zero friction (Hamiltonian) solver applies: in 1D only.
+
+    Raises
+    ------
+    ValueError
+        If the system is not 1D.
+    """
     if model.n_dim != 1:
         msg = (
             "At zero friction only 1D systems are solved: in 2D the Hamiltonian"
@@ -356,8 +368,16 @@ def solve_isf(
         The times of the ISF, in the units of the system, increasing from zero.
     config
         The convergence, see `KramersConfig`.
+
+    Raises
+    ------
+    ValueError
+        If the times do not increase from zero, or at zero friction beyond 1D.
     """
-    times = _check_times(times)
+    times = np.asarray(times, dtype=np.float64)
+    if times[0] != 0 or np.any(np.diff(times) <= 0):
+        msg = "The times must increase from zero"
+        raise ValueError(msg)
     model = build_model(system)
     natural = system.units.time_into(times, model.units)
     scaled = _scaled_delta_k(system, model, delta_k)
@@ -389,6 +409,11 @@ def get_slow_modes(
     J-symmetry of L, (u^T J r)^2 / (r^T J r) / <w|w>. By default every mode
     which decays more slowly than SLOW_RATE of the friction, and at least
     one.
+
+    Raises
+    ------
+    ValueError
+        At zero friction, where the ISF does not decay.
     """
     model = build_model(system)
     if model.friction == 0:
@@ -403,7 +428,7 @@ def get_slow_modes(
         rates, weights = modes.rates, modes.weights
     # A Ritz value of a mode the start barely holds can land right of the
     # axis, or anywhere, with no weight
-    real = (rates.real <= 0) & (np.abs(weights) > 1e-12)
+    real = (rates.real <= 0) & (np.abs(weights) > _WEIGHT_FLOOR)
     rates, weights = rates[real], weights[real]
     order = np.argsort(-rates.real)
     rates, weights = rates[order], weights[order]
@@ -425,10 +450,20 @@ _RITZ_RTOL = 1e-4
 """The residual of a Ritz pair, in units of the friction, above which it is not a mode: those kept have rates good to about its square."""
 
 
-def _get_stepped_slow_modes(
+_WEIGHT_FLOOR = 1e-12
+"""The weight in the ISF below which a mode is not reported."""
+
+
+def _get_stepped_slow_modes(  # ruff:ignore[too-many-locals]
     model: Model, delta_k: FloatArray, config: KramersConfig
 ) -> tuple[ComplexArray, ComplexArray]:
-    """Get the slow modes of the ISF by stepping the start past the fast modes, then the Ritz pairs of what is left."""
+    """Get the slow modes of the ISF by stepping the start past the fast modes, then the Ritz pairs of what is left.
+
+    Raises
+    ------
+    RuntimeError
+        If the basis does not converge.
+    """
     basis = get_initial_stepped_basis(model, delta_k, config)
     for _ in range(_MAX_STEPPED_ROUNDS):
         problem = _build_stepped_problem(model, basis, delta_k)
@@ -594,7 +629,10 @@ def solve_rms(
     ValueError
         If the times do not increase from zero.
     """
-    times = _check_times(times)
+    times = np.asarray(times, dtype=np.float64)
+    if times[0] != 0 or np.any(np.diff(times) <= 0):
+        msg = "The times must increase from zero"
+        raise ValueError(msg)
     model = build_model(system)
     natural = system.units.time_into(times, model.units)
     unit = _direction(model, direction)

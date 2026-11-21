@@ -1,8 +1,8 @@
+# cspell: ignore btol lsqr tocsr vdot
 """The overdamped limit of the Langevin equation, the Smoluchowski equation, solved by Gauss quadrature of its symmetrised generator."""
 
-from typing import TYPE_CHECKING
-
 import dataclasses
+from typing import TYPE_CHECKING
 
 import numpy as np
 import scipy.linalg
@@ -18,6 +18,7 @@ from classical_diffusion.kramers._model import (
     build_model,
     get_plane_waves,
     get_plane_waves_within,
+    get_rows,
 )
 from classical_diffusion.kramers._smoluchowski import (
     get_amplitude,
@@ -172,7 +173,10 @@ def solve_isf_overdamped(
     ValueError
         If the times do not increase from zero.
     """
-    times = _check_times(times)
+    times = np.asarray(times, dtype=np.float64)
+    if times[0] != 0 or np.any(np.diff(times) <= 0):
+        msg = "The times must increase from zero"
+        raise ValueError(msg)
     model = build_model(system)
     natural = system.units.time_into(times, model.units)
     _, quadrature = _get_isf_quadrature(system, delta_k, natural, config)
@@ -347,7 +351,13 @@ def _get_diffusion_ratio(
 
 
 def _get_residual_ratio(model: Model, unit: FloatArray, config: KramersConfig) -> float:
-    """Get D / D_0 as the least squares residual min_u |e w - A u|^2 / <w|w>, growing the plane waves until it converges."""
+    """Get D / D_0 as the least squares residual min_u |e w - A u|^2 / <w|w>, growing the plane waves until it converges.
+
+    Raises
+    ------
+    RuntimeError
+        If D does not converge in the plane waves.
+    """
     vectors = get_plane_waves(model, config.basis_tol)
     radius = float(np.max(np.linalg.norm(vectors @ model.reciprocal, axis=-1)))
     previous = None
@@ -358,8 +368,8 @@ def _get_residual_ratio(model: Model, unit: FloatArray, config: KramersConfig) -
         # e w, on the rows of the gradient: the inputs come first in its
         # output plane waves only up to their order, so place it by index
         extended = get_extended_vectors(model, vectors)
-        index = {tuple(int(i) for i in v): k for k, v in enumerate(extended)}
-        rows = np.array([index[tuple(int(i) for i in v)] for v in vectors])
+        index = {tuple(int(i) for i in v): k for k, v in enumerate(get_rows(extended))}
+        rows = np.array([index[tuple(int(i) for i in v)] for v in get_rows(vectors)])
         field = np.zeros((model.n_dim, len(extended)), dtype=np.complex128)
         field[:, rows] = unit[:, None] * w[None, :]
         stacked = gradient.reshape(-1, len(vectors))
@@ -453,7 +463,10 @@ def solve_rms_overdamped(
     ValueError
         If the times do not increase from zero.
     """
-    times = _check_times(times)
+    times = np.asarray(times, dtype=np.float64)
+    if times[0] != 0 or np.any(np.diff(times) <= 0):
+        msg = "The times must increase from zero"
+        raise ValueError(msg)
     model = build_model(system)
     natural = system.units.time_into(times, model.units)
     d0 = 1 / model.friction

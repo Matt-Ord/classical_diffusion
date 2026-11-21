@@ -1,3 +1,4 @@
+# cspell: ignore indptr matvec tocsr
 """The Kramers operator applied without being stored, and exponential time steps in its Krylov spaces, for systems too large to factorise."""
 
 from dataclasses import dataclass
@@ -106,7 +107,7 @@ def build_matrix_free_operator(
         wavevector=np.array([d.diagonal().imag for d in derivatives]),
         force_t=[as_real(f, "imag").T.tocsr() for f in forces],
         shape=(len(indices), len(vectors)),
-        parity=1.0 - 2.0 * (indices.sum(axis=1) % 2),
+        parity=np.asarray(1.0 - 2.0 * (indices.sum(axis=1) % 2), dtype=np.float64),
         indices=indices,
         width=width,
     )
@@ -279,7 +280,12 @@ def propagate_integrals(  # ruff:ignore[too-many-arguments]
         rows = step.basis.shape[0]
         projected = step.norm * (step.basis @ observable)
 
-        def measure(dt: float) -> FloatArray:
+        def measure(
+            dt: float,
+            augmented: FloatArray = augmented,
+            projected: FloatArray = projected,
+            rows: int = rows,
+        ) -> FloatArray:
             e = scipy.linalg.expm(dt * augmented)
             return projected @ e[:rows, [0, rows, rows + 1]]
 
@@ -293,7 +299,7 @@ def propagate_integrals(  # ruff:ignore[too-many-arguments]
     return Propagation(values=out, n_applications=count)
 
 
-def propagate_state(
+def propagate_state(  # ruff:ignore[too-many-arguments]
     apply: Callable[[FloatArray], FloatArray],
     start: FloatArray,
     duration: float,
@@ -317,7 +323,7 @@ def propagate_state(
         count += step.basis.shape[0]
         rows = step.basis.shape[0]
         e = scipy.linalg.expm(length * augmented)
-        integral = integral + step.norm * e[:rows, rows] @ step.basis
+        integral += step.norm * e[:rows, rows] @ step.basis
         state = step.norm * e[:rows, 0] @ step.basis
     return state, integral, count
 
@@ -337,6 +343,11 @@ def solve_by_propagation(
     tau, and small only on the few slower ones, the hops between sites, so
     GMRES converges in a few iterations, each one propagation over tau
     (a time of the order of 1 / gamma).
+
+    Raises
+    ------
+    RuntimeError
+        If GMRES does not converge.
     """
     _, integral, count = propagate_state(apply, rhs, duration, tol=1e-2 * tol, m=m)
     applications = [count]
@@ -346,8 +357,11 @@ def solve_by_propagation(
         applications[0] += k
         return x - state
 
-    operator = scipy.sparse.linalg.LinearOperator(
-        (rhs.size, rhs.size), matvec=matvec, dtype=np.float64
+    # The stubs of scipy omit the matvec form of the constructor
+    operator = scipy.sparse.linalg.LinearOperator(  # ty: ignore[missing-argument]
+        (rhs.size, rhs.size),
+        matvec=matvec,  # ty: ignore[unknown-argument]
+        dtype=np.float64,  # ty: ignore[parameter-already-assigned]
     )
     solution, info = scipy.sparse.linalg.gmres(
         operator, integral, rtol=tol, atol=0, restart=60, maxiter=4

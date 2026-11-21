@@ -115,9 +115,9 @@ def get_modes(  # ruff:ignore[too-many-arguments]
         w = solve(v)
         a = float(v @ (parity * w)) / signs[k]
         alpha.append(a)
-        w = w - a * v
+        w -= a * v
         if k > 0:
-            w = w - beta[k - 1] * signs[k] / signs[k - 1] * previous_v
+            w -= beta[k - 1] * signs[k] / signs[k - 1] * previous_v
         form = float(w @ (parity * w))
         b = np.sqrt(abs(form))
         if b <= 1e-13 * max(abs(a), float(np.linalg.norm(w)), 1e-300) or b == 0:
@@ -145,7 +145,7 @@ def get_modes(  # ruff:ignore[too-many-arguments]
     raise RuntimeError(msg)
 
 
-def get_modes_by_arnoldi(  # ruff:ignore[too-many-arguments, too-many-locals]
+def get_modes_by_arnoldi(  # ruff:ignore[too-many-arguments]
     solve: Callable[[FloatArray], FloatArray],
     start: FloatArray,
     observable: FloatArray,
@@ -162,6 +162,11 @@ def get_modes_by_arnoldi(  # ruff:ignore[too-many-arguments, too-many-locals]
     every vector. With (shift - L)^{-1} V = V H, L is shift - H^{-1} in the
     basis, and with H = Y diag(mu) Y^{-1} the mode of rate shift - 1 / mu_j
     has weight |u| (o^T V Y)_j (Y^{-1} e_0)_j.
+
+    Raises
+    ------
+    RuntimeError
+        If the modes do not converge within max_solves.
     """
     norm = float(np.linalg.norm(start))
     basis = np.zeros((min(64, max_solves) + 1, start.size))

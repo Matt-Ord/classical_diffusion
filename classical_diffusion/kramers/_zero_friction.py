@@ -1,4 +1,3 @@
-# cspell: ignore leggauss legvander chebvander chebint chebval legder legval spherical_jn tanh sinh cosh arccosh arcsinh fftfreq cumprod Fejer Yoshida matmul vander
 """Deterministic ISF and mean square displacement of a 1D periodic system at zero friction.
 
 Hamiltonian dynamics, Boltzmann-distributed initial conditions, natural units of
@@ -8,7 +7,7 @@ thermal velocity.
 
 Method (action-angle / energy-shell decomposition)
 --------------------------------------------------
-dx dp = dE dtheta, theta the time along the orbit of energy E.  Each orbit is
+dx dp = dE d theta, theta the time along the orbit of energy E.  Each orbit is
 periodic with period tau(E) and frequency W = 2 pi / tau: trapped orbits close,
 running orbits advance by s 2 pi (s = +-1) per period, at mean velocity s W.
 With c_n(E) the Fourier coefficients of f(theta) = exp(i K (x(theta) - s W theta))
@@ -23,13 +22,13 @@ int_{-1}^{1} P_k(u) e^{i nu u} du = 2 i^k j_k(nu) gives the integral exactly
 for that polynomial at ANY time, so the cost does not grow with t.  The orbits
 near the separatrix (W -> 0) carry the weight e^{-E_s} tau |dE/dW| ~ e^{-c / W},
 which is flat: the W < W_cut part is dropped once its weight is below the
-tolerance.  Each node needs tau(E) (tanh-sinh quadrature, which resolves the
-inverse square root at the turning points and the logarithm near the
-separatrix), E(W) by bisection, and the Fourier coefficients along the orbit
-(`orbit_from_parameter`): the quarter/half orbit is parametrised by pi - x = u cosh y
-(trapped) or r sinh y (running), theta(y) is a Chebyshev cumulative integral and the
-c_n are Fejer quadratures in y.  No time stepping (an earlier symplectic sampler,
-was unstable near the separatrix).
+tolerance.  Each node needs tau(E) (Gauss quadrature after a substitution which
+resolves the inverse square root at the turning points and the logarithm near
+the separatrix), E(W) by bisection, and the Fourier coefficients along the orbit
+(`_get_orbit_coefficients`): the quarter/half orbit is parametrised by
+pi - x = u cosh y (trapped) or r sinh y (running), theta(y) is a Chebyshev
+cumulative integral and the c_n are Fejer quadratures in y.  No time stepping
+(an earlier symplectic sampler was unstable near the separatrix).
 
 MSD(t) = <(x(t) - x(0))^2> = sum_families int dW w(W) [ s^2 W^2 t^2
           + 2 sum_{n != 0} |d_n|^2 (1 - cos(n W t)) ],
@@ -39,535 +38,672 @@ Limitations: one minimum and one maximum of V per unit cell (all CosineSystem1D)
 and a frequency W(E) monotonic in each family (true for the cosine).
 """
 
-from dataclasses import dataclass, field
+# cspell: ignore leggauss legvander chebvander chebint chebval legder legval spherical_jn arccosh arcsinh cumprod Fejer matmul einsum lbnd ktn parametrised symplectic vectorised
+from dataclasses import dataclass
+from functools import cache
+from operator import attrgetter
 from typing import TYPE_CHECKING
 
 import numpy as np
-from numpy.polynomial.legendre import leggauss, legvander
+from numpy.polynomial import chebyshev, legendre
 from scipy.special import spherical_jn
 
 if TYPE_CHECKING:
-    from classical_diffusion.kramers._model import Model
+    from collections.abc import Callable
 
-# ---------------------------------------------------------------- potential
+    from classical_diffusion.kramers._model import ComplexArray, FloatArray, Model
+
+_N_NODES = 24
+"""The Gauss-Legendre nodes per panel of the frequency."""
+_N_CHEBYSHEV = 512
+"""The largest number of Chebyshev nodes along an orbit."""
+_N_HARMONICS = 256
+"""The largest harmonic of the orbit frequency."""
+_MAX_PANELS = 200
+"""The most panels of the frequency in one family."""
+_MIN_PANEL_WIDTH = 1e-6
+_MAX_CLOSURE = 1e-9
+"""The largest disagreement of the two period quadratures of a converged orbit."""
+_MAX_ENERGY_TAIL = 1e-10
+"""The largest relative Legendre tail of E(W) on a converged panel."""
+_SINE_TOL = 1e-14
+_REAL_TOL = 1e-10
+
+_PANEL_NODES, _PANEL_WEIGHTS = legendre.leggauss(_N_NODES)
+_PANEL_VANDER = legendre.legvander(_PANEL_NODES, _N_NODES - 1)
+_PANEL_PROJECTION = (_PANEL_VANDER * _PANEL_WEIGHTS[:, None]).T * (
+    (2 * np.arange(_N_NODES) + 1) / 2
+)[:, None]
+"""The Legendre coefficients of a function from its values at the panel nodes."""
+_PERIOD_NODES, _PERIOD_WEIGHTS = legendre.leggauss(160)
 
 
-@dataclass(frozen=True)
-class CosSeries:
-    """V(x) = sum_k a_k (1 - cos(k x)) ... stored as c0 + sum a_k cos(k x), min at x = 0, max at pi."""
+@dataclass(frozen=True, kw_only=True)
+class CosineSeries:
+    """A potential offset + sum_k a_k cos(k x), with its minimum at x = 0 and its maximum at pi."""
 
-    k: np.ndarray
-    a: np.ndarray
-    c0: float
+    wavenumbers: FloatArray
+    amplitudes: FloatArray
+    offset: float
 
-    def __call__(self, x):
-        x = np.asarray(x, float)
-        return self.c0 + np.sum(self.a * np.cos(np.multiply.outer(x, self.k)), axis=-1)
+    def __call__(self, position: FloatArray | float) -> FloatArray:
+        """Get the potential at the positions."""
+        position = np.asarray(position, float)
+        return self.offset + np.sum(
+            self.amplitudes * np.cos(np.multiply.outer(position, self.wavenumbers)),
+            axis=-1,
+        )
 
-    def force(self, x):
-        return np.sum(self.a * self.k * np.sin(np.multiply.outer(x, self.k)), axis=-1)
-
-    def drop(self, X, d):
-        """V(X) - V(X - d), without cancellation for small d."""
-        X = np.asarray(X, float)[..., None]
-        d = np.asarray(d, float)[..., None]
+    def drop(self, turning_point: FloatArray, distance: FloatArray) -> FloatArray:
+        """Get V(X) - V(X - d), for the turning points X and distances d, without cancellation for small d."""
+        turning_point = np.asarray(turning_point, float)[..., None]
+        distance = np.asarray(distance, float)[..., None]
         return np.sum(
-            -2 * self.a * np.sin(self.k * (2 * X - d) / 2) * np.sin(self.k * d / 2),
+            -2
+            * self.amplitudes
+            * np.sin(self.wavenumbers * (2 * turning_point - distance) / 2)
+            * np.sin(self.wavenumbers * distance / 2),
             axis=-1,
         )
 
     @property
     def barrier(self) -> float:
+        """The potential at its maximum, pi."""
         return float(self(np.pi))
 
-    def log_z(self) -> float:
-        """log of Z = sqrt(2 pi) int_0^{2 pi} e^{-V} dx (trapezoid: spectrally exact)."""
-        x = np.arange(4096) * 2 * np.pi / 4096
-        v = self(x)
-        return 0.5 * np.log(2 * np.pi) + np.log(np.mean(np.exp(-v)) * 2 * np.pi)
+    @property
+    def well_frequency(self) -> float:
+        """The frequency of small oscillations about the minimum."""
+        return float(np.sqrt(-np.sum(self.amplitudes * self.wavenumbers**2)))
+
+    @property
+    def barrier_frequency(self) -> float:
+        """The imaginary frequency of the motion about the maximum."""
+        return float(
+            np.sqrt(
+                np.sum(
+                    self.amplitudes
+                    * self.wavenumbers**2
+                    * np.cos(self.wavenumbers * np.pi)
+                )
+            )
+        )
+
+    def log_partition(self) -> float:
+        """Get log Z, Z = sqrt(2 pi) int_0^{2 pi} e^{-V} dx (trapezoid: spectrally exact)."""
+        position = np.arange(4096) * 2 * np.pi / 4096
+        potential = self(position)
+        return 0.5 * np.log(2 * np.pi) + np.log(np.mean(np.exp(-potential)) * 2 * np.pi)
 
 
-def series_from_model(model: Model) -> CosSeries:
-    """The potential of a 1D model in its natural units, shifted to its minimum at 0."""
+def series_from_model(model: Model) -> CosineSeries:
+    """Get the potential of a 1D model in its natural units, shifted to its minimum at 0.
+
+    Raises
+    ------
+    ValueError
+        If the model is not 1D.
+    NotImplementedError
+        If the potential has sine terms, or more than one minimum and maximum per unit cell.
+    """
     if model.n_dim != 1:
-        raise ValueError("1D only")
-    coeffs = {n[0]: complex(v) for n, v in model.potential}
-    ks = sorted(k for k in coeffs if k > 0)
-    a = np.array([2 * coeffs[k].real for k in ks])
-    if any(abs(coeffs[k].imag) > 1e-14 for k in ks):
-        raise NotImplementedError("sine terms")
-    k = np.array(ks, float)
-    s = CosSeries(k, a, 0.0)
-    if s(np.pi) < s(0.0):  # put the minimum at 0
-        s = CosSeries(k, a * (-1.0) ** k, 0.0)
-    s = CosSeries(k, s.a, -float(np.sum(s.a)))  # V(0) = 0
-    xs = np.linspace(0, np.pi, 4001)
-    if np.any(np.diff(s(xs)) <= 0):
-        raise NotImplementedError("only one minimum and one maximum per unit cell")
-    return s
+        msg = "Only 1D models have a cosine series"
+        raise ValueError(msg)
+    coefficients = {n[0]: complex(v) for n, v in model.potential}
+    orders = sorted(k for k in coefficients if k > 0)
+    amplitudes = np.array([2 * coefficients[k].real for k in orders])
+    if any(abs(coefficients[k].imag) > _SINE_TOL for k in orders):
+        msg = "Potentials with sine terms are not supported"
+        raise NotImplementedError(msg)
+    wavenumbers = np.array(orders, float)
+    series = CosineSeries(wavenumbers=wavenumbers, amplitudes=amplitudes, offset=0.0)
+    if series(np.pi) < series(0.0):  # put the minimum at 0
+        amplitudes *= (-1.0) ** wavenumbers
+    series = CosineSeries(
+        wavenumbers=wavenumbers,
+        amplitudes=amplitudes,
+        offset=-float(np.sum(amplitudes)),
+    )
+    if np.any(np.diff(series(np.linspace(0, np.pi, 4001))) <= 0):
+        msg = "Only one minimum and one maximum per unit cell are supported"
+        raise NotImplementedError(msg)
+    return series
 
 
-def omega0(V: CosSeries) -> float:
-    return float(np.sqrt(-np.sum(V.a * V.k**2)))
+def _trapped_period(series: CosineSeries, gap: FloatArray) -> FloatArray:
+    """Get the period of the trapped orbits with turning points +-(pi - u), for the gaps u.
+
+    tau = 4 int_0^X dx / sqrt(2 (V(X) - V(x))), with pi - x = u cosh y, which
+    resolves the inverse square root at the turning point and the logarithm
+    of the separatrix (the hilltop at pi).
+    """
+    gap = np.asarray(gap, float)[..., None]
+    y_max = np.arccosh(np.pi / gap)
+    y = 0.5 * y_max * (1 + _PERIOD_NODES)
+    weights = 0.5 * y_max * _PERIOD_WEIGHTS
+    distance = 2 * gap * np.sinh(y / 2) ** 2
+    drop = series.drop((np.pi - gap) * np.ones_like(distance), distance)
+    dx_dy = gap * np.sinh(y)
+    return 4 * np.sum(weights * dx_dy / np.sqrt(2 * np.maximum(drop, 1e-300)), axis=-1)
 
 
-def omega_b(V: CosSeries) -> float:
-    return float(np.sqrt(np.sum(V.a * V.k**2 * np.cos(V.k * np.pi))))
+def _running_period(series: CosineSeries, excess: FloatArray) -> FloatArray:
+    """Get the period of the running orbits at the energies E_s + eps above the barrier.
 
-
-# ----------------------------------------------------------- period tau(E)
-
-_GY, _GW = leggauss(160)
-
-
-def _period_nodes_trapped(V: CosSeries, u):
-    """Nodes of the half-orbit integral in y, with pi - x = u cosh y, y in [0, acosh(pi / u)].
-
-    Returns x, the drop V(X) - V(x) (X = pi - u the turning point) and dx/dy, each (..., n).
-    The substitution resolves the inverse square root at the turning point and the
-    logarithm of the separatrix (the hilltop at pi)."""
-    u = np.asarray(u, float)[..., None]
-    Y = np.arccosh(np.pi / u)
-    y = 0.5 * Y * (1 + _GY)
-    w = 0.5 * Y * _GW
-    x = np.pi - u * np.cosh(y)
-    d = 2 * u * np.sinh(y / 2) ** 2  # X - x
-    X = (np.pi - u) * np.ones_like(d)
-    drop = V.drop(X, d)
-    return x, drop, u * np.sinh(y), w
-
-
-def period_trapped(V: CosSeries, X):
-    """tau of the trapped orbit with turning points +-X: 4 int_0^X dx / sqrt(2 (V(X) - V(x)))."""
-    _, drop, dxdy, w = _period_nodes_trapped(V, np.pi - np.asarray(X, float))
-    return 4 * np.sum(w * dxdy / np.sqrt(2 * np.maximum(drop, 1e-300)), axis=-1)
-
-
-def period_trapped_u(V: CosSeries, u):
-    _, drop, dxdy, w = _period_nodes_trapped(V, u)
-    return 4 * np.sum(w * dxdy / np.sqrt(2 * np.maximum(drop, 1e-300)), axis=-1)
-
-
-def period_running(V: CosSeries, eps):
-    """tau of the running orbit at E = E_s + eps: 2 int_0^pi dx / sqrt(2 (eps + V(pi) - V(x))),
-    with pi - x = r sinh y, r = sqrt(2 eps) / omega_b."""
-    eps = np.asarray(eps, float)[..., None]
-    r = np.sqrt(2 * eps) / omega_b(V)
-    Y = np.arcsinh(np.pi / r)
-    y = 0.5 * Y * (1 + _GY)
-    w = 0.5 * Y * _GW
-    d = r * np.sinh(y)
-    drop = V.drop(np.pi * np.ones_like(d), d)
+    tau = 2 int_0^pi dx / sqrt(2 (eps + V(pi) - V(x))), with pi - x = r sinh y,
+    r = sqrt(2 eps) / omega_b.
+    """
+    excess = np.asarray(excess, float)[..., None]
+    scale = np.sqrt(2 * excess) / series.barrier_frequency
+    y_max = np.arcsinh(np.pi / scale)
+    y = 0.5 * y_max * (1 + _PERIOD_NODES)
+    weights = 0.5 * y_max * _PERIOD_WEIGHTS
+    distance = scale * np.sinh(y)
+    drop = series.drop(np.pi * np.ones_like(distance), distance)
     return 2 * np.sum(
-        w * r * np.cosh(y) / np.sqrt(2 * (eps + np.maximum(drop, 0.0))), axis=-1
+        weights * scale * np.cosh(y) / np.sqrt(2 * (excess + np.maximum(drop, 0.0))),
+        axis=-1,
     )
 
 
-def _bisect(f, lo, hi, target, increasing, n=64):
-    """Vectorised bisection of f(z) = target on [lo, hi] (f monotonic)."""
-    lo = np.full_like(target, lo, dtype=float)
-    hi = np.full_like(target, hi, dtype=float)
-    for _ in range(n):
+def _bisect(
+    function: Callable[[FloatArray], FloatArray],
+    lower: float,
+    upper: float,
+    target: FloatArray,
+) -> FloatArray:
+    """Get the solution of function(z) = target on [lower, upper], for an increasing function, by vectorised bisection."""
+    lo = np.full_like(target, lower, dtype=float)
+    hi = np.full_like(target, upper, dtype=float)
+    for _ in range(64):
         mid = 0.5 * (lo + hi)
-        above = f(mid) > target
-        if not increasing:
-            above = ~above
+        above = function(mid) > target
         hi = np.where(above, mid, hi)
         lo = np.where(above, lo, mid)
     return 0.5 * (lo + hi)
 
 
-def trapped_from_frequency(V: CosSeries, W):
-    """Turning point X (and log(pi - X)) of the trapped orbit with frequency W < omega0."""
-    W = np.asarray(W, float)
-    # parameter z = log(pi - X), decreasing z -> X -> pi -> W -> 0: W increases with z
-    f = lambda z: 2 * np.pi / period_trapped_u(V, np.exp(z))
-    z = _bisect(f, -40.0, np.log(np.pi), W, increasing=True)
-    return np.pi - np.exp(z)
+def _trapped_turning_point(series: CosineSeries, frequency: FloatArray) -> FloatArray:
+    """Get the turning point X of the trapped orbits with the frequencies W < omega_0."""
+    frequency = np.asarray(frequency, float)
+
+    # z = log(pi - X): as z decreases, X -> pi and W -> 0, so W increases with z
+    def frequency_at(log_gap: FloatArray) -> FloatArray:
+        return 2 * np.pi / _trapped_period(series, np.exp(log_gap))
+
+    log_gap = _bisect(frequency_at, -40.0, np.log(np.pi), frequency)
+    return np.pi - np.exp(log_gap)
 
 
-def running_from_frequency(V: CosSeries, W):
-    """eps = E - E_s of the running orbit with frequency W."""
-    W = np.asarray(W, float)
-    f = lambda z: 2 * np.pi / period_running(V, np.exp(z))
-    return np.exp(_bisect(f, -80.0, 6.0, W, increasing=True))
+def _running_excess(series: CosineSeries, frequency: FloatArray) -> FloatArray:
+    """Get the energy E - E_s above the barrier of the running orbits with the frequencies."""
+    frequency = np.asarray(frequency, float)
+
+    def frequency_at(log_excess: FloatArray) -> FloatArray:
+        return 2 * np.pi / _running_period(series, np.exp(log_excess))
+
+    return np.exp(_bisect(frequency_at, -80.0, 6.0, frequency))
 
 
-# ---------------------------------------------------- nodes in the frequency
+@dataclass(frozen=True, kw_only=True)
+class _Chebyshev:
+    """Chebyshev (first kind) nodes on [-1, 1], the cumulative integral matrix from -1 and the Fejer weights."""
+
+    nodes: FloatArray
+    cumulative: FloatArray
+    weights: FloatArray
 
 
-@dataclass
-class Family:
-    """One family of orbits (s = 0 trapped, +1 running right, -1 running left) on panels of W."""
+@cache
+def _get_chebyshev(n_nodes: int) -> _Chebyshev:
+    """Get the Chebyshev nodes, cumulative integral and Fejer weights of the given order."""
+    nodes = np.cos(np.pi * (np.arange(n_nodes) + 0.5) / n_nodes)[::-1]
+    inverse_vander = np.linalg.inv(chebyshev.chebvander(nodes, n_nodes - 1))
+    # cumulative integral of each basis polynomial, lower limit -1, evaluated at the nodes and at +1
+    integrals = np.zeros((n_nodes + 1, n_nodes))
+    for k in range(n_nodes):
+        basis = np.zeros(n_nodes)
+        basis[k] = 1
+        integrals[:, k] = chebyshev.chebval(
+            np.append(nodes, 1.0), chebyshev.chebint(basis, lbnd=-1)
+        )
+    full = integrals @ inverse_vander
+    return _Chebyshev(nodes=nodes, cumulative=full[:-1], weights=full[-1])
 
-    s: int
-    edges: np.ndarray  # panel edges in W
-    W: np.ndarray  # (n_panel, M) Gauss nodes
-    E: np.ndarray
-    tau: np.ndarray
-    weight: np.ndarray  # w(W) at the nodes, times the Gauss weight NOT included
-    c2: np.ndarray  # (n_panel, M, n_harm) |c_n|^2, n = fftfreq order
-    d2: np.ndarray  # |d_n|^2 for the MSD
-    n: np.ndarray  # harmonic numbers
-    closure: float  # max orbit closure error
+
+@dataclass(frozen=True, kw_only=True)
+class _OrbitPath:
+    """A quarter (trapped) or half (running) of each orbit, at the Chebyshev nodes in y, from its far end to x = 0."""
+
+    position: FloatArray
+    """x, (n_orbit, n_chebyshev)."""
+    kinetic: FloatArray
+    """p^2 / 2 = E - V(x)."""
+    dx_dy: FloatArray
+    y_max: FloatArray
+    """The end of the range of y, (n_orbit,)."""
+    energy: FloatArray
+    n_pieces: int
+    """The pieces in one period, 4 or 2."""
 
 
-@dataclass
-class ZeroFrictionModel:
-    V: CosSeries
-    K: float
-    families: list[Family] = field(default_factory=list)
-    M: int = 24
-    info: dict = field(default_factory=dict)
+def _trapped_path(
+    series: CosineSeries, gap: FloatArray, nodes: FloatArray
+) -> _OrbitPath:
+    """Get the quarter of the trapped orbits with turning points pi - u, for the gaps u, with pi - x = u cosh y."""
+    y_max = np.arccosh(np.pi / gap)
+    y = 0.5 * y_max[:, None] * (1 + nodes)
+    distance = 2 * gap[:, None] * np.sinh(y / 2) ** 2
+    return _OrbitPath(
+        position=np.pi - gap[:, None] * np.cosh(y),
+        kinetic=series.drop((np.pi - gap)[:, None] * np.ones_like(distance), distance),
+        dx_dy=gap[:, None] * np.sinh(y),
+        y_max=y_max,
+        energy=series(np.pi - gap),
+        n_pieces=4,
+    )
 
-    # ---------------------------------------------------------- ISF
-    def isf(self, times, tol=1e-6):
+
+def _running_path(
+    series: CosineSeries, excess: FloatArray, nodes: FloatArray
+) -> _OrbitPath:
+    """Get the half of the running orbits at E_s + eps, with pi - x = r sinh y."""
+    scale = np.sqrt(2 * excess) / series.barrier_frequency
+    y_max = np.arcsinh(np.pi / scale)
+    y = 0.5 * y_max[:, None] * (1 + nodes)
+    return _OrbitPath(
+        position=np.pi - scale[:, None] * np.sinh(y),
+        kinetic=excess[:, None]
+        + series.drop(np.pi * np.ones_like(y), scale[:, None] * np.sinh(y)),
+        dx_dy=scale[:, None] * np.cosh(y),
+        y_max=y_max,
+        energy=series.barrier + excess,
+        n_pieces=2,
+    )
+
+
+def _fourier_pair(
+    amplitude: ComplexArray, powers: ComplexArray
+) -> tuple[ComplexArray, ComplexArray]:
+    """Get (a . e^{-i n phi}, a . e^{+i n phi}) for n = -H..H, from a of shape (N, q) and the powers e^{-i k phi}, k = 0..H."""
+    lower = np.matmul(amplitude[:, None, :], powers)[:, 0, :]
+    upper = np.conj(np.matmul(np.conj(amplitude)[:, None, :], powers)[:, 0, :])
+    return (
+        np.concatenate([upper[:, :0:-1], lower], axis=1),
+        np.concatenate([lower[:, :0:-1], upper], axis=1),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _Family:
+    """The problem of one family of orbits (direction 0 trapped, 1 running right) at a wavevector."""
+
+    series: CosineSeries
+    direction: int
+    wavevector: float
+    tol: float
+    log_partition: float
+
+    def parameter(self, frequency: FloatArray) -> FloatArray:
+        """Get the parameter of the orbits with the frequencies: u = pi - X (trapped) or eps = E - E_s (running)."""
+        if self.direction == 0:
+            return np.pi - _trapped_turning_point(self.series, frequency)
+        return _running_excess(self.series, frequency)
+
+    def path(self, parameter: FloatArray, nodes: FloatArray) -> _OrbitPath:
+        """Get the quarter (trapped) or half (running) orbits at the parameters."""
+        if self.direction == 0:
+            return _trapped_path(self.series, parameter, nodes)
+        return _running_path(self.series, parameter, nodes)
+
+    def period(self, parameter: FloatArray) -> FloatArray:
+        """Get the period of the orbits at the parameters, by Gauss quadrature."""
+        if self.direction == 0:
+            return _trapped_period(self.series, parameter)
+        return _running_period(self.series, parameter)
+
+    def energy(self, frequency: FloatArray) -> FloatArray:
+        """Get the energy of the orbits with the frequencies."""
+        if self.direction == 0:
+            return self.series(_trapped_turning_point(self.series, frequency))
+        return self.series.barrier + _running_excess(self.series, frequency)
+
+    @property
+    def multiplicity(self) -> float:
+        """The copies of the family: the left movers are the complex conjugate of the right movers."""
+        return 2.0 if self.direction != 0 else 1.0
+
+
+@dataclass(frozen=True, kw_only=True)
+class _Phase:
+    """The orbit period, and the phase phi = W theta and quadrature weights d phi / (2 pi) at the Chebyshev nodes."""
+
+    period: FloatArray
+    phase: FloatArray
+    weights: FloatArray
+
+
+def _get_phase(path: _OrbitPath, grid: _Chebyshev) -> _Phase:
+    """Get the phase along the orbits, theta measured from x = 0 (y = y_max), theta(y) = int_y^{y_max}."""
+    # d theta / d(Chebyshev variable)
+    theta_rate = (
+        path.dx_dy
+        / np.sqrt(2 * np.maximum(path.kinetic, 1e-300))
+        * (0.5 * path.y_max[:, None])
+    )
+    total = theta_rate @ grid.weights
+    theta = total[:, None] - theta_rate @ grid.cumulative.T
+    period = path.n_pieces * total
+    frequency = 2 * np.pi / period
+    return _Phase(
+        period=period,
+        # in [0, pi/2] (trapped) or [0, pi] (running)
+        phase=frequency[:, None] * theta,
+        weights=(grid.weights[None, :] * theta_rate) * frequency[:, None] / (2 * np.pi),
+    )
+
+
+def _trapped_coefficients(
+    weights: FloatArray, position: FloatArray, wavevector: float, powers: ComplexArray
+) -> tuple[ComplexArray, ComplexArray]:
+    """Get (c_n, d_n) of trapped orbits from their quarter, the others (pi - phi, x), (pi + phi, -x), (2 pi - phi, -x) by symmetry."""
+    sign = (-1.0) ** np.arange(-(powers.shape[-1] - 1), powers.shape[-1])
+    plane_wave = np.exp(1j * wavevector * position)
+    p1, p1c = _fourier_pair(weights * plane_wave, powers)
+    p2, p2c = _fourier_pair(weights * np.conj(plane_wave), powers)
+    q1, q1c = _fourier_pair((weights * position).astype(complex), powers)
+    return (
+        p1 + sign * p1c + sign * p2 + p2c,
+        q1 + sign * q1c - sign * q1 - q1c,
+    )
+
+
+def _running_coefficients(
+    weights: FloatArray, periodic: FloatArray, wavevector: float, powers: ComplexArray
+) -> tuple[ComplexArray, ComplexArray]:
+    """Get (c_n, d_n) of running orbits from their half (phi, x), the other (-phi, -x) by symmetry, for the periodic part x - phi."""
+    plane_wave = np.exp(1j * wavevector * periodic)
+    p1, _ = _fourier_pair(weights * plane_wave, powers)
+    _, p2c = _fourier_pair(weights * np.conj(plane_wave), powers)
+    q1, q1c = _fourier_pair((weights * periodic).astype(complex), powers)
+    return p1 + p2c, q1 - q1c
+
+
+@dataclass(frozen=True, kw_only=True)
+class _OrbitCoefficients:
+    """The energy, period and Fourier coefficients of a set of orbits."""
+
+    energy: FloatArray
+    period: FloatArray
+    isf: ComplexArray
+    """c_n, the coefficients of exp(i K x~), n = -H..H."""
+    msd: ComplexArray
+    """d_n, the coefficients of x~."""
+    closure: float
+    """The largest disagreement of the period with its Gauss quadrature."""
+
+
+def _get_orbit_coefficients(
+    family: _Family, parameter: FloatArray, n_chebyshev: int, n_harmonics: int
+) -> _OrbitCoefficients:
+    """Get the orbit quantities at the parameters of the family.
+
+    The quarter (trapped) or half (running) orbit is parametrised by y, which
+    resolves the turning point and the hilltop. theta(y) is the Chebyshev
+    cumulative integral of d theta / dy = (dx/dy) / p, and the Fourier
+    coefficients along the orbit are Fejer quadratures in y, using the
+    symmetry V(-x) = V(x) for the rest of the orbit.
+    """
+    parameter = np.asarray(parameter, float)
+    grid = _get_chebyshev(n_chebyshev)
+    path = family.path(parameter, grid.nodes)
+    phase = _get_phase(path, grid)
+    powers = np.empty((*phase.phase.shape, n_harmonics + 1), complex)
+    powers[..., 0] = 1.0
+    powers[..., 1:] = np.exp(-1j * phase.phase)[..., None]
+    powers = np.cumprod(powers, axis=-1)
+
+    if family.direction == 0:
+        isf, msd = _trapped_coefficients(
+            phase.weights, path.position, family.wavevector, powers
+        )
+    else:
+        # periodic part x - phi
+        isf, msd = _running_coefficients(
+            phase.weights, path.position - phase.phase, family.wavevector, powers
+        )
+    return _OrbitCoefficients(
+        energy=path.energy,
+        period=phase.period,
+        isf=isf,
+        msd=msd,
+        closure=float(np.max(np.abs(phase.period / family.period(parameter) - 1))),
+    )
+
+
+def _energy_derivative(energy: FloatArray, lo: float, hi: float) -> FloatArray:
+    """Get dE/dW at the nodes of the panel [lo, hi] from the Legendre interpolant of E(W)."""
+    coefficients = np.linalg.solve(_PANEL_VANDER, energy)
+    derivative = legendre.legval(_PANEL_NODES, legendre.legder(coefficients))
+    return np.asarray(derivative, dtype=np.float64) * 2 / (hi - lo)
+
+
+@dataclass(frozen=True, kw_only=True)
+class _Panel:
+    """The orbits at the Gauss nodes of one panel [lo, hi] of the frequency."""
+
+    lo: float
+    hi: float
+    frequency: FloatArray
+    energy: FloatArray
+    weight: FloatArray
+    """w(W) at the nodes, without the Gauss weights."""
+    isf_harmonics: FloatArray
+    """|c_n|^2, (n_nodes, 2 H + 1)."""
+    msd_harmonics: FloatArray
+    """|d_n|^2."""
+
+
+def _get_panel(family: _Family, lo: float, hi: float) -> _Panel:
+    """Get the orbits of a panel, doubling the Chebyshev nodes and harmonics until the highest harmonics are negligible."""
+    frequency = 0.5 * (lo + hi) + 0.5 * (hi - lo) * _PANEL_NODES
+    n_chebyshev, n_harmonics = _N_CHEBYSHEV // 4, _N_HARMONICS // 4
+    while True:
+        orbits = _get_orbit_coefficients(
+            family, family.parameter(frequency), n_chebyshev, n_harmonics
+        )
+        isf_harmonics = np.abs(orbits.isf) ** 2
+        msd_harmonics = np.abs(orbits.msd) ** 2
+        edge = max(
+            isf_harmonics[:, :3].max(),
+            isf_harmonics[:, -3:].max(),
+            (msd_harmonics[:, :3].max() + msd_harmonics[:, -3:].max()) * 1e-2,
+        )
+        if (
+            edge * (hi - lo) < 1e-6 * family.tol and orbits.closure < _MAX_CLOSURE
+        ) or n_chebyshev >= _N_CHEBYSHEV:
+            break
+        n_chebyshev, n_harmonics = 2 * n_chebyshev, 2 * n_harmonics
+    # pad the harmonics to the common size
+    pad = _N_HARMONICS - n_harmonics
+    return _Panel(
+        lo=lo,
+        hi=hi,
+        frequency=frequency,
+        energy=orbits.energy,
+        weight=np.exp(-orbits.energy - family.log_partition)
+        * orbits.period
+        * np.abs(_energy_derivative(orbits.energy, lo, hi)),
+        isf_harmonics=np.pad(isf_harmonics, ((0, 0), (pad, pad))),
+        msd_harmonics=np.pad(msd_harmonics, ((0, 0), (pad, pad))),
+    )
+
+
+def _needs_split(panel: _Panel, tol: float) -> bool:
+    """Get whether the Legendre tails of the weighted harmonics, or of E(W), are too large on a panel."""
+    weighted = panel.weight[:, None] * np.concatenate(
+        [
+            panel.isf_harmonics,
+            panel.msd_harmonics / (1 + panel.msd_harmonics.max()),
+        ],
+        axis=1,
+    )
+    coefficients = np.linalg.solve(_PANEL_VANDER, weighted)
+    error = np.abs(coefficients[-3:]).sum(axis=0).sum() * (panel.hi - panel.lo)
+    energy = np.linalg.solve(_PANEL_VANDER, panel.energy)
+    relative_energy = np.abs(energy[-3:]).sum() / max(1e-300, np.abs(energy[1:]).sum())
+    return bool(error > 1e-2 * tol or relative_energy > _MAX_ENERGY_TAIL)
+
+
+def _separatrix_weight(family: _Family, frequency: float) -> float:
+    """Get w(W) by a central difference of E(W), for the separatrix cut."""
+    frequencies = np.array([frequency * (1 - 1e-5), frequency * (1 + 1e-5)])
+    energy = family.energy(frequencies)
+    derivative = (energy[1] - energy[0]) / (frequencies[1] - frequencies[0])
+    return float(
+        np.exp(-energy.mean() - family.log_partition)
+        * 2
+        * np.pi
+        / frequency
+        * abs(derivative)
+    )
+
+
+def _get_panels(family: _Family, top: float) -> list[_Panel]:
+    """Get adaptive panels of W below `top`, cut below where the weight near the separatrix is negligible, in increasing W."""
+    cut = 0.5 * top
+    # the weight below cut is at most w(cut) cut (w increases with W near the separatrix)
+    while not (_separatrix_weight(family, cut) * cut < 1e-3 * family.tol):
+        cut *= 0.8
+    edges = list(np.linspace(cut, top, 9))
+    done = list[_Panel]()
+    todo = [(edges[i], edges[i + 1]) for i in range(len(edges) - 1)]
+    while todo:
+        lo, hi = todo.pop()
+        panel = _get_panel(family, lo, hi)
+        if (
+            _needs_split(panel, family.tol)
+            and len(done) + len(todo) < _MAX_PANELS
+            and (hi - lo) > _MIN_PANEL_WIDTH
+        ):
+            mid = 0.5 * (lo + hi)
+            todo += [(lo, mid), (mid, hi)]
+        else:
+            done.append(panel)
+    done.sort(key=attrgetter("lo"))
+    return done
+
+
+def _get_oscillating_integral(
+    weighted: FloatArray,
+    rates: FloatArray,
+    times: FloatArray,
+    panel: _Panel,
+    tol: float,
+) -> ComplexArray:
+    """Get sum_n int g_n(W) e^{i r_n W t} dW over the panel at the times, exactly for the Legendre interpolant of g at the panel nodes.
+
+    Harmonics whose g is below the tolerance are dropped.
+    """
+    centre, half_width = 0.5 * (panel.lo + panel.hi), 0.5 * (panel.hi - panel.lo)
+    keep = np.abs(weighted).max(axis=0) * 2 * half_width > 1e-4 * tol
+    if not np.any(keep):
+        return np.zeros(times.shape, complex)
+    coefficients = _PANEL_PROJECTION @ weighted[:, keep]  # (n_nodes, n_keep)
+    phase_rate = np.multiply.outer(times, rates[keep])  # (n_times, n_keep)
+    orders = np.arange(_N_NODES)[:, None, None]
+    bessel = spherical_jn(orders, np.abs(phase_rate * half_width)[None])
+    sign = np.where(phase_rate < 0, (-1.0) ** orders, 1.0)
+    value = np.einsum(
+        "k,ktn,kn->tn",
+        2 * (1j) ** np.arange(_N_NODES),
+        bessel * sign,
+        coefficients,
+    )
+    return (half_width * np.exp(1j * phase_rate * centre) * value).sum(axis=1)
+
+
+def _harmonics(panel: _Panel) -> FloatArray:
+    """Get the harmonic numbers n = -H..H of a panel."""
+    n_harmonics = (panel.isf_harmonics.shape[-1] - 1) // 2
+    return np.arange(-n_harmonics, n_harmonics + 1).astype(np.float64)
+
+
+@dataclass(frozen=True, kw_only=True)
+class ZeroFrictionOrbits:
+    """The trapped and running orbits of a 1D periodic potential at zero friction, on panels of their frequency."""
+
+    families: tuple[tuple[_Family, tuple[_Panel, ...]], ...]
+
+    def isf(self, times: FloatArray, tol: float = 1e-6) -> FloatArray | ComplexArray:
+        """Get the ISF at the wavevector of the orbits, at the times."""
         times = np.asarray(times, float)
         out = np.zeros(times.shape, complex)
-        gx, gw = leggauss(self.M)
-        P = legvander(gx, self.M - 1)  # (M, M)
-        proj = (P * gw[:, None]).T * ((2 * np.arange(self.M) + 1) / 2)[
-            :, None
-        ]  # a = proj @ g
-        ik = (1j) ** np.arange(self.M)
-        for fam in self.families:
-            mult = (
-                2.0 if fam.s != 0 else 1.0
-            )  # left movers = complex conjugate of right movers
-            for ip in range(len(fam.edges) - 1):
-                lo, hi = fam.edges[ip], fam.edges[ip + 1]
-                m, h = 0.5 * (lo + hi), 0.5 * (hi - lo)
-                g = fam.weight[ip][:, None] * fam.c2[ip]  # (M, n_harm)
-                keep = np.abs(g).max(axis=0) * 2 * h > 1e-4 * tol
-                if not np.any(keep):
-                    continue
-                a = proj @ g[:, keep]  # (M, n_keep)
-                nu = np.multiply.outer(
-                    times, fam.n[keep] + fam.s * self.K
-                )  # (T, n_keep)
-                jk = spherical_jn(
-                    np.arange(self.M)[:, None, None], np.abs(nu * h)[None]
-                )  # (M, T, n)
-                sign = np.where(nu < 0, (-1.0) ** np.arange(self.M)[:, None, None], 1.0)
-                val = np.einsum("k,ktn,kn->tn", 2 * ik, jk * sign, a)
-                contrib = (h * np.exp(1j * nu * m) * val).sum(axis=1)
-                out += contrib.real * mult if fam.s != 0 else contrib
-        return out.real if np.all(np.abs(out.imag) < 1e-10) else out
+        for family, panels in self.families:
+            for panel in panels:
+                rates = _harmonics(panel) + family.direction * family.wavevector
+                weighted = panel.weight[:, None] * panel.isf_harmonics
+                contribution = _get_oscillating_integral(
+                    weighted, rates, times, panel, tol
+                )
+                out += (
+                    contribution.real * family.multiplicity
+                    if family.direction != 0
+                    else contribution
+                )
+        return out.real if np.all(np.abs(out.imag) < _REAL_TOL) else out
 
-    # ---------------------------------------------------------- MSD
-    def msd(self, times, tol=1e-6):
+    def msd(self, times: FloatArray, tol: float = 1e-6) -> FloatArray:
+        """Get the mean square displacement at the times."""
         times = np.asarray(times, float)
         out = np.zeros(times.shape)
-        gx, gw = leggauss(self.M)
-        P = legvander(gx, self.M - 1)
-        proj = (P * gw[:, None]).T * ((2 * np.arange(self.M) + 1) / 2)[:, None]
-        ik = (1j) ** np.arange(self.M)
-        for fam in self.families:
-            mult = 2.0 if fam.s != 0 else 1.0
-            for ip in range(len(fam.edges) - 1):
-                lo, hi = fam.edges[ip], fam.edges[ip + 1]
-                m, h = 0.5 * (lo + hi), 0.5 * (hi - lo)
-                wq = fam.weight[ip] * gw * h
-                # ballistic part
-                if fam.s != 0:
-                    out += mult * np.sum(wq * fam.W[ip] ** 2) * times**2
-                nz = fam.n != 0
-                g = 2 * fam.weight[ip][:, None] * fam.d2[ip][:, nz]
-                out += mult * np.sum(
-                    wq[:, None] * 2 * fam.d2[ip][:, nz]
-                )  # constant part
-                keep = np.abs(g).max(axis=0) * 2 * h > 1e-4 * tol
-                if not np.any(keep):
-                    continue
-                a = proj @ g[:, keep]
-                nu = np.multiply.outer(times, fam.n[nz][keep])
-                jk = spherical_jn(
-                    np.arange(self.M)[:, None, None], np.abs(nu * h)[None]
+        for family, panels in self.families:
+            for panel in panels:
+                quadrature = (
+                    panel.weight * _PANEL_WEIGHTS * (0.5 * (panel.hi - panel.lo))
                 )
-                sign = np.where(nu < 0, (-1.0) ** np.arange(self.M)[:, None, None], 1.0)
-                val = np.einsum("k,ktn,kn->tn", 2 * ik, jk * sign, a)
-                out -= mult * (h * np.exp(1j * nu * m) * val).sum(axis=1).real
+                if family.direction != 0:  # ballistic part
+                    out += (
+                        family.multiplicity
+                        * np.sum(quadrature * panel.frequency**2)
+                        * times**2
+                    )
+                harmonics = _harmonics(panel)
+                nonzero = harmonics != 0
+                msd_harmonics = panel.msd_harmonics[:, nonzero]
+                out += family.multiplicity * np.sum(
+                    quadrature[:, None] * 2 * msd_harmonics
+                )  # constant part
+                weighted = 2 * panel.weight[:, None] * msd_harmonics
+                out -= (
+                    family.multiplicity
+                    * _get_oscillating_integral(
+                        weighted, harmonics[nonzero], times, panel, tol
+                    ).real
+                )
         return out
 
 
-@dataclass(frozen=True)
-class _Cheb:
-    """Chebyshev (first kind) nodes on [-1, 1], the cumulative integral matrix from -1 and the Fejer weights."""
-
-    y: np.ndarray
-    Q: np.ndarray
-    w: np.ndarray
-
-
-def _cheb(n):
-    from numpy.polynomial import chebyshev as C
-
-    y = np.cos(np.pi * (np.arange(n) + 0.5) / n)[::-1]
-    T = C.chebvander(y, n - 1)
-    Tinv = np.linalg.inv(T)
-    # cumulative integral of each basis polynomial, lower limit -1, evaluated at the nodes and at +1
-    Ic = np.zeros((n + 1, n))
-    for k in range(n):
-        e = np.zeros(n)
-        e[k] = 1
-        Ic[:, k] = C.chebval(np.append(y, 1.0), C.chebint(e, lbnd=-1))
-    Qfull = Ic @ Tinv
-    return _Cheb(y=y, Q=Qfull[:-1], w=Qfull[-1])
-
-
-_CHEB_CACHE: dict[int, _Cheb] = {}
-
-
-def _get_cheb(n):
-    if n not in _CHEB_CACHE:
-        _CHEB_CACHE[n] = _cheb(n)
-    return _CHEB_CACHE[n]
-
-
-def _orbit_data(V, s, W, K, n_cheb=512, n_harm=256):
-    """E, tau, |c_n|^2, |d_n|^2 (n = -n_harm..n_harm) at the frequencies W (any shape).
-
-    No time stepping: the quarter (trapped) or half (running) orbit is parametrised by y,
-    pi - x = u cosh y (trapped, turning point pi - u) or r sinh y (running), which
-    resolves the turning point and the hilltop. theta(y) is the Chebyshev cumulative
-    integral of dtheta/dy = (dx/dy) / p, and the Fourier coefficients along the orbit are
-    Fejer quadratures in y, using the symmetry V(-x) = V(x) for the rest of the orbit.
-    """
-    shape = W.shape
-    W = W.ravel()
-    par = (
-        np.pi - trapped_from_frequency(V, W) if s == 0 else running_from_frequency(V, W)
-    )
-    out = orbit_from_parameter(V, s, par, K, n_cheb, n_harm)
-    return (
-        out["E"].reshape(shape),
-        out["tau"].reshape(shape),
-        (np.abs(out["c"]) ** 2).reshape(shape + (-1,)),
-        (np.abs(out["d"]) ** 2).reshape(shape + (-1,)),
-        out["n"],
-        out["closure"],
-    )
-
-
-def orbit_from_parameter(V, s, par, K, n_cheb=512, n_harm=256):
-    """Orbit quantities at u = pi - X (trapped, s = 0) or eps = E - E_s (running, s = 1), 1D arrays.
-
-    Returns dict with E, tau, action (int p dx over one period), c (signed Fourier
-    coefficients of exp(i K x~), n = -n_harm..n_harm), d (of x~), n, closure."""
-    par = np.asarray(par, float)
-    ch = _get_cheb(n_cheb)
-    if s == 0:
-        u = par
-        Y = np.arccosh(np.pi / u)
-        y = (
-            0.5 * Y[:, None] * (1 + ch.y)
-        )  # increasing y: x from the turning point down to 0
-        x = np.pi - u[:, None] * np.cosh(y)
-        d = 2 * u[:, None] * np.sinh(y / 2) ** 2
-        drop = V.drop((np.pi - u)[:, None] * np.ones_like(d), d)
-        dxdy = u[:, None] * np.sinh(y)
-        E = V(np.pi - u)
-        span = 4
-    else:
-        eps = par
-        r = np.sqrt(2 * eps) / omega_b(V)
-        Y = np.arcsinh(np.pi / r)
-        y = (
-            0.5 * Y[:, None] * (1 + ch.y)
-        )  # increasing y: x from the hilltop pi down to 0
-        x = np.pi - r[:, None] * np.sinh(y)
-        drop = eps[:, None] + V.drop(np.pi * np.ones_like(y), r[:, None] * np.sinh(y))
-        dxdy = r[:, None] * np.cosh(y)
-        E = V.barrier + eps
-        span = 2
-    dtdy = (
-        dxdy / np.sqrt(2 * np.maximum(drop, 1e-300)) * (0.5 * Y[:, None])
-    )  # d theta / d(cheb var)
-    # theta measured from x = 0 (y = Y): theta(y) = int_y^Y
-    total = dtdy @ ch.w
-    theta = total[:, None] - dtdy @ ch.Q.T
-    tau = span * total
-    Wt = 2 * np.pi / tau
-    phi = Wt[:, None] * theta  # in [0, pi/2] (trapped) or [0, pi] (running)
-    n = np.arange(-n_harm, n_harm + 1)
-    wq = (ch.w[None, :] * dtdy) * Wt[:, None] / (2 * np.pi)  # d phi / (2 pi) per node
-    e1 = np.exp(-1j * phi)
-    pw = np.empty(phi.shape + (n_harm + 1,), complex)
-    pw[..., 0] = 1.0
-    pw[..., 1:] = e1[..., None]
-    pw = np.cumprod(pw, axis=-1)
-
-    def proj(a):
-        """(a . exp(-i n phi), a . exp(+i n phi)) for n = -H..H, a of shape (N, q)."""
-        S = np.matmul(a[:, None, :], pw)[:, 0, :]  # a . e^{-i k phi}, k >= 0
-        Sb = np.conj(np.matmul(np.conj(a)[:, None, :], pw)[:, 0, :])  # a . e^{+i k phi}
-        en = np.concatenate([Sb[:, :0:-1], S], axis=1)
-        enc = np.concatenate([S[:, :0:-1], Sb], axis=1)
-        return en, enc
-
-    sgn = (-1.0) ** n
-    if s == 0:
-        # four quarters: (phi, x), (pi - phi, x), (pi + phi, -x), (2 pi - phi, -x)
-        fp = np.exp(1j * K * x)
-        p1, p1c = proj(wq * fp)
-        p2, p2c = proj(wq * np.conj(fp))
-        c = p1 + sgn * p1c + sgn * p2 + p2c
-        q1, q1c = proj((wq * x).astype(complex))
-        dd = q1 + sgn * q1c - sgn * q1 - q1c
-    else:
-        # two halves: (phi, x) and (-phi, -x); periodic part x - phi
-        xt = x - phi
-        fp = np.exp(1j * K * xt)
-        p1, _ = proj(wq * fp)
-        _, p2c = proj(wq * np.conj(fp))
-        c = p1 + p2c
-        q1, q1c = proj((wq * xt).astype(complex))
-        dd = q1 - q1c
-    # consistency of the two period quadratures
-    tau_g = period_trapped_u(V, u) if s == 0 else period_running(V, eps)
-    closure = float(np.max(np.abs(tau / tau_g - 1)))
-    action = span * np.sum(ch.w[None, :] * dtdy * 2 * np.maximum(drop, 0.0), axis=1)
-    return dict(
-        E=E, tau=tau, action=action, c=c, d=dd, n=n, closure=closure, x=x, phi=phi
-    )
-
-
-def _dE_dW(W_nodes, E_nodes, gx, lo, hi):
-    """dE/dW on one panel from the Legendre interpolant of E(W)."""
-    M = len(gx)
-    P = legvander(gx, M - 1)
-    coef = np.linalg.solve(P, E_nodes)
-    from numpy.polynomial import legendre as L
-
-    dcoef = L.legder(coef)
-    return L.legval(gx, dcoef) * 2 / (hi - lo)
-
-
 def build(
-    V: CosSeries,
-    K: float,
-    tol: float = 1e-6,
-    M: int = 24,
-    n_cheb: int = 512,
-    n_harm: int = 256,
-    max_panels: int = 200,
-    verbose=False,
-) -> ZeroFrictionModel:
-    """Adaptive panels in W for the trapped and the right-running family."""
-    logz = V.log_z()
-    w0 = omega0(V)
-    gx, gw = leggauss(M)
-    model = ZeroFrictionModel(V=V, K=K, M=M)
-    E_max = V.barrier + max(40.0, -np.log(tol) + 30)
-
-    def panel(s, lo, hi):
-        W = 0.5 * (lo + hi) + 0.5 * (hi - lo) * gx
-        nc, nh = n_cheb // 4, n_harm // 4
-        while True:
-            E, tau, c2, d2, n, clo = _orbit_data(V, s, W, K, nc, nh)
-            edge = max(
-                c2[:, :3].max(),
-                c2[:, -3:].max(),
-                (d2[:, :3].max() + d2[:, -3:].max()) * 1e-2,
-            )
-            if (edge * (hi - lo) < 1e-6 * tol and clo < 1e-9) or nc >= n_cheb:
-                break
-            nc, nh = 2 * nc, 2 * nh
-        # pad the harmonics to the common size
-        pad = n_harm - nh
-        c2 = np.pad(c2, ((0, 0), (pad, pad)))
-        d2 = np.pad(d2, ((0, 0), (pad, pad)))
-        n = np.arange(-n_harm, n_harm + 1)
-        dEdW = _dE_dW(W, E, gx, lo, hi)
-        weight = np.exp(-E - logz) * tau * np.abs(dEdW)
-        return dict(
-            W=W, E=E, tau=tau, c2=c2, d2=d2, n=n, clo=clo, weight=weight, edge=edge
+    series: CosineSeries, wavevector: float, tol: float = 1e-6
+) -> ZeroFrictionOrbits:
+    """Get the trapped and the right-running orbits on adaptive panels of their frequency, to the tolerance."""
+    log_partition = series.log_partition()
+    trapped, running = (
+        _Family(
+            series=series,
+            direction=direction,
+            wavevector=wavevector,
+            tol=tol,
+            log_partition=log_partition,
         )
-
-    def weight_only(s, W):
-        """w(W) by a central difference of E(W), for the separatrix cut."""
-        Ws = np.array([W * (1 - 1e-5), W * (1 + 1e-5)])
-        if s == 0:
-            E = V(trapped_from_frequency(V, Ws))
-        else:
-            E = V.barrier + running_from_frequency(V, Ws)
-        dEdW = (E[1] - E[0]) / (Ws[1] - Ws[0])
-        return np.exp(-E.mean() - logz) * 2 * np.pi / W * abs(dEdW)
-
-    def tail(p, lo, hi):
-        """Legendre tail of the weight times |c_n|^2 (summed over n) and of E(W), scaled to the integral."""
-        P = legvander(gx, M - 1)
-        g = p["weight"][:, None] * np.concatenate(
-            [p["c2"], p["d2"] / (1 + p["d2"].max())], axis=1
-        )
-        a = np.linalg.solve(P, g)
-        err_g = np.abs(a[-3:]).sum(axis=0).sum() * (hi - lo)
-        aE = np.linalg.solve(P, p["E"])
-        rel_E = np.abs(aE[-3:]).sum() / max(1e-300, np.abs(aE[1:]).sum())
-        return err_g, rel_E
-
-    for s in (0, 1):
-        # separatrix cut: shrink W_cut until the weight below it is negligible
-        if s == 0:
-            top = w0
-        else:
-            top = np.sqrt(2 * (E_max - V.barrier))
-        cut = 0.5 * top
-        while True:
-            # weight below cut <= w(cut) * cut (w increases with W near the separatrix)
-            if weight_only(s, cut) * cut < 1e-3 * tol:
-                break
-            cut *= 0.8
-        edges = list(np.linspace(cut, top, 9))
-        done = []
-        todo = [(edges[i], edges[i + 1]) for i in range(len(edges) - 1)]
-        closure = 0.0
-        while todo:
-            lo, hi = todo.pop()
-            p = panel(s, lo, hi)
-            err, relE = tail(p, lo, hi)
-            if (
-                (err > 1e-2 * tol or relE > 1e-10)
-                and len(done) + len(todo) < max_panels
-                and (hi - lo) > 1e-6
-            ):
-                mid = 0.5 * (lo + hi)
-                todo += [(lo, mid), (mid, hi)]
-            else:
-                done.append((lo, hi, p))
-                closure = max(closure, p["clo"])
-                if verbose > 1:
-                    print(
-                        f"  panel [{lo:.4g},{hi:.4g}] err {err:.1e} relE {relE:.1e} edge {p['edge']:.1e} clo {p['clo']:.1e}",
-                        flush=True,
-                    )
-        done.sort(key=lambda t: t[0])
-        fam = Family(
-            s=s,
-            edges=np.array([d[0] for d in done] + [done[-1][1]]),
-            W=np.array([d[2]["W"] for d in done]),
-            E=np.array([d[2]["E"] for d in done]),
-            tau=np.array([d[2]["tau"] for d in done]),
-            weight=np.array([d[2]["weight"] for d in done]),
-            c2=np.array([d[2]["c2"] for d in done]),
-            d2=np.array([d[2]["d2"] for d in done]),
-            n=done[0][2]["n"],
-            closure=closure,
-        )
-        model.families.append(fam)
-        if verbose:
-            print(
-                f"family s={s}: W in [{cut:.4g}, {top:.4g}], {len(done)} panels, closure {closure:.1e}",
-                flush=True,
-            )
-    # normalisation check: I(0) = sum of weights
-    total = 0.0
-    for fam in model.families:
-        h = 0.5 * np.diff(fam.edges)
-        total += (2 if fam.s else 1) * np.sum(fam.weight * gw[None, :] * h[:, None])
-    model.info["norm"] = total
-    model.info["harmonic_tail"] = max(
-        float(np.max(np.concatenate([f.c2[..., :4], f.c2[..., -4:]], axis=-1)))
-        for f in model.families
+        for direction in (0, 1)
     )
-    return model
+    top_energy = series.barrier + max(40.0, -np.log(tol) + 30)
+    top_running = float(np.sqrt(2 * (top_energy - series.barrier)))
+    return ZeroFrictionOrbits(
+        families=(
+            (trapped, tuple(_get_panels(trapped, series.well_frequency))),
+            (running, tuple(_get_panels(running, top_running))),
+        )
+    )

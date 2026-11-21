@@ -10,6 +10,8 @@ import numpy as np
 from classical_diffusion.system import unit_with_trajectory_scale
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from classical_diffusion.langevin._system import PeriodicSystem
     from classical_diffusion.system import UnitSystem
 
@@ -80,6 +82,11 @@ def _merge(
     return tuple((g, v) for g, v in out.items() if v != 0)
 
 
+def get_rows(array: IntArray) -> list[tuple[int, ...]]:
+    """Get the rows of an integer array, as tuples of ints."""
+    return [tuple(row) for row in array.tolist()]
+
+
 def get_box_vectors(n_max: int, n_dim: int) -> IntArray:
     """Get every integer vector with components in [-n_max, n_max], (n, n_dim)."""
     return np.array(
@@ -87,7 +94,9 @@ def get_box_vectors(n_max: int, n_dim: int) -> IntArray:
     ).reshape(-1, n_dim)
 
 
-def get_grid_function(model: Model, n_grid: int, f: Any) -> ComplexArray:
+def get_grid_function(
+    model: Model, n_grid: int, f: Callable[[FloatArray], FloatArray]
+) -> ComplexArray:
     """Get the Fourier coefficients c_G, G in [-n_grid / 2, n_grid / 2)^d, of f(V(u)) for u on a grid of the unit cell, by FFT."""
     axes = [np.arange(n_grid) / n_grid] * model.n_dim
     u = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1)
@@ -98,7 +107,11 @@ def get_grid_function(model: Model, n_grid: int, f: Any) -> ComplexArray:
 
 
 def get_fourier_coefficients(
-    model: Model, vectors: IntArray, f: Any, *, n_grid: int
+    model: Model,
+    vectors: IntArray,
+    f: Callable[[FloatArray], FloatArray],
+    *,
+    n_grid: int,
 ) -> ComplexArray:
     """Get the Fourier coefficients of f(V(x)) at the integer vectors (in the order given), from a grid of n_grid points along each axis."""
     coefficients = get_grid_function(model, n_grid, f)

@@ -1,13 +1,14 @@
+# cspell: ignore indptr kron tocsr
 """The Kramers operator in its real form, in scaled Hermite functions of the momentum and plane waves of the position, as a sparse matrix."""
 
-from typing import TYPE_CHECKING
-
 import functools
+from typing import TYPE_CHECKING
 
 import numpy as np
 import scipy.sparse
 
 from classical_diffusion.caldeira_leggett._model import get_saddle_energy
+from classical_diffusion.kramers._model import get_rows
 from classical_diffusion.kramers._operator import get_hermite_indices
 
 if TYPE_CHECKING:
@@ -98,11 +99,11 @@ def _on_indices(
     matrix: FloatArray, indices: IntArray, j: int
 ) -> scipy.sparse.csr_array:
     """Lift a matrix on the order of component j to the multi-indices, where every other component is unchanged."""
-    lookup = {tuple(int(i) for i in n): k for k, n in enumerate(indices)}
+    lookup = {tuple(int(i) for i in n): k for k, n in enumerate(get_rows(indices))}
     rows, cols, values = [], [], []
-    for k, n in enumerate(indices):
+    for k, n in enumerate(get_rows(indices)):
         for m_j in np.flatnonzero(matrix[:, n[j]]):
-            m = list(int(i) for i in n)
+            m = [int(i) for i in n]
             m[j] = int(m_j)
             target = lookup.get(tuple(m))
             if target is not None:
@@ -152,7 +153,7 @@ def _get_plane_wave_operators(
     model: Model, vectors: IntArray, delta_k: FloatArray
 ) -> tuple[list[scipy.sparse.csr_array], list[scipy.sparse.csr_array]]:
     """Get d_j - i K_j and d_j V on the plane waves, truncated to them."""
-    lookup = {tuple(int(i) for i in v): k for k, v in enumerate(vectors)}
+    lookup = {tuple(int(i) for i in v): k for k, v in enumerate(get_rows(vectors))}
     size = len(vectors)
     k = vectors @ model.reciprocal - delta_k
     derivatives, forces = [], []
@@ -161,7 +162,7 @@ def _get_plane_wave_operators(
         derivatives.append(scipy.sparse.diags_array(1j * k[:, j]).tocsr())
         rows, cols, values = [], [], []
         for shift, coefficient in shifts:
-            for source, v in enumerate(vectors):
+            for source, v in enumerate(get_rows(vectors)):
                 target = lookup.get(tuple(int(i) for i in v + shift))
                 if target is not None:
                     rows.append(target)
@@ -187,6 +188,11 @@ def build_real_operator(
     with the amplitude of each multiplied by i^{|n|}, it is real, and
     J-symmetric, L^T = J L J with J = (-1)^{|n|}. The unknowns are ordered
     with the plane waves fastest.
+
+    Raises
+    ------
+    AssertionError
+        If the real form has an imaginary part, which would be a bug.
     """
     width = get_width(max_order, get_momentum_reach(model))
     indices = get_hermite_indices(model.n_dim, max_order)
@@ -205,11 +211,9 @@ def build_real_operator(
     operator = scipy.sparse.csr_array((len(indices) * len(vectors),) * 2, dtype=complex)
     identity = scipy.sparse.identity(len(vectors), format="csr")
     for j in range(model.n_dim):
-        operator = operator - scipy.sparse.kron(real_form(p, j), derivatives[j])
-        operator = operator + scipy.sparse.kron(real_form(dp, j), forces[j])
-        operator = operator - model.friction * scipy.sparse.kron(
-            real_form(friction, j), identity
-        )
+        operator -= scipy.sparse.kron(real_form(p, j), derivatives[j])
+        operator += scipy.sparse.kron(real_form(dp, j), forces[j])
+        operator -= model.friction * scipy.sparse.kron(real_form(friction, j), identity)
     operator = scipy.sparse.csr_array(operator)
     operator.sum_duplicates()
     if operator.nnz and np.max(np.abs(operator.data.imag)) > 1e-12 * np.max(
@@ -221,7 +225,10 @@ def build_real_operator(
         (operator.data.real, operator.indices, operator.indptr), shape=operator.shape
     )
     real.eliminate_zeros()
-    parity = np.repeat(1.0 - 2.0 * (indices.sum(axis=1) % 2), len(vectors))
+    parity = np.repeat(
+        np.asarray(1.0 - 2.0 * (indices.sum(axis=1) % 2), dtype=np.float64),
+        len(vectors),
+    )
     return real, parity, indices, width
 
 
@@ -246,7 +253,7 @@ def get_start(
         term = np.ones(len(indices), dtype=complex)
         for i in range(n_dim):
             term *= (odd if i == j else even)[indices[:, i]]
-        coefficient += term * (1.0 if j is None else direction[j])
+        coefficient += term if j is None or direction is None else term * direction[j]
     coefficient *= phase
     if direction is not None:
         # The odd orders carry a phase of +-i: drop the common factor

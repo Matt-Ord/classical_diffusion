@@ -1,3 +1,4 @@
+# cspell: ignore eigh lapack stev vdot
 """Gauss quadrature of the spectral measure of a Hermitian operator in a state, by the Lanczos method."""
 
 from dataclasses import dataclass
@@ -22,7 +23,7 @@ class Quadrature:
     """|H y_j - lambda_j y_j| of each Ritz vector y_j, zero where the Krylov space is invariant."""
 
 
-def get_lanczos_quadrature(
+def get_lanczos_quadrature(  # ruff:ignore[too-many-locals]
     apply: Callable[[ComplexArray], ComplexArray],
     start: ComplexArray,
     *,

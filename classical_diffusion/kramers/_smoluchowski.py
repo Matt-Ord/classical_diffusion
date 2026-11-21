@@ -1,3 +1,4 @@
+# cspell: ignore eigh
 """The overdamped (Smoluchowski) limit, solved exactly from the eigenvectors of its symmetrised generator."""
 
 from dataclasses import dataclass
@@ -6,7 +7,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import scipy.linalg
 
-from classical_diffusion.kramers._model import get_fourier_coefficients
+from classical_diffusion.kramers._model import get_fourier_coefficients, get_rows
 
 if TYPE_CHECKING:
     from classical_diffusion.kramers._model import (
@@ -30,7 +31,7 @@ class Spectrum:
 
 
 def _get_index(vectors: IntArray) -> dict[tuple[int, ...], int]:
-    return {tuple(int(i) for i in v): j for j, v in enumerate(vectors)}
+    return {tuple(int(i) for i in v): j for j, v in enumerate(get_rows(vectors))}
 
 
 def get_extended_vectors(model: Model, vectors: IntArray) -> IntArray:
@@ -52,7 +53,7 @@ def get_gradient_operator(
     n_in = len(vectors)
     operator = np.zeros((model.n_dim, len(extended), n_in), dtype=np.complex128)
     k_in = vectors @ model.reciprocal - delta_k
-    rows = np.array([out_index[tuple(int(i) for i in v)] for v in vectors])
+    rows = np.array([out_index[tuple(int(i) for i in v)] for v in get_rows(vectors)])
     operator[:, rows, np.arange(n_in)] += 1j * k_in.T
     for g, v_g in model.potential:
         if not any(g):

@@ -1,3 +1,4 @@
+# cspell: ignore tocsr
 """The Kramers operator of a periodic system at K, in Hermite functions of the momentum and plane waves of the position, applied without being stored."""
 
 import itertools
@@ -6,6 +7,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import scipy.sparse
+
+from classical_diffusion.kramers._model import get_rows
 
 if TYPE_CHECKING:
     from classical_diffusion.kramers._model import (
@@ -29,14 +32,14 @@ def get_hermite_indices(n_dim: int, max_order: int) -> IntArray:
 
 def get_lowering(indices: IntArray) -> list[scipy.sparse.csr_array]:
     """Get the lowering operators b_j, b_j |n> = sqrt(n_j) |n - e_j>, on the multi-indices."""
-    lookup = {tuple(int(i) for i in n): k for k, n in enumerate(indices)}
+    lookup = {tuple(int(i) for i in n): k for k, n in enumerate(get_rows(indices))}
     out = list[scipy.sparse.csr_array]()
     for j in range(indices.shape[1]):
         rows, cols, values = [], [], []
-        for k, n in enumerate(indices):
+        for k, n in enumerate(get_rows(indices)):
             if n[j] == 0:
                 continue
-            lower = list(int(i) for i in n)
+            lower = [int(i) for i in n]
             lower[j] -= 1
             rows.append(lookup[tuple(lower)])
             cols.append(k)
@@ -50,7 +53,7 @@ def get_shift_operators(
     model: Model, vectors: IntArray, delta_k: FloatArray
 ) -> tuple[list[scipy.sparse.csr_array], list[scipy.sparse.csr_array]]:
     """Get A_-j = (d_j - i K_j) - d_j V / 2 and A_+j = (d_j - i K_j) + d_j V / 2 on the plane waves, truncated to them."""
-    lookup = {tuple(int(i) for i in v): k for k, v in enumerate(vectors)}
+    lookup = {tuple(int(i) for i in v): k for k, v in enumerate(get_rows(vectors))}
     size = len(vectors)
     k_in = vectors @ model.reciprocal - delta_k
     minus, plus = [], []
@@ -63,7 +66,7 @@ def get_shift_operators(
             if not any(g):
                 continue
             q = (np.array(g) @ model.reciprocal)[j]
-            for k, v in enumerate(vectors):
+            for k, v in enumerate(get_rows(vectors)):
                 target = lookup.get(tuple(int(i) for i in v + np.array(g)))
                 if target is not None:
                     force_rows.append(target)
