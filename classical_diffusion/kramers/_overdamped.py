@@ -1,4 +1,4 @@
-# cspell: ignore btol lsqr tocsr vdot
+# cspell: ignore btol lsqr tocsr unconverged vdot
 """The overdamped limit of the Langevin equation, the Smoluchowski equation, solved by Lanczos on its symmetrised generator."""
 
 import dataclasses
@@ -113,25 +113,73 @@ def _get_modes(  # ruff:ignore[too-many-arguments]
     return dataclasses.replace(modal, residues=modal.residues / norm)
 
 
+_MAX_ROUNDS = 12
+_GROW = 1.3
+
+
+def _converge_radius[R](
+    model: Model,
+    config: KramersConfig,
+    compute: Callable[[IntArray], R],
+    change: Callable[[R, R], float],
+) -> R:
+    """Grow the radius of the plane waves by 1.3, from those which hold e^{-V / 2} to config.amplitude_tol, until the result changes by less than config.tol / 3, and get the result in the larger.
+
+    The check is on the result itself, so whatever the first radius, the
+    result is not returned unconverged.
+
+    Raises
+    ------
+    RuntimeError
+        If the result does not converge within _MAX_ROUNDS.
+    """
+    vectors = get_plane_waves(model, config.amplitude_tol)
+    radius = max(
+        float(np.max(np.linalg.norm(vectors @ model.reciprocal, axis=-1))), 1.0
+    )
+    previous = compute(get_plane_waves_within(model, radius))
+    for _ in range(_MAX_ROUNDS):
+        radius *= _GROW
+        current = compute(get_plane_waves_within(model, radius))
+        if change(previous, current) < config.tol / 3:
+            return current
+        previous = current
+    msg = (
+        "The overdamped limit did not converge in the plane waves: e^{-V / 2}"
+        " varies over too many orders of magnitude for them to hold it at the saddle"
+    )
+    raise RuntimeError(msg)
+
+
 def _get_isf_modes(
     system: PeriodicSystem,
     delta_k: tuple[float, ...],
     times: FloatArray,
     config: KramersConfig,
 ) -> ModalSum:
-    """Get the ISF as a modal sum, converged until it changes by less than config.tol / 10 at the times."""
+    """Get the ISF as a modal sum, converged until it changes by less than config.tol / 10 at the times, in plane waves which change it by less than config.tol / 3 (`_converge_radius`)."""
     model = build_model(system)
-    vectors = get_plane_waves(model, config.amplitude_tol)
-    generator = _Generator(model, vectors, scaled_delta_k(system, model, delta_k))
-    return _get_modes(
-        generator.apply,
-        generator.amplitude,
-        generator.norm,
-        times,
-        error=lambda a, b: (
-            float(np.max(np.abs(a.values(times) - b.values(times)))) / generator.norm
-        ),
-        tol=0.1 * config.tol,
+    scaled = scaled_delta_k(system, model, delta_k)
+
+    def compute(vectors: IntArray) -> ModalSum:
+        generator = _Generator(model, vectors, scaled)
+        return _get_modes(
+            generator.apply,
+            generator.amplitude,
+            generator.norm,
+            times,
+            error=lambda a, b: (
+                float(np.max(np.abs(a.values(times) - b.values(times))))
+                / generator.norm
+            ),
+            tol=0.1 * config.tol,
+        )
+
+    return _converge_radius(
+        model,
+        config,
+        compute,
+        lambda a, b: float(np.max(np.abs(a.values(times) - b.values(times)))),
     )
 
 
@@ -268,7 +316,6 @@ def get_diffusion_constant_overdamped(
     )
 
 
-_MAX_ROUNDS = 12
 _LSQR_TOL = 1e-10
 """The relative residual of the normal equations at which LSQR stops (`_get_diffusion_ratio`): the error of the least squares residual is quadratic in that of the solution."""
 
@@ -285,19 +332,16 @@ def _get_diffusion_ratio(
     where D is many orders below D_0 and the difference of the two terms
     would be lost to round off: for lithium across the rows of Cu(110),
     D = 5.9e-15 D_0. The least squares problem is solved by LSQR, and the
-    residual e w - A u formed explicitly. The radius of the plane waves
-    grows by 1.3 until D changes by less than config.tol of itself.
+    residual e w - A u formed explicitly, in plane waves which change D by
+    less than config.tol / 3 of itself (`_converge_radius`).
 
     Raises
     ------
     RuntimeError
         If D does not converge in the plane waves.
-    """
-    vectors = get_plane_waves(model, config.amplitude_tol)
-    radius = float(np.max(np.linalg.norm(vectors @ model.reciprocal, axis=-1)))
-    previous = None
-    for _ in range(_MAX_ROUNDS):
-        vectors = get_plane_waves_within(model, radius)
+    """  # ruff:ignore[docstring-extraneous-exception]
+
+    def compute(vectors: IntArray) -> float:
         gradient = get_gradient_operator(model, vectors, np.zeros(model.n_dim))
         w = get_amplitude(model, vectors, get_grid_size(vectors))
         # e w, on the rows of the gradient: the inputs come first in its
@@ -318,16 +362,9 @@ def _get_diffusion_ratio(
             iter_lim=20 * len(vectors),
         )[0]
         residual = float(np.sum(np.abs(field - stacked @ solution) ** 2))
-        ratio = residual / float(np.vdot(w, w).real)
-        if previous is not None and abs(ratio - previous) <= config.tol * abs(ratio):
-            return ratio
-        previous = ratio
-        radius *= 1.3
-    msg = (
-        "D did not converge in the plane waves: e^{-V / 2} varies over too many"
-        " orders of magnitude for the plane waves to hold it at the saddle"
-    )
-    raise RuntimeError(msg)
+        return residual / float(np.vdot(w, w).real)
+
+    return _converge_radius(model, config, compute, lambda a, b: abs(a - b) / abs(b))
 
 
 def _mean_square(
@@ -391,34 +428,37 @@ def solve_rms_overdamped(
     length = model.units.length_into(1.0, system.units)
     d0 = 1 / model.friction
     diffusion = d0 * _get_diffusion_ratio(model, unit, config)
-    vectors = get_plane_waves(model, config.amplitude_tol)
-    generator = _Generator(model, vectors, np.zeros(model.n_dim))
-    force = generator.force_amplitude(unit)
-    w = generator.amplitude / np.sqrt(generator.norm)
-    force -= w * np.vdot(w, force)
-    if len(natural) == 1 or np.linalg.norm(force) == 0:
-        # Only t = 0, or a flat potential, with no force
+    if len(natural) == 1:
+        # Only t = 0
         mean_square = 2 * diffusion * natural
     else:
 
-        def change(a: ModalSum, b: ModalSum) -> float:
-            # Relative to the mean square displacement itself
-            reference = _mean_square(b, d0, diffusion, natural)[1:]
-            difference = _mean_square(a, d0, diffusion, natural)[1:] - reference
-            return float(np.max(np.abs(difference) / np.abs(reference)))
+        def relative(a: FloatArray, b: FloatArray) -> float:
+            return float(np.max(np.abs(a - b)[1:] / np.abs(b[1:])))
 
-        modes = _get_modes(
-            generator.deflated(),
-            force,
-            generator.norm,
-            natural,
-            error=lambda a, b: change(
-                dataclasses.replace(a, residues=a.residues / generator.norm),
-                dataclasses.replace(b, residues=b.residues / generator.norm),
-            ),
-            tol=0.1 * config.tol,
-        )
-        mean_square = _mean_square(modes, d0, diffusion, natural)
+        def compute(vectors: IntArray) -> FloatArray:
+            generator = _Generator(model, vectors, np.zeros(model.n_dim))
+            force = generator.force_amplitude(unit)
+            w = generator.amplitude / np.sqrt(generator.norm)
+            force -= w * np.vdot(w, force)
+
+            def scaled(m: ModalSum) -> ModalSum:
+                return dataclasses.replace(m, residues=m.residues / generator.norm)
+
+            modes = _get_modes(
+                generator.deflated(),
+                force,
+                generator.norm,
+                natural,
+                error=lambda a, b: relative(
+                    _mean_square(scaled(a), d0, diffusion, natural),
+                    _mean_square(scaled(b), d0, diffusion, natural),
+                ),
+                tol=0.1 * config.tol,
+            )
+            return _mean_square(modes, d0, diffusion, natural)
+
+        mean_square = _converge_radius(model, config, compute, relative)
     return RmsResult(
         times=folded.times,
         mean_square=folded.even(mean_square) * length**2,
