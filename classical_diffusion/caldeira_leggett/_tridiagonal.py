@@ -1,6 +1,6 @@
 """The eigenvalues of a nonsymmetric tridiagonal matrix and the weights of its first row and column, in O(m^2), by the Ehrlich-Aberth iteration."""
 
-# cspell: ignore Ehrlich Aberth Bini Gemignani Tisseur csgraph finfo stebz fori Appl unconverged Dhillon rebiorthogonalization oint lstsq jitted LAPACK's
+# cspell: ignore Ehrlich Aberth Bini Gemignani Tisseur csgraph finfo stebz fori Appl unconverged Dhillon rebiorthogonalization oint lstsq jitted LAPACK's argnums
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -21,7 +21,7 @@ _NARROWEST = 128
 _LEAF = 48
 """The most rows of the blocks at the bottom of the divide and conquer, whose roots start from their diagonals."""
 _CONTOUR = 16
-"""The points of the contour integral for the moments of a cluster of roots (`_merge_clusters`)."""
+"""The points of the contour integral for the moments of a cluster of roots (`_merge`)."""
 _STALLED = 1e-9
 """The correction of a root, relative to the scale of T, below which a correction that has not halved is round off, and the root has converged."""
 _CHUNK = 128
@@ -43,82 +43,67 @@ def _reciprocal(z: jax.Array) -> jax.Array:
     return jnp.conj(z) / (z.real**2 + z.imag**2)
 
 
-def _newton(
-    roots: jax.Array, alpha: jax.Array, coupling: jax.Array, pivot: jax.Array
+def _newton(  # ruff:ignore[too-many-arguments, too-many-positional-arguments]
+    roots: jax.Array,
+    first: jax.Array,
+    alpha: jax.Array,
+    above: jax.Array,
+    block: jax.Array,
+    pivot: jax.Array,
 ) -> jax.Array:
-    """Get p(lambda) / p'(lambda) for each root of each block, p the characteristic polynomial of the block.
+    """Get p(lambda) / p'(lambda) for each root, p the characteristic polynomial of its block of rows from first.
 
     The pivots g_k = lambda - alpha_k - c_k / g_{k-1} of the LU factors of
     lambda - T are ratios p_k / p_{k-1} of the leading minors, so p' / p is
     the sum of g_k' / g_k, with g_k' = 1 + c_k g_{k-1}' / g_{k-1}^2: O(m) for
     each root. A pivot below eps times the scale of T is set to it (as the
     bisection of LAPACK's stebz does), a backward error of round off.
-    coupling[:, k] is beta delta between rows k - 1 and k, 0 for k = 0.
+    above[k] is beta delta between rows k - 1 and k.
     """
 
     def step(
-        carry: tuple[jax.Array, jax.Array, jax.Array], row: tuple[jax.Array, jax.Array]
-    ) -> tuple[tuple[jax.Array, jax.Array, jax.Array], None]:
+        k: jax.Array, carry: tuple[jax.Array, jax.Array, jax.Array]
+    ) -> tuple[jax.Array, jax.Array, jax.Array]:
         inverse, derivative, total = carry
-        diagonal, product = row
-        ratio = product[:, None] * inverse
+        ratio = jnp.where(k > 0, above[first + k], 0) * inverse
         derivative = 1 + ratio * derivative * inverse
-        pivot_k = roots - diagonal[:, None] - ratio
+        pivot_k = roots - alpha[first + k] - ratio
         inverse = _reciprocal(jnp.where(jnp.abs(pivot_k) < pivot, pivot, pivot_k))
-        return (inverse, derivative, total + derivative * inverse), None
+        return inverse, derivative, total + derivative * inverse
 
     zero = jnp.zeros_like(roots)
-    (_, _, total), _ = jax.lax.scan(step, (zero, zero, zero), (alpha.T, coupling.T))
-    return _reciprocal(total)
+    return _reciprocal(jax.lax.fori_loop(0, block, step, (zero, zero, zero))[2])
 
 
-def _repulsion(roots: jax.Array, others: jax.Array) -> jax.Array:
-    """Get sum over the others i of the same block of 1 / (lambda_j - lambda_i), but i = j, _CHUNK at a time: roots are the first of others."""
-    size = others.shape[1]
-    chunk = _CHUNK if size % _CHUNK == 0 else size
-    index = jnp.arange(roots.shape[1])
-
-    def add(i: int, total: jax.Array) -> jax.Array:
-        part = jax.lax.dynamic_slice_in_dim(others, i * chunk, chunk, axis=1)
-        same = index[:, None] == (i * chunk + jnp.arange(chunk))[None, :]
-        difference = jnp.where(same, 1, roots[:, :, None] - part[:, None, :])
-        return total + jnp.where(same, 0, _reciprocal(difference)).sum(axis=-1)
-
-    return jax.lax.fori_loop(0, size // chunk, add, jnp.zeros_like(roots))
-
-
-def _sweep(
-    state: tuple[jax.Array, ...],
-    alpha: jax.Array,
-    coupling: jax.Array,
-    scale: jax.Array,
-    width: int,
-) -> tuple[jax.Array, ...]:
-    """Take an Aberth sweep of the first width roots of each block."""
-    roots, active, last, sweeps = state
-    part, moving = roots[:, :width], active[:, :width]
-    newton = _newton(part, alpha, coupling, _EPS * scale)
-    correction = newton * _reciprocal(1 - newton * _repulsion(part, roots))
-    finite = jnp.isfinite(correction)
-    correction = jnp.where(finite & moving, correction, 0)
-    part -= correction
-    size = jnp.abs(correction)
-    converged = finite & (
-        (size <= 2 * _EPS * jnp.abs(part))
-        | ((size >= 0.5 * last[:, :width]) & (size < _STALLED * scale))
-    )
-    return (
-        roots.at[:, :width].set(part),
-        active.at[:, :width].set(moving & ~converged),
-        last.at[:, :width].set(jnp.where(moving, size, last[:, :width])),
-        sweeps + 1,
-    )
-
-
-def _aberth(
-    roots: jax.Array, alpha: jax.Array, coupling: jax.Array, scale: jax.Array
+def _repulsion(
+    roots: jax.Array,
+    index: jax.Array,
+    first: jax.Array,
+    every: jax.Array,
+    block: jax.Array,
 ) -> jax.Array:
-    """Refine the roots of each block by Aberth sweeps until each has converged, or _SWEEPS.
+    """Get sum over the other roots i of the block of 1 / (lambda_j - lambda_i), _CHUNK at a time; index is that of each root in every."""
+    chunk = min(_CHUNK, every.shape[0])
+
+    def add(i: jax.Array, total: jax.Array) -> jax.Array:
+        offset = i * chunk + jnp.arange(chunk)
+        others = first[:, None] + offset[None, :]
+        skip = (offset[None, :] >= block) | (others == index[:, None])
+        difference = roots[:, None] - every[jnp.minimum(others, every.shape[0] - 1)]
+        return total + jnp.where(
+            skip, 0, _reciprocal(jnp.where(skip, 1, difference))
+        ).sum(axis=1)
+
+    return jax.lax.fori_loop(
+        0, (block + chunk - 1) // chunk, add, jnp.zeros_like(roots)
+    )
+
+
+@partial(jax.jit, donate_argnums=0)
+def _aberth(
+    roots: jax.Array, alpha: jax.Array, above: jax.Array, block: jax.Array
+) -> jax.Array:
+    """Refine the roots of each block of rows by Aberth sweeps until each has converged, or _SWEEPS.
 
     Each sweep is the Newton correction N of each root, deflated by the
     others: lambda_j -= N_j / (1 - N_j sum_i 1 / (lambda_j - lambda_i)),
@@ -128,34 +113,47 @@ def _aberth(
     once it has stopped halving below _STALLED of the scale of T (round off).
     The roots converge at different rates (sodium on Cu(111) in 1D at
     m = 575: 551, 458, 366, 325, 272, 190, 117, 69, 32, 16, 5 and 0 left
-    after each sweep), so the sweeps take only the first `width` roots of
-    each block, the unconverged sorted first, the width a quarter at a time
-    down to _NARROWEST.
+    after each sweep), so a sweep takes only the `width` unconverged roots
+    first, the width a quarter at a time down to _NARROWEST. The block size
+    is not static, so that every level of `_roots` is one compilation.
     """
-    state = (
-        roots,
-        jnp.ones(roots.shape, bool),
-        jnp.full(roots.shape, jnp.inf),
-        jnp.asarray(0),
-    )
-    width = roots.shape[1]
+    size = roots.shape[0]
+    scale = jnp.abs(alpha).max() + jnp.sqrt(jnp.abs(above).max())
+    blocks = jnp.arange(size) // block * block
+
+    def sweep(state: tuple[jax.Array, ...], width: int) -> tuple[jax.Array, ...]:
+        roots, active, last, sweeps = state
+        index = jnp.argsort(~active, stable=True)[:width]
+        part, moving, first = roots[index], active[index], blocks[index]
+        newton = _newton(part, first, alpha, above, block, _EPS * scale)
+        correction = newton * _reciprocal(
+            1 - newton * _repulsion(part, index, first, roots, block)
+        )
+        finite = jnp.isfinite(correction)
+        correction = jnp.where(finite & moving, correction, 0)
+        size = jnp.abs(correction)
+        converged = finite & (
+            (size <= 2 * _EPS * jnp.abs(part - correction))
+            | ((size >= 0.5 * last[index]) & (size < _STALLED * scale))
+        )
+        return (
+            roots.at[index].add(-correction),
+            active.at[index].set(moving & ~converged),
+            last.at[index].set(jnp.where(moving, size, last[index])),
+            sweeps + 1,
+        )
+
+    state = (roots, jnp.ones(size, bool), jnp.full(size, jnp.inf), jnp.asarray(0))
+    width = size
     while True:
-        final = width <= _NARROWEST or width % 4 != 0
-        limit = 0 if final else width // 4
+        limit = width // 4 if width > _NARROWEST and width % 4 == 0 else 0
         state = jax.lax.while_loop(
-            lambda state, limit=limit: (
-                (state[1].sum(axis=1).max() > limit) & (state[3] < _SWEEPS)
-            ),
-            partial(_sweep, alpha=alpha, coupling=coupling, scale=scale, width=width),
+            lambda state, limit=limit: (state[1].sum() > limit) & (state[3] < _SWEEPS),
+            partial(sweep, width=width),
             state,
         )
-        if final:
+        if limit == 0:
             return state[0]
-        order = jnp.argsort(~state[1], axis=1, stable=True)
-        state = (
-            *(jnp.take_along_axis(x, order, axis=1) for x in state[:3]),
-            state[3],
-        )
         width //= 4
 
 
@@ -184,13 +182,7 @@ def _roots(
     else:
         roots = guesses + jitter * 1e-4
     while True:
-        blocks = size // block
-        roots = _aberth(
-            roots.reshape(blocks, block),
-            alpha.reshape(blocks, block),
-            above.reshape(blocks, block).at[:, 0].set(0),
-            scale,
-        ).ravel()
+        roots = _aberth(roots, alpha, above, jnp.asarray(block))
         if block == size:
             return roots
         block *= 2
@@ -318,7 +310,8 @@ def _clusters(roots: jax.Array, width: jax.Array) -> jax.Array:
     return jax.lax.while_loop(changed, spread, (index, jnp.ones((), bool)))[0]
 
 
-def _merge_clusters(  # ruff:ignore[too-many-locals]
+@jax.jit
+def _merge(  # ruff:ignore[too-many-locals]
     roots: jax.Array,
     weights: jax.Array,
     alpha: jax.Array,
@@ -392,13 +385,13 @@ def _merge_clusters(  # ruff:ignore[too-many-locals]
     return jnp.where(clustered, merged, weights)
 
 
-@jax.jit
 def _poles(
     alpha: jax.Array, coupling: jax.Array, width: jax.Array, guesses: jax.Array | None
 ) -> tuple[jax.Array, jax.Array]:
+    """Get the roots and weights by jitted parts, each level of the divide and conquer compiled once for its shape (the last also serves the warm start), with no transfer to the host between them."""
     roots = _roots(alpha, coupling, guesses)
     weights = _weights(roots, alpha, coupling)
-    return roots, _merge_clusters(roots, weights, alpha, coupling, width)
+    return roots, _merge(roots, weights, alpha, coupling, width)
 
 
 def get_poles(
@@ -418,8 +411,8 @@ def get_poles(
     previous = (the roots returned for T_{m'}, m'), m' < m, and the diagonal
     of the rows since; the weights from the twisted factorization at each
     root (`_chunk_weights`), except for clusters of roots closer than width,
-    whose weights come from their moments (`_merge_clusters`). It is one
-    jitted function, with the size padded (`_size`) by uncoupled diagonal
+    whose weights come from their moments (`_merge`). All of it is jitted
+    and stays on the device (`_poles`), with the size padded (`_size`) by uncoupled diagonal
     entries left of the spectrum (|lambda| <= max |alpha| + 2 max |c|^1/2,
     the bound of the complex symmetric form), whose weights are zero.
     """
