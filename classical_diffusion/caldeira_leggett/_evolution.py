@@ -111,6 +111,17 @@ Cu(111) in 1D, 2 seeds, falls from 6.8e-7 (1) and 2.7e-7 (0.3) to 8.9e-8
 0.1 config.stop, for 4% more applications of L than 0.3.
 """
 
+_FLOOR = 3.0
+"""The norm of a remainder that no longer decays, in units of its stop, below which it is the error of the steps rather than a mode, and the stepping ends.
+
+The steps each leave an error of up to step_atol |X_0|, and over tens of
+steps their sum reaches the stop of the remainder (0.1 stop |X_0|). For
+lithium on Cu(111) in 2D at 0.05 |G| in 176 bands, the remainder fell to
+the stop and then grew (1.9e-8 to 2.3e-8 over 10 time units), the search
+for a mode in it failed, and the stepper took it to the end of the span:
+13,340 applications of L rather than 300.
+"""
+
 
 @jax.jit
 def _step(  # ruff:ignore[too-many-arguments]
@@ -429,6 +440,10 @@ def get_reduced_evolution(  # ruff:ignore[too-many-arguments, too-many-locals, t
         last = norm
         norm = float(jnp.linalg.norm(_outside(schur.vectors, remainder)))
         rate = math.log(last / norm) / (now - previous) if norm < last else 0.0
+        if rate <= 0 and norm < _FLOOR * stop:
+            # What is left no longer decays, at the floor the errors of the
+            # steps leave: it is noise, not a mode
+            break
         if (
             searching
             and len(schur.vectors) < _MAX_MODES
