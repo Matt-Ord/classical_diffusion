@@ -64,7 +64,8 @@ class EvolutionConfig:
     The evolution is by two-sided Lanczos, which stops once the measurement
     at the times changes by less than this over two blocks of steps, and
     its Laplace transform at 1 / span agrees with one found directly
-    (`get_reduced_evolution`).
+    (`get_reduced_evolution`). Below its round off floor (1e-16 to 2e-9 on
+    H, Li and Na on Cu(111)) it warns and returns what it reached.
     """
     mode_rtol: float = 1e-6
     """The relative residual |L r - lambda r| / |lambda| of each slow mode."""

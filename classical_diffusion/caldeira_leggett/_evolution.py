@@ -1,6 +1,7 @@
 """The time evolution of a measurement of exp(L t) X_0, by two-sided Lanczos (Pade via Lanczos)."""
 
 # cspell: ignore vdot fori Strakos Tichy Liouvillians Feldmann Freund
+import warnings
 from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING
@@ -51,6 +52,17 @@ _TRANSFER_TOL = 0.1
 """The accuracy of the transfer function at 1 / span, in units of the tolerance it is compared to."""
 _FREQUENCIES = 16
 """The frequencies, from 1 to 1000 times the real part on each side of zero, at which the transform of F_m is compared between blocks before it is evaluated in time."""
+_ROUNDOFF = 1e-8
+"""The accuracy, relative to |F(0)| (or to the transform), above which convergence that has stalled is not round off.
+
+The two-sided recurrence has a floor in finite precision: over the 15
+benchmark cases, 800 steps changed F_m by at least 3e-16 (MSD) to 1.7e-9
+(H on Cu(111) in 2D at 0.05 |G|) per block. Asked for less than its
+floor, the recurrence stops once its error has not halved over _STALL
+evaluations below this, with a warning of the accuracy reached.
+"""
+_STALL = 4
+"""The blocks over which an error that has not halved has stalled at its floor."""
 _SLOWEST = 8
 """The slowest poles reported with an evolution."""
 _AGREEMENTS = 2
@@ -63,6 +75,35 @@ coefficients) with an error of up to 1.4 stop (sodium in 1D at 0.3 |G|,
 """
 _SPLIT_SEED = 2026
 """The seed of the vector that splits a measurement on a breakdown."""
+
+
+@dataclass(kw_only=True)
+class _Progress:
+    """The errors of successive blocks of a recurrence, to tell a floor set by round off from slow convergence."""
+
+    tolerance: float
+    """The tolerance asked for, absolute."""
+    floor: float
+    """The error, absolute, below which a stall is round off (_ROUNDOFF)."""
+    errors: list[float] = field(default_factory=list)
+
+    @property
+    def reached(self) -> float:
+        """The tolerance reached: the one asked for, or once stalled at its floor, twice the floor."""
+        n = len(self.errors)
+        if n <= _STALL:
+            return self.tolerance
+        recent, before = min(self.errors[-_STALL:]), min(self.errors[:-_STALL])
+        if recent <= self.floor and recent >= 0.5 * before:
+            return max(self.tolerance, 2 * recent)
+        return self.tolerance
+
+    def warn(self, what: str) -> None:
+        if self.reached > self.tolerance:
+            warnings.warn(
+                f"{what} stalled at {self.reached:.1e} (absolute) from round off, above the {self.tolerance:.1e} asked for",
+                stacklevel=4,
+            )
 
 
 class _BreakdownError(Exception):
@@ -239,12 +280,6 @@ class _Lanczos:
             value = 1 / (s - self.alpha[j] - coupling * value)
         return self.scale * value
 
-    def inverse(self) -> complex:
-        """Get scale e_1^T T_m^-1 e_1."""
-        first = np.zeros(self.steps, complex)
-        first[0] = 1
-        return self.scale * complex(np.linalg.solve(self.tridiagonal(), first)[0])
-
 
 @dataclass(frozen=True, kw_only=True)
 class _Poles:
@@ -309,7 +344,7 @@ def get_transfer(
     It is the same two-sided Lanczos recurrence, on A = (L - s) M,
     preconditioned on the right by the exact inverse M of the shifted no-jump
     part: <g, (s - L)^-1 X> = -<M^dagger g, A^-1 X>, about
-    -scale e_1^T T_m^-1 e_1. This is the estimate of BiCG for a bilinear
+    -scale e_1^T T_m^-1 e_1, a continued fraction. This is the estimate of BiCG for a bilinear
     form, whose error is quadratic in the residuals (Strakos and Tichy, SIAM
     J. Sci. Comput. 33, 565 (2011)): over H, Li and Na on Cu(111) in 1D and
     H in 2D at s = 0 (the response of D), it reaches 1e-12 relative in
@@ -331,15 +366,22 @@ def get_transfer(
         preconditioned=True,
     )
     last, agreed = None, 0
+    progress = _Progress(tolerance=tolerance, floor=0.0)
     while lanczos.steps < _MAX_STEPS:
         lanczos.extend(_TRANSFER_BLOCK)
-        value = -lanczos.inverse()
+        value = complex(lanczos.transfer(np.zeros(1, complex))[0])
         if lanczos.invariant:
             return value, lanczos.applications
+        progress.floor = _ROUNDOFF * abs(value)
+        if last is not None:
+            progress.errors.append(abs(value - last))
         agreed = (
-            agreed + 1 if last is not None and abs(value - last) <= tolerance else 0
+            agreed + 1
+            if last is not None and abs(value - last) <= progress.reached
+            else 0
         )
         if agreed >= _AGREEMENTS:
+            progress.warn("The transfer function")
             return value, lanczos.applications
         last = value
     msg = f"The transfer function did not converge in {_MAX_STEPS} Lanczos steps"
@@ -384,7 +426,7 @@ def _transforms(lanczos: _Lanczos, s: float) -> ComplexArray:
     return lanczos.transfer(points) * np.repeat(lines, len(frequencies))
 
 
-def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments]
+def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, too-many-locals]
     eigen: EigenLiouvillian,
     start: jax.Array,
     measurement: jax.Array,
@@ -407,6 +449,7 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments]
     )
     lanczos = _Lanczos(eigen=eigen, start=start, measurement=measurement)
     last, agreed, transforms = None, 0, np.zeros(0, complex)
+    progress = _Progress(tolerance=tolerance, floor=_ROUNDOFF * tolerance / stop)
     while lanczos.steps < _MAX_STEPS:
         try:
             lanczos.extend(_BLOCK)
@@ -416,28 +459,45 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments]
             # The steps before the breakdown are all there are
             lanczos.invariant = True
         current = _transforms(lanczos, s)
-        settled = len(transforms) == len(current) and bool(
-            np.abs(current - transforms).max() <= tolerance
+        compared = len(transforms) == len(current)
+        screen = (
+            max(
+                float(np.abs(current - transforms).max()),
+                abs(current[0] - s * reference),
+            )
+            if compared
+            else np.inf
         )
         transforms = current
-        if not lanczos.invariant and (
-            not settled or abs(current[0] / s - reference) > tolerance / s
-        ):
+        if not lanczos.invariant and screen > progress.reached:
             # The transient is still changing, or a slow part of the
             # measurement is not found yet
+            if compared:
+                progress.errors.append(screen)
             last, agreed = None, 0
             continue
         # A pole that grows by less than 1 + stop over the span is kept
         poles = _Poles.of(lanczos, stop * s)
         values = poles.values(times)
-        agrees = (
-            abs(poles.transfer(s) - reference) <= tolerance / s
-            and poles.dropped <= tolerance
+        # T_m is exact once the space is invariant, so only then need F_m
+        # not be compared with the last block
+        changed = (
+            0.0
+            if lanczos.invariant
+            else np.inf
+            if last is None
+            else float(np.abs(values - last).max(initial=0.0))
         )
-        changed = np.inf if last is None else np.abs(values - last).max(initial=0.0)
-        agreed = agreed + 1 if agrees and changed <= tolerance else 0
+        error = max(
+            changed,
+            abs(poles.transfer(s) - reference) * s,
+            poles.dropped,
+        )
+        progress.errors.append(max(error, 0.0 if lanczos.invariant else screen))
+        agreed = agreed + 1 if error <= progress.reached else 0
         last = values
-        if agreed >= _AGREEMENTS or (lanczos.invariant and agrees):
+        if agreed >= (1 if lanczos.invariant else _AGREEMENTS):
+            progress.warn("The evolution")
             return Evolution(
                 values=values,
                 rates=poles.slowest(tolerance),
@@ -487,7 +547,13 @@ def get_reduced_evolution(
       steps with an error of 1.1e-3 when asked for 1e-4.
 
     Poles with Re lambda > 0 are spurious (L has no growing mode): they are
-    dropped, and their weight must be below the tolerance.
+    dropped, and their weight must be below the tolerance. A pole that grows
+    by less than a factor 1 + stop over the span, such as the steady state at
+    dK = 0 (whose rate comes out at +-1e-16), is kept.
+
+    The recurrence has an accuracy floor in finite precision, from 1e-16 to
+    2e-9 of |F(0)| on the benchmark: asked for less, it stops once its error
+    has stalled below _ROUNDOFF, with a warning of what it reached.
 
     A serious breakdown of the recurrence (<w, v> = 0, as when F(0) = 0)
     belongs to the pair (X_0, g), and is cured by splitting the
