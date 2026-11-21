@@ -41,8 +41,16 @@ m = 800 (every benchmark case) the evaluations stay a block apart.
 """
 _TRANSFER_BLOCK = 10
 """The steps of each block of the solve for the transfer function, which converges in tens of steps."""
-_MAX_STEPS = 4000
-"""The most Lanczos steps. Underdamped hydrogen (gamma = 0.01 / ps, 150 K) over 2000 ps needs 1,000."""
+_MAX_STEPS = 5000
+"""The most Lanczos steps, where T_m takes 400 MB and its eigen-decomposition about 1.6 GB and minutes.
+
+Underdamped hydrogen (gamma = 0.01 / ps, 150 K) over 2000 ps needs 1,000 to
+2,300 steps, hydrogen at 1000 times its mass on Cu(111) in 1D 3,800, and
+lithium at 300 K with gamma = 0.05 / ps at 0.05 |G| about 4,500, although
+its sector has only 1,800 states: with full rebiorthogonalization the
+recurrence needs all 1,800 steps there, as many slow modes are seen, and
+without it copies of converged poles fill the rest.
+"""
 _BREAKDOWN = 100 * np.finfo(float).eps
 """The cosine |<w, v>| / (|w| |v|) of the next pair of Lanczos vectors below which <w, v> is round off, and the recurrence has broken down.
 
