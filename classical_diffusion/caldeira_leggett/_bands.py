@@ -52,50 +52,94 @@ def _get_wavevectors(model: Model) -> FloatArray:
     ] + model.reciprocal_vectors @ model.reciprocal
 
 
-def get_bands(model: Model) -> Bands:
-    """Diagonalize the Hamiltonian at each crystal momentum of the cell.
+def _get_hamiltonian(model: Model, i: int) -> ComplexArray:
+    """Get the plane wave Hamiltonian at the crystal momentum of index i."""
+    return get_hamiltonian(
+        (model.kappa @ model.cell_reciprocal)[i : i + 1],
+        model.reciprocal_vectors,
+        model.reciprocal,
+        model.potential,
+    )[0]
 
-    Every band whose lowest energy, over the crystal momenta, is within
-    model.max_energy of the higher of the ground state and the saddle energy
-    is kept. Diffusion is carried by the states near the saddle, which a
-    particle crosses to hop between sites, so the cutoff is measured from it:
-    for hydrogen on Cu(111) in 1D at 10 times its mass, bands to 12 k_B T
-    above the ground state, only 2 k_B T above the saddle, give D 30% low.
-    The lowest energy of band b is below a cutoff exactly when some crystal
+
+def get_energies(model: Model) -> FloatArray:
+    """Get every energy of the plane wave Hamiltonian at each crystal momentum, (n_kappa, n_plane_waves)."""
+    return np.array(
+        [
+            scipy.linalg.eigvalsh(_get_hamiltonian(model, i))
+            for i in range(model.n_kappa)
+        ]
+    )
+
+
+def get_band_count(model: Model, energies: FloatArray, cutoff: float) -> int:
+    """Get the number of bands whose lowest energy, over the crystal momenta, is within the cutoff of the higher of the ground state and the saddle energy.
+
+    Diffusion is carried by the states near the saddle, which a particle
+    crosses to hop between sites, so the cutoff is measured from it. The
+    lowest energy of band b is below a cutoff exactly when some crystal
     momentum has more than b energies below it, so the number of bands is the
-    most energies below the cutoff at any crystal momentum. extra_bands**n_dim
-    more bands are kept above them (`CaldeiraLeggettConfig.extra_bands`).
-
-    The plane wave Hamiltonian is diagonalized one crystal momentum at a
-    time, first for its energies, then for the vectors of the bands kept only,
-    which is cheaper than all of its vectors and holds one Hamiltonian at once.
+    most energies below the cutoff at any crystal momentum.
     """
-    wavevectors = model.kappa @ model.cell_reciprocal
+    top = max(energies.min(), model.saddle_energy) + cutoff
+    return max(int(np.count_nonzero(energies < top, axis=-1).max()), 1)
 
-    def hamiltonian(i: int) -> ComplexArray:
-        return get_hamiltonian(
-            wavevectors[i : i + 1],
-            model.reciprocal_vectors,
-            model.reciprocal,
-            model.potential,
-        )[0]
 
-    all_energies = np.array(
-        [scipy.linalg.eigvalsh(hamiltonian(i)) for i in range(model.n_kappa)]
-    )
-    cutoff = max(all_energies.min(), model.saddle_energy) + model.max_energy
-    n_bands = min(
-        int(np.count_nonzero(all_energies < cutoff, axis=-1).max())
-        + model.extra_bands**model.n_dim,
-        all_energies.shape[-1],
-    )
+def get_bands(model: Model, energies: FloatArray | None = None) -> Bands:
+    """Diagonalize the Hamiltonian at each crystal momentum of the cell, and keep the bands within model.cutoff (`get_band_count`).
+
+    The cutoff is chosen from the weight the steady state and each sector
+    leave in the highest bands (`_caldeira_leggett._get_basis`). The plane
+    wave Hamiltonian is diagonalized one crystal momentum at a time, first
+    for its energies (unless given, `get_energies`), then for the vectors of
+    the bands kept only, which is cheaper than all of its vectors and holds
+    one Hamiltonian at once.
+    """
+    if energies is None:
+        energies = get_energies(model)
+    n_bands = get_band_count(model, energies, model.cutoff)
     kept = [
-        scipy.linalg.eigh(hamiltonian(i), subset_by_index=(0, n_bands - 1))
+        scipy.linalg.eigh(_get_hamiltonian(model, i), subset_by_index=(0, n_bands - 1))
         for i in range(model.n_kappa)
     ]
     return Bands(
         energies=np.array([e for e, _ in kept]), vectors=np.array([v for _, v in kept])
     )
+
+
+def get_next_cutoff(model: Model, energies: FloatArray, cutoff: float) -> float:
+    """Get the cutoff raised, if it keeps no more bands than model.cutoff, to just keep one more."""
+    n_bands = get_band_count(model, energies, model.cutoff)
+    if (
+        get_band_count(model, energies, cutoff) > n_bands
+        or n_bands >= energies.shape[1]
+    ):
+        return cutoff
+    bottom = float(np.sort(energies, axis=-1)[:, n_bands].min())
+    return bottom - max(energies.min(), model.saddle_energy) + 1e-6
+
+
+def get_edge_weight(model: Model, bands: Bands) -> FloatArray:
+    """Get the weight of each band on the outermost plane waves, those within the longest primitive reciprocal lattice vector of the largest |k|, (n_kappa, n_bands).
+
+    A band which the plane waves resolve has none there.
+    """
+    norms = np.linalg.norm(_get_wavevectors(model), axis=-1)
+    outer = norms > norms.max() - np.linalg.norm(model.reciprocal, axis=-1).max()
+    return np.sum(np.abs(bands.vectors) ** 2 * outer[..., None], axis=1)
+
+
+def get_basis_map(
+    old: Model, old_bands: Bands, new: Model, new_bands: Bands
+) -> ComplexArray:
+    """Get <new, m|old, n> at each crystal momentum, (n_kappa, n_new, n_old), for plane waves of old which are all in new.
+
+    Both models share the cell, so a state X in the old bands is
+    W X W^dagger in the new ones, its projection onto their span.
+    """
+    index = {tuple(g): i for i, g in enumerate(new.reciprocal_vectors.tolist())}
+    rows = np.array([index[tuple(g)] for g in old.reciprocal_vectors.tolist()])
+    return new_bands.vectors[:, rows, :].conj().swapaxes(-1, -2) @ old_bands.vectors
 
 
 def get_shift_operator(model: Model, bands: Bands, shift: IntVector) -> ComplexArray:

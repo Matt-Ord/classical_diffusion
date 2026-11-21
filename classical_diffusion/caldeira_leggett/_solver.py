@@ -153,7 +153,7 @@ def get_diffusion_coefficient(
     derivative: Operators,
     steady_state: ComplexArray,
     config: CaldeiraLeggettConfig,
-) -> float:
+) -> tuple[float, ComplexArray]:
     """Get the diffusion coefficient D along a direction, from the curvature of the dephasing rate at dK = 0.
 
     The slowest eigenvalue of L(theta) (`_get_twist`) is -D theta^2 +
@@ -165,7 +165,8 @@ def get_diffusion_coefficient(
     This is a Green-Kubo formula for the master equation, which needs a single
     linear solve rather than an ISF which decays only slowly at small dK. It
     is the long time slope of the mean square displacement over 2
-    (`get_rms`).
+    (`get_rms`). The response X_1 = L_0^+ L_1 rho_ss is returned with it,
+    as the mean square displacement needs it too.
     """
     twist = _get_twist(operators, derivative, steady_state)
     response = _get_response(
@@ -174,7 +175,7 @@ def get_diffusion_coefficient(
         jnp.asarray(steady_state),
         config,
     )
-    return _get_diffusion_from_response(twist, response)
+    return _get_diffusion_from_response(twist, response), np.asarray(response)
 
 
 def _get_diffusion_from_response(twist: _Twist, response: jax.Array) -> float:
@@ -211,6 +212,7 @@ def get_rms(  # ruff:ignore[too-many-arguments]
     config: CaldeiraLeggettConfig,
     friction: float,
     isf_config: EvolutionConfig,
+    response: ComplexArray | None = None,
 ) -> RmsResult:
     """Get the mean square displacement <(x(t) - x(0))^2> along a direction, at the times from zero.
 
@@ -233,12 +235,17 @@ def get_rms(  # ruff:ignore[too-many-arguments]
 
     Only the last term evolves, from a state which decays, as for an ISF
     (`get_reduced_evolution`), rather than the growing integral. It costs two
-    linear solves and one evolution, with the friction in the units.
+    linear solves and one evolution, with the friction in the units, or one
+    solve if X_1 (response) is given.
     """
     twist = _get_twist(operators, derivative, steady_state)
     eigen = get_eigen_liouvillian(twist.liouvillian)
     rho = jnp.asarray(steady_state)
-    first = _get_response(eigen, twist.drift, rho, config)
+    first = (
+        _get_response(eigen, twist.drift, rho, config)
+        if response is None
+        else jnp.asarray(response)
+    )
     second = _get_response(eigen, first, rho, config)
     diffusion = _get_diffusion_from_response(twist, first)
     decay = get_reduced_evolution(

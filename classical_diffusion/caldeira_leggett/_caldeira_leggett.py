@@ -1,4 +1,5 @@
-# cspell: ignore rint Hermiticity
+# cspell: ignore rint Hermiticity polyfit
+import dataclasses
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +11,10 @@ import numpy as np
 from classical_diffusion.caldeira_leggett._bands import (
     Bands,
     get_bands,
+    get_basis_map,
+    get_edge_weight,
+    get_energies,
+    get_next_cutoff,
     get_shift_operator,
     get_shifted_kappa,
     get_velocity,
@@ -60,7 +65,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, kw_only=True)
 class SteadyState:
-    """The steady state of the master equation of a periodic system, with the bands it is found in.
+    """The steady state of the master equation of a periodic system, with the bands it is found in, and its diffusion constant along the first axis.
 
     The state is diagonal in the crystal momentum. The bands are only defined
     up to a phase, and up to a rotation where they are degenerate, which can
@@ -71,6 +76,12 @@ class SteadyState:
     bands: Bands
     density: ComplexArray
     """The density matrix in the basis of the bands, (n_kappa, n_bands, n_bands)."""
+    diffusion: float
+    """D along the first axis (`get_diffusion_coefficient`), in the natural units."""
+    response: ComplexArray
+    """The response X_1 = L_0^+ L_1 rho_ss from which D is found, which the mean square displacement also needs."""
+    error: float
+    """The estimated error of D from the basis, relative to D (`_get_basis_error`)."""
 
 
 def _get_steady_state_path(
@@ -84,18 +95,138 @@ def _get_steady_state_path(
 def get_steady_state(
     system: PeriodicSystem, *, config: CaldeiraLeggettConfig = DEFAULT_CONFIG
 ) -> SteadyState:
-    """Get the steady state of the master equation of a periodic system.
+    """Get the steady state of the master equation of a periodic system, in a basis of bands chosen to give D to config.basis_tol (`_get_basis`).
 
     Every ISF, and the diffusion constant, starts from the steady state. By
     default they load it from the cache, if it is there, but do not save it.
     Call ``get_steady_state.call_cached`` once, with the same configuration,
     to save it for them.
     """
-    model = build_model(system, config)
-    bands = get_bands(model)
-    operators = get_operators(bands.energies, get_couplings(model, bands))
-    density = get_band_steady_state(operators, bands.energies, config)
-    return SteadyState(model=model, bands=bands, density=density)
+    return _get_basis(system, config, None, None)
+
+
+_START = 12.0
+"""The first cutoff of the bands, in k_B T above the saddle or the ground state (`Model.cutoff`).
+
+Each try costs a steady state and a linear solve, and the cutoffs chosen
+for hydrogen, lithium and sodium on Cu(111) in 1D and 2D are 12-30 k_B T.
+"""
+_PLANE_WAVE_FACTOR = 2.5
+"""The first plane wave factor (`Model.plane_wave_factor`), raised by 1.5 if the plane waves are what limit D."""
+_SAFETY = 100.0
+"""The error of D relative to D_free per unit of population left at the edge of the basis (`_get_basis_error`).
+
+Measured against bands to 40-150 k_B T (`~/cd-agents/adaptive`), the
+error of D over the population of the highest band times D_free / D is,
+where the error is 1e-6 to 1e-3: 19-80 for hydrogen on Cu(111) in 1D,
+0.3-20 lithium, 9-11 sodium, 60-140 hydrogen in 2D, 5-13 lithium in 2D,
+6-12 a nearly free particle, 11-160 lithium at 300 K, 27-90 xenon at
+121 K, 200-310 CO at 150 K and 220-240 hydrogen at 50 K (deep
+tunnelling). It grows slowly as the error falls. 100 bounds it on the
+benchmark systems; the hydrogen at 50 K stops with D 2.4 times the
+tolerance out. A bound on all (500) would cost lithium in 2D 220 bands
+rather than 185, 2.3 times as much per application of L.
+"""
+_MAX_TRIES = 20
+
+
+def _get_basis_error(
+    model: Model,
+    bands: Bands,
+    density: ComplexArray,
+    diffusion: float,
+) -> tuple[float, float, float]:
+    """Get the estimated error of D relative to D, and the populations at the edge of the bands and of the plane waves.
+
+    D is a small difference of terms of order D_free = k_B T / m gamma, each
+    of which needs the bands above a state to complete it (the f-sum rule).
+    The highest band has none, so its population leaves an error of about
+    itself times D_free in D, as does the weight of each band on the
+    outermost plane waves, which do not resolve it.
+    """
+    population = np.real(np.einsum("kaa->ka", density))
+    top = abs(float(population[:, -1].sum()))
+    plane_waves = abs(float(np.sum(population * get_edge_weight(model, bands))))
+    free = 1 / model.friction
+    error = (
+        _SAFETY * (top + plane_waves) * free / abs(diffusion) if diffusion else np.inf
+    )
+    return error, top, plane_waves
+
+
+def _get_growth(energies: FloatArray, population: FloatArray, ratio: float) -> float:
+    """Get how far to raise the cutoff (k_B T) to lower the population of the highest band by twice ratio.
+
+    The population falls about exponentially with the energy of the band,
+    as exp(-E) in a Gibbs state, but more slowly where the friction mixes
+    the bands: about exp(-0.44 E) for hydrogen on Cu(111). The rate is fitted
+    over the bands within 10 k_B T of the highest.
+    """
+    lowest = energies.min(axis=0)
+    weight = np.abs(population.sum(axis=0))
+    near = (lowest > lowest[-1] - 10) & (weight > 0)
+    rate = 1.0
+    if np.count_nonzero(near) > 2:  # ruff:ignore[magic-value-comparison]
+        rate = -float(np.polyfit(lowest[near], np.log(weight[near]), 1)[0])
+    return max(np.log(2 * ratio) / float(np.clip(rate, 0.2, 2.0)), 2.0)
+
+
+def _get_basis(
+    system: PeriodicSystem,
+    config: CaldeiraLeggettConfig,
+    direction: tuple[float, ...] | None,
+    start: SteadyState | None,
+) -> SteadyState:
+    """Get the steady state in bands raised until D along the direction (by default the first axis) has an estimated error below config.basis_tol.
+
+    From a cutoff of _START above the saddle (or that of start), each try
+    finds the steady state and D, and estimates the error of D from the
+    population it leaves in the highest band and on the outermost plane
+    waves (`_get_basis_error`). The plane waves are raised if they hold more
+    of it, and otherwise the cutoff, by as much as the population falls
+    with the energy of the bands needs (`_get_growth`).
+
+    Raises
+    ------
+    RuntimeError
+        If the error is not below the tolerance after _MAX_TRIES tries.
+    """
+    cutoff = _START if start is None else start.model.cutoff
+    factor = _PLANE_WAVE_FACTOR if start is None else start.model.plane_wave_factor
+    for _ in range(_MAX_TRIES):
+        model = build_model(system, config, cutoff=cutoff, plane_wave_factor=factor)
+        energies = get_energies(model)
+        bands = get_bands(model, energies)
+        operators, derivative, _ = _get_derivative(model, bands, direction)
+        density = get_band_steady_state(operators, bands.energies, config)
+        diffusion, response = get_diffusion_coefficient(
+            operators, derivative, density, config
+        )
+        error, top, plane_waves = _get_basis_error(model, bands, density, diffusion)
+        if error <= config.basis_tol:
+            return SteadyState(
+                model=model,
+                bands=bands,
+                density=density,
+                diffusion=diffusion,
+                response=response,
+                error=error,
+            )
+        if plane_waves > top:
+            factor *= 1.5
+        else:
+            cutoff = get_next_cutoff(
+                model,
+                energies,
+                cutoff
+                + _get_growth(
+                    bands.energies,
+                    np.real(np.einsum("kaa->ka", density)),
+                    error / config.basis_tol,
+                ),
+            )
+    msg = f"The basis did not reach an error of {config.basis_tol:.0e} in D"
+    raise RuntimeError(msg)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -112,40 +243,58 @@ class _Sector:
     """dK, in the natural units."""
 
 
-_LOST_TOL = 1e-4
-"""The part of the ISF at t = 0 which the bands may lose at a large dK.
+_LOST_RATE = 0.25
+"""The rate (per k_B T of the cutoff) at which the part of rho e^{-i dK x} kicked above the highest band falls, before two cutoffs measure it.
 
-It is an error of the basis, set by max_energy, not by the convergence of
-the evolution, and the truncation of the bands loses a little at any dK:
-1e-10 for lithium on Cu(111) in 1D at 0.3 |G|, 1.7e-6 for hydrogen in 2D
-at 0.3 |G| with bands to 16 k_B T and no more. The tolerance catches a dK
-far beyond the thermal momentum, where the loss grows fast: hydrogen in 1D
-loses 2.5e-5 at 3 |G|, 1.4e-3 at 3.7 |G| and all of it at 10 |G|.
+For hydrogen on Cu(111) in 1D at 2 |G| it falls as exp(-0.27 E).
 """
 
 
-def _get_sector(
+def _raise_cutoff(
+    system: PeriodicSystem,
+    config: CaldeiraLeggettConfig,
+    model: Model,
+    lost: float,
+    last: tuple[float, float] | None,
+) -> Model:
+    """Get the model with the cutoff raised by as much as the loss of the ISF at t = 0 needs to fall to config.basis_tol, at the rate it fell from the last (cutoff, loss), or _LOST_RATE."""
+    rate = _LOST_RATE
+    if last is not None and lost < last[1]:
+        rate = np.log(last[1] / lost) / (model.cutoff - last[0])
+    growth = np.log(lost / config.basis_tol) / float(np.clip(rate, 0.1, 1.0))
+    return build_model(
+        system,
+        config,
+        cutoff=get_next_cutoff(
+            model, get_energies(model), model.cutoff + max(growth + 1, 2.0)
+        ),
+        plane_wave_factor=model.plane_wave_factor,
+    )
+
+
+def _get_sector(  # ruff:ignore[too-many-locals]
     system: PeriodicSystem,
     delta_k: tuple[float, ...],
     config: CaldeiraLeggettConfig,
 ) -> _Sector:
-    """Get the sector of the ISF at dK.
+    """Get the sector of the ISF at dK, in bands raised until rho e^{-i dK x} loses at most config.basis_tol above the highest.
 
     The ISF at t = 0 is Tr[rho e^{-i dK x} e^{i dK x}] = 1, but in the bands
     e^{-i dK x} is truncated, and it loses the part of rho e^{-i dK x} kicked
-    above the highest band: for hydrogen on Cu(111) in 1D, with the default
-    bands, 1e-12 at dK = |G|, 7e-7 at 2.5 |G| and 1e-3 at 3.7 |G|, which is
-    then the error of the whole ISF (against bands to 40 k_B T).
+    above the highest band, which is then the error of the whole ISF:
+    for hydrogen on Cu(111) in 1D, in the bands of the steady state (to
+    21 k_B T), 2e-6 at dK = |G| and 3e-3 at 2 |G|. Above the tolerance the
+    cutoff is raised, by as much as the loss falls with it, and the steady
+    state is projected onto the new bands, whose population above the
+    old is negligible (`_get_basis`).
 
     Raises
     ------
-    ValueError
-        If more than _LOST_TOL of the ISF at t = 0 is lost.
+    RuntimeError
+        If the loss is not below the tolerance after _MAX_TRIES tries.
     """
     state = get_steady_state.load_or_call_uncached(system, config=config)
-    model, bands = state.model, state.bands
-    couplings = get_couplings(model, bands)
-    operators = get_operators(bands.energies, couplings)
+    model, bands, density = state.model, state.bands, state.density
     # dK is split into the nearest point n @ cell_reciprocal and an offset
     # theta. Every operator shifts k by a multiple of cell_reciprocal, so k mod
     # cell_reciprocal is conserved, and rho e^{-i dK x} is in the sector of
@@ -158,19 +307,32 @@ def _get_sector(
     n = np.rint(np.linalg.solve(model.cell_reciprocal.T, scaled)).astype(int)
     shift = tuple(-int(i) for i in n)
     offset = scaled - n @ model.cell_reciprocal
-    bra = get_offset_operators(model, bands, couplings, offset)
     shifted_kappa = get_shifted_kappa(model, shift)
-    # S[kappa] = <kappa - dK, m| e^{-i dK x} |kappa, n>, and the block
-    # (kappa - dK, kappa) of rho e^{-i dK x} is rho[kappa - dK] S[kappa]
-    scattering = get_shift_operator(model, bands, shift)
-    initial = state.density[shifted_kappa] @ scattering
-    lost = abs(1 - complex(np.sum(scattering.conj() * initial)))
-    if lost > _LOST_TOL:
-        msg = (
-            f"The bands hold only 1 - {lost:.1e} of rho e^(-i dK x) at this dK: "
-            "raise CaldeiraLeggettConfig.max_energy"
+    last: tuple[float, float] | None = None
+    for _ in range(_MAX_TRIES):
+        # S[kappa] = <kappa - dK, m| e^{-i dK x} |kappa, n>, and the block
+        # (kappa - dK, kappa) of rho e^{-i dK x} is rho[kappa - dK] S[kappa]
+        scattering = get_shift_operator(model, bands, shift)
+        initial = density[shifted_kappa] @ scattering
+        lost = abs(1 - complex(np.sum(scattering.conj() * initial)))
+        if lost <= config.basis_tol:
+            break
+        model, last = (
+            _raise_cutoff(system, config, model, lost, last),
+            (
+                model.cutoff,
+                lost,
+            ),
         )
-        raise ValueError(msg)
+        bands = get_bands(model)
+        overlap = get_basis_map(state.model, state.bands, model, bands)
+        density = overlap @ state.density @ overlap.conj().swapaxes(-1, -2)
+    else:
+        msg = f"The bands did not hold rho e^(-i dK x) to {config.basis_tol:.0e}"
+        raise RuntimeError(msg)
+    couplings = get_couplings(model, bands)
+    operators = get_operators(bands.energies, couplings)
+    bra = get_offset_operators(model, bands, couplings, offset)
     return _Sector(
         model=model,
         liouvillian=get_liouvillian(operators, bra, shifted_kappa),
@@ -253,8 +415,10 @@ def solve_isf(
     Tr[e^{-i delta_k x} V(t) (rho e^{i delta_k x})], is I(-delta_k, t), which
     differs from I(t)^* by up to 7.8e-4.
 
-    The Lindblad operators couple to e^{+-i q x} in place of x, which keeps
-    the equation periodic, with the spectral function of the universal
+    The bands are raised until they hold rho e^{-i delta_k x} to
+    config.basis_tol (`_get_sector`), so any delta_k is reached. The Lindblad
+    operators couple to e^{+-i q x} in place of x, which keeps the equation
+    periodic, with the spectral function of the universal
     Lindblad equation as the temperature correction, so that the steady state
     is close to the Gibbs state at any temperature.
 
@@ -277,8 +441,8 @@ def solve_isf(
     ------
     ValueError
         If the times are not a one dimensional array of finite numbers, or
-        if the bands lose more than 1e-4 of the ISF at t = 0, at a dK far
-        beyond the thermal momentum (`_get_sector`).
+        if a dK far beyond the thermal momentum needs more than
+        MAX_PLANE_WAVES plane waves (`_get_sector`).
 
     Warns
     -----
@@ -375,8 +539,8 @@ def get_slow_modes(
     Raises
     ------
     ValueError
-        If n_modes is negative, or, as `solve_isf`, at a dK the bands cannot
-        hold.
+        If n_modes is negative, or, as `solve_isf`, at a dK which needs more
+        than MAX_PLANE_WAVES plane waves.
 
     Warns
     -----
@@ -451,7 +615,8 @@ def get_diffusion_constant(
     rate of the ISF over delta_k^2 as delta_k -> 0. It is found exactly from
     perturbation theory in delta_k about the steady state, with one linear
     solve, rather than from an ISF, which decays ever more slowly as
-    delta_k -> 0.
+    delta_k -> 0. Along the first axis it is found with the steady state,
+    which checks the basis by it (`_get_basis`), so it costs nothing more.
 
     Parameters
     ----------
@@ -474,13 +639,42 @@ def get_diffusion_constant(
         overestimates D of a free particle by over 1% (`_MAX_FRICTION`).
     """
     _warn_friction(system)
-    state = get_steady_state.load_or_call_uncached(system, config=config)
-    model, bands, rho = state.model, state.bands, state.density
-    operators, derivative, _ = _get_derivative(model, bands, direction)
-    diffusion = get_diffusion_coefficient(operators, derivative, rho, config)
+    state = _get_state(system, config, direction)
+    model = state.model
     # D has units of length^2 / time
     length = model.units.length_into(1.0, system.units)
-    return diffusion * length**2 / model.units.time_into(1.0, system.units)
+    return state.diffusion * length**2 / model.units.time_into(1.0, system.units)
+
+
+def _get_state(
+    system: PeriodicSystem,
+    config: CaldeiraLeggettConfig,
+    direction: tuple[float, ...] | None,
+) -> SteadyState:
+    """Get the steady state with D and its response along the direction, in bands which give that D to config.basis_tol.
+
+    The steady state finds them along the first axis. Along another, D can
+    be far smaller (across the rows of an fcc(110) surface), and with it the
+    population the basis may leave at its edge, so the bands are raised
+    from there if they need to be (`_get_basis`).
+    """
+    state = get_steady_state.load_or_call_uncached(system, config=config)
+    unit = np.eye(state.model.n_dim)[0]
+    if direction is None or np.allclose(
+        np.asarray(direction) / np.linalg.norm(direction), unit
+    ):
+        return state
+    model, bands, density = state.model, state.bands, state.density
+    operators, derivative, _ = _get_derivative(model, bands, direction)
+    diffusion, response = get_diffusion_coefficient(
+        operators, derivative, density, config
+    )
+    error, *_ = _get_basis_error(model, bands, density, diffusion)
+    if error > config.basis_tol:
+        return _get_basis(system, config, direction, state)
+    return dataclasses.replace(
+        state, diffusion=diffusion, response=response, error=error
+    )
 
 
 def _get_derivative(
@@ -514,8 +708,8 @@ def solve_rms(
     e^{i dK <x>} e^{-dK^2 <dx^2> / 2}, but it is found exactly, from the
     second derivative of the ISF at dK = 0, so it is that of the infinite
     surface with no bias from a finite dK (`get_rms`). Its slope at long
-    times is 2 D (`get_diffusion_constant`). It costs two linear solves, as
-    for D, and one evolution, as for an ISF.
+    times is 2 D (`get_diffusion_constant`). It costs a linear solve and
+    one evolution, as for an ISF, beyond the response which gives D.
 
     Parameters
     ----------
@@ -548,7 +742,7 @@ def solve_rms(
         raise ValueError(msg)
     magnitudes, index = _get_magnitudes(times)
     _warn_friction(system)
-    state = get_steady_state.load_or_call_uncached(system, config=config)
+    state = _get_state(system, config, direction)
     model, bands, rho = state.model, state.bands, state.density
     operators, derivative, unit = _get_derivative(model, bands, direction)
     result = get_rms(
@@ -561,6 +755,7 @@ def solve_rms(
         config=config,
         friction=_get_friction(system, model),
         isf_config=isf_config,
+        response=state.response,
     )
     length = model.units.length_into(1.0, system.units)
     return RmsResult(
