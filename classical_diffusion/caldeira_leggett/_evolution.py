@@ -303,8 +303,8 @@ class _Lanczos:
         m = self.steps
         return np.asarray(self.beta[: m - 1]) * np.asarray(self.delta[: m - 1])
 
-    def transfer(self, s: ComplexArray) -> ComplexArray:
-        """Get scale e_1^T (s - T_m)^-1 e_1 at each s, O(m) each."""
+    def transfer(self, s: ComplexArray) -> jax.Array:
+        """Get scale e_1^T (s - T_m)^-1 e_1 at each s, O(m) each, on the device."""
         return self.scale * continued_fraction(np.asarray(self.alpha), self.coupling, s)
 
 
@@ -493,12 +493,12 @@ class Evolution:
     """The applications of L and of L^dagger: for the evolution (lanczos), and for the transfer function at 1 / span (transfer)."""
 
 
-def _transforms(lanczos: _Lanczos, s: float) -> ComplexArray:
+def _transforms(lanczos: _Lanczos, s: float) -> jax.Array:
     """Get a times the transform of F_m at points s' on lines Re s' = a, from s to the width of T a decade apart.
 
     A change of F_m by e at times near 1 / a changes its transform there by
     up to e / a, so until these change by less than the tolerance, F_m has
-    not converged: an O(m) test (`_Lanczos.transfer`) before the O(m^3) one.
+    not converged: an O(m) test (`_Lanczos.transfer`) before the O(m^2) one.
     """
     width = max(float(np.abs(lanczos.alpha).max()), s)
     lines = s * 10.0 ** np.arange(0, np.log10(width / s) + 1)
@@ -530,7 +530,7 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
         eigen, start, measurement, s, _TRANSFER_TOL * tolerance / s
     )
     lanczos = _Lanczos(eigen=eigen, start=start, measurement=measurement)
-    last, agreed, transforms, due = None, 0, np.zeros(0, complex), 0
+    last, agreed, transforms, due = None, 0, jnp.zeros(0, complex), 0
     poles = None
     broken = False
     progress = _Progress(tolerance=tolerance, floor=_ROUNDOFF * tolerance / stop)
@@ -547,9 +547,11 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
         current = _transforms(lanczos, s)
         compared = len(transforms) == len(current)
         screen = (
-            max(
-                float(np.abs(current - transforms).max()),
-                abs(current[0] - s * reference),
+            float(
+                jnp.maximum(
+                    jnp.abs(current - transforms).max(),
+                    jnp.abs(current[0] - s * reference),
+                )
             )
             if compared
             else np.inf

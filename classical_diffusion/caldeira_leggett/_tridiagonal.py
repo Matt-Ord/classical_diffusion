@@ -262,14 +262,34 @@ def _weights(roots: jax.Array, alpha: jax.Array, coupling: jax.Array) -> jax.Arr
     ).ravel()
 
 
+@jax.jit
+def _fraction(alpha: jax.Array, coupling: jax.Array, points: jax.Array) -> jax.Array:
+    def row(
+        value: jax.Array, entries: tuple[jax.Array, jax.Array]
+    ) -> tuple[jax.Array, None]:
+        diagonal, product = entries
+        return 1 / (points - diagonal - product * value), None
+
+    return jax.lax.scan(row, jnp.zeros_like(points), (alpha, coupling), reverse=True)[0]
+
+
+def _padded(alpha: ComplexArray, coupling: ComplexArray) -> tuple[jax.Array, jax.Array]:
+    """Get alpha and coupling padded to `_size` by uncoupled diagonal entries left of the spectrum (|lambda| <= max |alpha| + 2 max |c|^1/2, the bound of the complex symmetric form), coupling with a zero last."""
+    m = len(alpha)
+    size = _size(m)
+    radius = np.abs(alpha).max() + 2 * np.sqrt(np.abs(coupling).max(initial=0.0))
+    padding = -2 * (radius + 1) * (1 + np.arange(size - m) / size)
+    return (
+        jnp.asarray(np.concatenate([alpha, padding]).astype(complex)),
+        jnp.asarray(np.concatenate([coupling, np.zeros(size - m + 1)]).astype(complex)),
+    )
+
+
 def continued_fraction(
     alpha: ComplexArray, coupling: ComplexArray, s: ComplexArray
-) -> ComplexArray:
-    """Get e_1^T (s - T)^-1 e_1 at each s, as a continued fraction from the last row back, O(m) for each s."""
-    value = np.zeros_like(s, dtype=complex)
-    for j in range(len(alpha) - 1, -1, -1):
-        value = 1 / (s - alpha[j] - (coupling[j] * value if j < len(alpha) - 1 else 0))
-    return value
+) -> jax.Array:
+    """Get e_1^T (s - T)^-1 e_1 at each s, as a continued fraction from the last row back, O(m) for each s, on the device."""
+    return _fraction(*_padded(alpha, coupling), jnp.asarray(s, dtype=complex))
 
 
 def _pairwise(
@@ -412,24 +432,14 @@ def get_poles(
     of the rows since; the weights from the twisted factorization at each
     root (`_chunk_weights`), except for clusters of roots closer than width,
     whose weights come from their moments (`_merge`). All of it is jitted
-    and stays on the device (`_poles`), with the size padded (`_size`) by uncoupled diagonal
-    entries left of the spectrum (|lambda| <= max |alpha| + 2 max |c|^1/2,
-    the bound of the complex symmetric form), whose weights are zero.
+    and stays on the device (`_poles`), padded (`_padded`): the weights of
+    the padding are zero.
     """
-    m = len(alpha)
-    size = _size(m)
-    radius = np.abs(alpha).max() + 2 * np.sqrt(np.abs(coupling).max(initial=0.0))
-    padding = -2 * (radius + 1) * (1 + np.arange(size - m) / size)
-    diagonal = jnp.asarray(np.concatenate([alpha, padding]).astype(complex))
+    diagonal, padded = _padded(alpha, coupling)
     guesses = None
     if previous is not None:
         roots, steps = previous
         # The padding is left of every root
         roots = roots[jnp.argsort(-roots.real)][:steps]
         guesses = jnp.concatenate([roots, diagonal[steps:]])
-    return _poles(
-        diagonal,
-        jnp.asarray(np.concatenate([coupling, np.zeros(size - m + 1)]).astype(complex)),
-        jnp.asarray(width),
-        guesses,
-    )
+    return _poles(diagonal, padded, jnp.asarray(width), guesses)
