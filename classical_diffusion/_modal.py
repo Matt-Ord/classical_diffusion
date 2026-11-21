@@ -1,3 +1,4 @@
+# cspell: ignore LAPACK
 """A correlation as a sum of modes, sum_j r_j exp(lambda_j t), from the poles and residues of a tridiagonal (the Lanczos methods of every solver)."""
 
 from dataclasses import dataclass
