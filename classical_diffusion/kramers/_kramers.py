@@ -31,7 +31,11 @@ from classical_diffusion.kramers._model import (
     get_plane_waves,
     get_plane_waves_within,
 )
-from classical_diffusion.kramers._overdamped import scaled_delta_k
+from classical_diffusion.kramers._overdamped import (
+    WEIGHT_FLOOR,
+    get_slow_window_modes,
+    scaled_delta_k,
+)
 from classical_diffusion.kramers._real import build_real_operator, get_start
 from classical_diffusion.kramers._smoluchowski import get_amplitude, get_grid_size
 from classical_diffusion.kramers._stepping import (
@@ -475,7 +479,8 @@ def get_slow_modes(
     """Get the slowest modes of the ISF of a periodic system at dK, I(t) = sum_j a_j exp(lambda_j t) once the faster modes have decayed.
 
     In 1D the modes are those of `solve_isf`, converged over the times to
-    20 / gamma. Beyond 1D, the start is stepped to 4 / gamma, by when the
+    20 / gamma, or to 20 times the slowest decay time seen where that is
+    longer (`get_slow_window_modes`). Beyond 1D, the start is stepped to 4 / gamma, by when the
     fast modes have decayed, and the slow modes are the Ritz pairs of the
     Krylov space of what is left, each with its weight in the ISF from the
     J-symmetry of L, (u^T J r)^2 / (r^T J r) / <w|w>.
@@ -510,22 +515,16 @@ def get_slow_modes(
             *_get_stepped_slow_modes(model, scaled, config), window, config.tol
         )
     else:
-        # The ISF to tol over the window fixes a rate only to about
-        # tol / (weight window): the window grows to 20 times the slowest
-        # decay time seen, so that a hop far slower than the friction (a
-        # barrier of 16 k_B T: 3e-3 relative over 20 / gamma) is resolved
-        for _ in range(_MAX_WINDOWS):
-            modes = _get_isf_modes(model, scaled, np.linspace(0, window, 200), config)
-            decaying = modes.kept[0].real
-            decaying = decaying[decaying < 0]
-            slowest = 20 / -decaying.max() if len(decaying) else window
-            if slowest <= 1.5 * window:
-                break
-            window = slowest
+        modes = get_slow_window_modes(
+            lambda span: _get_isf_modes(
+                model, scaled, np.linspace(0, span, 200), config
+            ),
+            window,
+        )
     rates, weights = modes.kept
     # A Ritz value of a mode the start barely holds can land anywhere, with
     # no weight
-    seen = np.abs(weights) > _WEIGHT_FLOOR
+    seen = np.abs(weights) > WEIGHT_FLOOR
     rates, weights = select_modes(rates[seen], weights[seen], selection)
     natural = model.units.time_into(1.0, system.units)
     return SlowModes(
@@ -536,15 +535,9 @@ def get_slow_modes(
     )
 
 
-_MAX_WINDOWS = 6
-"""The most windows of the ISF over which the slow modes of a 1D system are found (`get_slow_modes`)."""
 _RITZ_VECTORS = 80
 _RITZ_RTOL = 1e-4
 """The residual of a Ritz pair, in units of the friction, above which it is not a mode: those kept have rates good to about its square."""
-
-
-_WEIGHT_FLOOR = 1e-12
-"""The weight in the ISF below which a mode is not reported."""
 
 
 def _get_stepped_slow_modes(  # ruff:ignore[too-many-locals]

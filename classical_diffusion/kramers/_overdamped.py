@@ -1,8 +1,7 @@
-# cspell: ignore btol lsqr reorthogonalization tocsr unconverged vdot
-"""The overdamped limit of the Langevin equation, the Smoluchowski equation, solved by Krylov methods (Arnoldi, which is Lanczos for this Hermitian operator) on its symmetrised generator."""
+# cspell: ignore Golub Kahan bidiagonalization btol lsqr reorthogonalization tocsr unconverged vdot
+"""The overdamped limit of the Langevin equation, the Smoluchowski equation, solved by Golub-Kahan bidiagonalization of A_+, with -L = D_0 A_+^dag A_+ its symmetrised generator."""
 
 import dataclasses
-import operator
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -44,32 +43,53 @@ if TYPE_CHECKING:
 
 
 class _Generator:
-    """-L = D_0 A_+^dag A_+ at K, on the plane waves, as a sparse operator, with the equilibrium amplitude w."""
+    """-L = D_0 A_+^dag A_+ at K, with A_+ on the plane waves as one sparse operator (its components stacked), and the equilibrium amplitude w."""
 
     def __init__(self, model: Model, vectors: IntArray, delta_k: FloatArray) -> None:
         dense = get_gradient_operator(model, vectors, delta_k)
-        self.gradient = [scipy.sparse.csr_array(a) for a in dense]
-        self.adjoint = [a.conj().T.tocsr() for a in self.gradient]
+        self.gradient = scipy.sparse.csr_array(dense.reshape(-1, len(vectors)))
+        self.adjoint = self.gradient.conj().T.tocsr()
         self.diffusion = 1 / model.friction
         self.vectors = vectors
         self.model = model
         self.amplitude = get_amplitude(model, vectors, get_grid_size(vectors))
         self.norm = float(np.vdot(self.amplitude, self.amplitude).real)
 
-    def apply(self, v: ComplexArray) -> ComplexArray:
-        return self.diffusion * sum(
-            (adj @ (a @ v) for a, adj in zip(self.gradient, self.adjoint, strict=True)),
-            start=np.zeros_like(v),
-        )
+    def get_modes(
+        self,
+        start: ComplexArray,
+        times: FloatArray,
+        *,
+        error: Callable[[ModalSum, ModalSum], float],
+        tol: float,
+        deflate: bool = False,
+    ) -> ModalSum:
+        """Get <u| e^{L t} |u> / <w|w> as a modal sum, by Golub-Kahan bidiagonalization of A_+ (`get_modal_sum`), on the complement of w (the null vector at K = 0) if deflated.
 
-    def deflated(self) -> Callable[[ComplexArray], ComplexArray]:
-        """-L on the complement of w, its null vector at K = 0."""
+        The rates are D_0 times the squared singular values of A_+ in the
+        Krylov space, so a slow rate keeps its relative accuracy however far
+        below the fastest: the hop over a barrier of 30 k_B T, 1e-15 of the
+        fastest rate in the plane waves, to 1e-8.
+        """
         w = self.amplitude / np.sqrt(self.norm)
 
         def project(v: ComplexArray) -> ComplexArray:
-            return v - w * np.vdot(w, v)
+            return v - w * np.vdot(w, v) if deflate else v
 
-        return lambda v: project(self.apply(project(v)))
+        modal = get_modal_sum(
+            KrylovProblem(
+                apply=lambda v: self.gradient @ project(v),
+                adjoint=lambda u: project(self.adjoint @ u),
+                parity=None,
+                rates_of=lambda mu: -self.diffusion * mu,
+                span=float(times[-1]),
+                error=error,
+                tolerance=tol,
+                block=_BLOCK,
+            ),
+            start,
+        )
+        return dataclasses.replace(modal, residues=modal.residues / self.norm)
 
     def force_amplitude(self, direction: FloatArray) -> ComplexArray:
         """(e . grad V) w = -2 e . grad w, in the plane waves."""
@@ -85,32 +105,40 @@ def scaled_delta_k(
 
 
 _BLOCK = 8
-"""The Arnoldi steps between evaluations of the modal sum."""
+"""The Golub-Kahan steps between evaluations of the modal sum."""
+_WINDOW_DECAYS = 20.0
+"""The decay times of the slowest mode seen over which its window extends (`get_slow_window_modes`)."""
+_MAX_WINDOWS = 6
+WEIGHT_FLOOR = 1e-12
+"""The weight in the ISF below which a mode is not reported."""
 
 
-def _get_modes(  # ruff:ignore[too-many-arguments]
-    apply: Callable[[ComplexArray], ComplexArray],
-    start: ComplexArray,
-    norm: float,
-    times: FloatArray,
-    *,
-    error: Callable[[ModalSum, ModalSum], float],
-    tol: float,
+def get_slow_window_modes(
+    modes_over: Callable[[float], ModalSum], window: float
 ) -> ModalSum:
-    """Get <u| e^{L t} |u> / norm as a modal sum, by Arnoldi (Lanczos with full reorthogonalization) on the Hermitian -L (`get_modal_sum`)."""
-    modal = get_modal_sum(
-        KrylovProblem(
-            apply=apply,
-            parity=None,
-            rates_of=operator.neg,
-            span=float(times[-1]),
-            error=error,
-            tolerance=tol,
-            block=_BLOCK,
-        ),
-        start,
-    )
-    return dataclasses.replace(modal, residues=modal.residues / norm)
+    """Get the modes of an ISF converged over a window which extends to 20 times the slowest decay time seen in it.
+
+    The ISF to tol over a window fixes a rate only to about
+    tol / (weight window), so a hop far slower than the first window (a
+    barrier of 16 k_B T: 3e-3 relative over 20 / gamma) is resolved only
+    once the window grows to its own decay time. Modes of weight below
+    WEIGHT_FLOOR, which are not reported, do not set the window.
+
+    Raises
+    ------
+    RuntimeError
+        If the window still grows after _MAX_WINDOWS windows.
+    """
+    for _ in range(_MAX_WINDOWS):
+        modes = modes_over(window)
+        rates, weights = modes.kept
+        decaying = rates.real[(rates.real < 0) & (np.abs(weights) > WEIGHT_FLOOR)]
+        slowest = _WINDOW_DECAYS / -decaying.max() if len(decaying) else window
+        if slowest <= 1.5 * window:
+            return modes
+        window = slowest
+    msg = f"The slow modes did not converge within {_MAX_WINDOWS} windows"
+    raise RuntimeError(msg)
 
 
 _MAX_ROUNDS = 12
@@ -163,10 +191,8 @@ def _get_isf_modes(
 
     def compute(vectors: IntArray) -> ModalSum:
         generator = _Generator(model, vectors, scaled)
-        return _get_modes(
-            generator.apply,
+        return generator.get_modes(
             generator.amplitude,
-            generator.norm,
             times,
             error=lambda a, b: (
                 float(np.max(np.abs(a.values(times) - b.values(times))))
@@ -199,9 +225,9 @@ def solve_isf_overdamped(
     A = grad - i K + grad V / 2, Hermitian, so the ISF
     I(K, t) = <w| e^{L t} |w> / <w|w>, w = e^{-V / 2}, is a sum of decaying
     exponentials. Their rates and weights are the Gauss quadrature of the
-    spectral measure of -L in w, by Arnoldi (`get_modal_sum`),
-    extended until the ISF at the times changes by less than config.tol / 10
-    over two blocks of steps.
+    spectral measure of -L in w, by Golub-Kahan bidiagonalization of A
+    (`get_modal_sum`), extended until the ISF at the times changes by less
+    than config.tol / 10 over two blocks of steps.
 
     Parameters
     ----------
@@ -243,7 +269,9 @@ def get_slow_modes_overdamped(
     """Get the slowest modes of the overdamped ISF of a periodic system at dK, I(t) = sum_j a_j exp(lambda_j t).
 
     The modes are those of `solve_isf_overdamped`, converged at the times
-    0 to 100 / (D_0 |G|^2) of the shortest reciprocal vector G.
+    0 to 100 / (D_0 |G|^2) of the shortest reciprocal vector G, or to 20
+    times the slowest decay time seen, where that is longer
+    (`get_slow_window_modes`).
 
     Parameters
     ----------
@@ -265,10 +293,13 @@ def get_slow_modes_overdamped(
     model = build_model(system)
     selection = get_selection(n_modes, model.friction)
     g = float(np.min(np.linalg.norm(model.reciprocal, axis=-1)))
-    window = np.linspace(0, 100 * model.friction / g**2, 400)
-    rates, amplitudes = select_modes(
-        *_get_isf_modes(system, delta_k, window, config).kept, selection
+    modes = get_slow_window_modes(
+        lambda span: _get_isf_modes(system, delta_k, np.linspace(0, span, 400), config),
+        100 * model.friction / g**2,
     )
+    rates, weights = modes.kept
+    seen = np.abs(weights) > WEIGHT_FLOOR
+    rates, amplitudes = select_modes(rates[seen], weights[seen], selection)
     natural = model.units.time_into(1.0, system.units)
     return SlowModes(
         system=system,
@@ -445,16 +476,15 @@ def solve_rms_overdamped(
             def scaled(m: ModalSum) -> ModalSum:
                 return dataclasses.replace(m, residues=m.residues / generator.norm)
 
-            modes = _get_modes(
-                generator.deflated(),
+            modes = generator.get_modes(
                 force,
-                generator.norm,
                 natural,
                 error=lambda a, b: relative(
                     _mean_square(scaled(a), d0, diffusion, natural),
                     _mean_square(scaled(b), d0, diffusion, natural),
                 ),
                 tol=0.1 * config.tol,
+                deflate=True,
             )
             return _mean_square(modes, d0, diffusion, natural)
 
