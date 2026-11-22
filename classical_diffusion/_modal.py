@@ -57,7 +57,10 @@ def _phi_2(z: ComplexArray) -> ComplexArray:
     small = np.abs(z) < 0.1  # ruff:ignore[magic-value-comparison]
     safe = np.where(small, 1.0, z)
     direct = (np.expm1(safe) - safe) / safe**2
-    series = sum(z**k / factorial(k + 2) for k in range(14))
+    # Horner's rule for sum_k z^k / (k + 2)!, k < 14
+    series = np.zeros_like(z)
+    for k in range(13, -1, -1):
+        series = series * z + 1 / factorial(k + 2)
     return np.where(small, series, direct)
 
 
