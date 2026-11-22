@@ -112,6 +112,7 @@ def _on_indices(
     return scipy.sparse.csr_array((values, (rows, cols)), shape=(size, size))
 
 
+@functools.cache
 def get_momentum_overlaps(
     max_order: int, width: float
 ) -> tuple[FloatArray, FloatArray]:
