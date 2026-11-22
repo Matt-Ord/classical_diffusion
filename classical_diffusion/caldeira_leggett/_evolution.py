@@ -818,7 +818,13 @@ def get_reduced_evolution(
     start = to_eigen(eigen, initial)
     measurement = get_measurement(eigen, measure, start)
     times = np.asarray(times, dtype=np.float64)
-    first = complex(jnp.vdot(measurement, start))
+    first, size = jax.device_get(
+        (
+            jnp.vdot(measurement, start),
+            jnp.linalg.norm(measurement) * jnp.linalg.norm(start),
+        )
+    )
+    first, size = complex(first), float(size)
     if times.max(initial=0.0) <= 0:
         return Evolution(
             values=np.full(len(times), first),
@@ -827,7 +833,6 @@ def get_reduced_evolution(
         )
     # Relative to |F(0)|, or if the measurement does not see X_0 at t = 0, to
     # the largest it could be
-    size = float(jnp.linalg.norm(measurement) * jnp.linalg.norm(start))
     tolerance = config.stop * (abs(first) if abs(first) > 1e-12 * size else size)
     try:
         return _evolve(eigen, start, measurement, times, tolerance, config.stop)

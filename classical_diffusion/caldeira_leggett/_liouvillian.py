@@ -297,6 +297,7 @@ def get_liouvillian(
     )
 
 
+@jax.jit
 def apply_liouvillian(liouvillian: Liouvillian, x: jax.Array) -> jax.Array:
     """Apply the Liouvillian to the state x."""
     return add_jumps(
