@@ -130,8 +130,6 @@ the population at the edge but leaves D, and its error, nearly unchanged:
 for lithium at 100 K over a barrier of 130 meV, D changed by 6e-8 from 21
 to 22 bands where its error was 9e-7 (and 1e-8 at 23 bands).
 """
-_CONFIRMATION = 6.0
-"""The factor by which the raise after a try whose D is estimated within half the tolerance aims to lower the population at the edge: twice _CONTRACTION, as the raise only confirms that D (`_get_basis`), and the population is fitted (`_get_growth`)."""
 _MAX_TRIES = 20
 
 
@@ -166,23 +164,6 @@ def _get_growth(energies: FloatArray, population: FloatArray, factor: float) -> 
     return max(np.log(factor) / float(np.clip(rate, 0.5, 2.0)), 2.0)
 
 
-def _get_target(changes: list[float], edges: list[float], tolerance: float) -> float:
-    """Get the factor by which the next try aims to lower the population at the edge, from the last change of D and the last two edges (`_get_basis`)."""
-    if not changes:
-        return _STEP
-    # The error of the last D, if it is the change per unit of edge
-    error = changes[-1] * edges[-1] / max(edges[-2], 1e-300)
-    if error <= tolerance / 2 and edges[-2] >= _CONTRACTION * edges[-1]:
-        # The next try only confirms the last
-        return _CONFIRMATION
-    return max(_STEP, 4 * error / tolerance)
-
-
-def _embed(overlap: ComplexArray, x: ComplexArray) -> ComplexArray:
-    """Get a state in the bands of another basis, W X W^dagger, from their overlap W (`get_basis_map`)."""
-    return overlap @ x @ overlap.conj().swapaxes(-1, -2)
-
-
 def _get_basis(  # ruff:ignore[too-many-locals]
     system: PeriodicSystem,
     config: CaldeiraLeggettConfig,
@@ -206,13 +187,9 @@ def _get_basis(  # ruff:ignore[too-many-locals]
     D. The smallest basis within the tolerance is returned with its error.
     Each raise lowers the population at the edge by _STEP, or by as much as
     the change of D per unit of population at the edge says the next basis
-    needs to be within a quarter of the tolerance, or, once a try is
-    estimated within half the tolerance, only by _CONFIRMATION, which is
-    all the check needs. The plane waves are raised if they hold more of
-    the population at the edge, and otherwise the cutoff (`_get_growth`).
-    The solves of each try start from the last try's solutions in the new
-    bands (zero in the bands added), and reach the same residual as from
-    scratch (`solve`).
+    needs to be within a quarter of the tolerance. The plane waves are
+    raised if they hold more of the population at the edge, and otherwise
+    the cutoff (`_get_growth`).
 
     Raises
     ------
@@ -231,16 +208,10 @@ def _get_basis(  # ruff:ignore[too-many-locals]
             energies = get_energies(model)
             bands = get_bands(model, energies)
         operators, derivative, _ = _get_derivative(model, bands, direction)
-        # Each solve starts from the last try's solution, in these bands
-        guess: tuple[ComplexArray | None, ComplexArray | None] = (None, None)
-        if tries:
-            last = tries[-1][0]
-            overlap = get_basis_map(last.model, last.bands, model, bands)
-            guess = _embed(overlap, last.density), _embed(overlap, last.response)
         if tries or start is None:
-            density = get_band_steady_state(operators, bands.energies, config, guess[0])
+            density = get_band_steady_state(operators, bands.energies, config)
         diffusion, response = get_diffusion_coefficient(
-            operators, derivative, density, config, guess[1]
+            operators, derivative, density, config
         )
         top, plane_waves = _get_edge(model, bands, density)
         tries.append(
@@ -260,6 +231,7 @@ def _get_basis(  # ruff:ignore[too-many-locals]
             abs(b.diffusion - a.diffusion) / max(abs(diffusion), 1e-300)
             for (a, _), (b, _) in itertools.pairwise(tries[-3:])
         ]
+        target = _STEP
         if len(changes) == 2:  # ruff:ignore[magic-value-comparison]
             first, second = changes
             edges = [edge for _, edge in tries[-3:]]
@@ -276,9 +248,10 @@ def _get_basis(  # ruff:ignore[too-many-locals]
                     error = bound + abs(state.diffusion - middle) / abs(diffusion)
                     if error <= config.basis_tol:
                         return dataclasses.replace(state, error=error)
-        target = _get_target(
-            changes[-1:], [edge for _, edge in tries[-2:]], config.basis_tol
-        )
+        if changes:
+            # The error of this D, if it is the change per unit of edge
+            error = changes[-1] * tries[-1][1] / max(tries[-2][1], 1e-300)
+            target = max(_STEP, 4 * error / config.basis_tol)
         if plane_waves > top:
             factor *= 1.5
             continue
@@ -394,9 +367,8 @@ def _get_sector(  # ruff:ignore[too-many-locals]
             ),
         )
         bands = get_bands(model)
-        density = _embed(
-            get_basis_map(state.model, state.bands, model, bands), state.density
-        )
+        overlap = get_basis_map(state.model, state.bands, model, bands)
+        density = overlap @ state.density @ overlap.conj().swapaxes(-1, -2)
     else:
         msg = f"The bands did not hold rho e^(-i dK x) to {config.basis_tol:.0e}"
         raise RuntimeError(msg)
