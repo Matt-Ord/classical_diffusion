@@ -90,8 +90,6 @@ evaluations below this, with a warning of the accuracy reached.
 """
 _STALL = 4
 """The blocks over which an error that has not halved has stalled at its floor."""
-_SLOWEST = 8
-"""The slowest poles reported with an evolution."""
 _AGREEMENTS = 2
 """The successive blocks over which a result must agree to within its tolerance.
 
@@ -479,14 +477,6 @@ class Evolution:
     """A measurement of exp(L t) X_0 at the times, and how it was found."""
 
     values: ComplexArray
-    rates: ComplexArray
-    """The slowest poles of weight above the tolerance, slowest first, in natural units of 1 / time.
-
-    They are only as accurate as F at the times needs them: for lithium on
-    Cu(111) in 2D at 0.3 |G|, the hop rate is 1.4e-5 relative off at stop 1e-6
-    and 5e-9 at stop 1e-8, against Jacobi-Davidson (`get_slow_modes`), whose
-    rate at mode_rtol 1e-6 is within 5e-9 of that at 1e-10.
-    """
     applications: dict[str, int]
     """The applications of L and of L^dagger: for the evolution (lanczos), and for the transfer function at 1 / span (transfer)."""
 
@@ -596,11 +586,11 @@ def _judge(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, to
     constants: tuple[jax.Array, jax.Array, jax.Array],
     *,
     chunk: int,
-) -> tuple[jax.Array, jax.Array, _Progress, jax.Array, jax.Array, jax.Array]:
+) -> tuple[jax.Array, _Progress, jax.Array, jax.Array, jax.Array]:
     """Evaluate F_m at the times from its poles, keeping those that decay or grow by less than the tolerance over the span, and judge it.
 
-    Get whether each pole is kept, F_m, the progress with the error of this
-    evaluation, the agreements so far and whether they are enough.
+    Get F_m, the progress with the error of this evaluation, the agreements
+    so far and whether they are enough.
     """
     rates, residues = poles
     previous, compared, agreed = last
@@ -637,16 +627,7 @@ def _judge(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, to
     progress = progress.append(jnp.maximum(error, jnp.where(stopped, 0, screen.screen)))
     agreed = jnp.where(error <= progress.reached, agreed + 1, 0)
     done = agreed >= jnp.where(stopped, 1, _AGREEMENTS)
-    return stable, values, progress, agreed, done, error
-
-
-def _slowest(
-    rates: jax.Array, residues: jax.Array, stable: jax.Array, weight: float
-) -> ComplexArray:
-    """Get the slowest kept poles of residue above weight, slowest first."""
-    rates, residues, stable = jax.device_get((rates, residues, stable))
-    rates = rates[stable & (np.abs(residues) > weight)]
-    return rates[np.argsort(-rates.real)][:_SLOWEST]
+    return values, progress, agreed, done, error
 
 
 def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, too-many-locals]
@@ -713,7 +694,7 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
         )
         residues = scale * weights
         chunk = max(1, min(len(times), 2**22 // len(rates)))
-        stable, values, progress, agreed, done, error = _judge(
+        values, progress, agreed, done, error = _judge(
             (rates, residues),
             jnp.asarray(np.concatenate([times, np.zeros(-len(times) % chunk)])),
             last,
@@ -742,7 +723,6 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
             _warn("The evolution", progress)
             return Evolution(
                 values=np.asarray(values[: len(times)]),
-                rates=_slowest(rates, residues, stable, tolerance),
                 applications={
                     "lanczos": 2 * steps,
                     "transfer": transfer_applications,
@@ -828,7 +808,6 @@ def get_reduced_evolution(
     if times.max(initial=0.0) <= 0:
         return Evolution(
             values=np.full(len(times), first),
-            rates=np.zeros(0, complex),
             applications={"lanczos": 0, "transfer": 0},
         )
     # Relative to |F(0)|, or if the measurement does not see X_0 at t = 0, to
@@ -855,7 +834,6 @@ def get_reduced_evolution(
         raise RuntimeError(msg) from error
     return Evolution(
         values=both.values - alone.values,
-        rates=both.rates,
         applications={
             key: both.applications[key] + alone.applications[key]
             for key in both.applications
