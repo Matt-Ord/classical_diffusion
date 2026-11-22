@@ -50,15 +50,15 @@ m = 800 (every benchmark case) the evaluations stay a block apart.
 """
 _TRANSFER_BLOCK = 10
 """The steps of each block of the solve for the transfer function, which converges in tens of steps."""
-_MAX_STEPS = 5000
-"""The most Lanczos steps.
+_STEPS_PER_STATE = 10
+"""The most Lanczos steps, per state of the sector (`_get_max_steps`).
 
-Underdamped hydrogen (gamma = 0.01 / ps, 150 K) over 2000 ps needs 1,000 to
-2,300 steps, hydrogen at 1000 times its mass on Cu(111) in 1D 3,800, and
-lithium at 300 K with gamma = 0.05 / ps at 0.05 |G| about 4,500, although
-its sector has only 1,800 states: with full rebiorthogonalization the
-recurrence needs all 1,800 steps there, as many slow modes are seen, and
-without it copies of converged poles fill the rest.
+Exact two-sided Lanczos ends by n steps in a sector of n states, but in
+finite precision, without rebiorthogonalization, copies of converged poles
+fill more: underdamped hydrogen (gamma = 0.01 / ps, 150 K, 360 states) over
+2000 ps needs 2,000 to 2,300 steps at 0.05 |G| (6.4 per state), lithium at
+300 K with gamma = 0.05 / ps (1,800 states) 3,500 at 0.3 |G|, and at most
+0.7 per state for hydrogen at 100 and 1000 times its mass and xenon.
 """
 _BREAKDOWN = 100 * np.finfo(float).eps
 """The cosine |<w, v>| / (|w| |v|) of the next pair of Lanczos vectors below which <w, v> is round off, and the recurrence has broken down.
@@ -106,10 +106,11 @@ _FALSE = jnp.zeros((), bool)
 _TRUE = jnp.ones((), bool)
 _LINES = 24
 """The most lines Re s' = a of the screen of the transform of F_m, a decade apart from 1 / span (`_screen`): T of width up to 1e23 / span."""
-_CAPACITY = get_size(_MAX_STEPS + _BLOCK)
-"""The length of the coefficient buffers on the device, at least the padded size of the most steps (`get_poles`)."""
-_ERRORS = _MAX_STEPS // _TRANSFER_BLOCK + 2
-"""The length of the buffer of the errors of the blocks (`_Progress`): at most one per block."""
+
+
+def _get_max_steps(start: jax.Array) -> int:
+    """Get the most Lanczos steps of a recurrence from a state of the sector (_STEPS_PER_STATE)."""
+    return _STEPS_PER_STATE * start.size
 
 
 @jax.tree_util.register_dataclass
@@ -124,16 +125,16 @@ class _Progress:
     precision: jax.Array
     """The error, absolute, that round off of the recurrence leaves (`_Recurrence.roundoff`)."""
     errors: jax.Array
-    """The errors of the blocks so far, (_ERRORS,), the first `count` of them."""
+    """The errors of the blocks so far, at most one per block of the most steps, the first `count` of them."""
     count: jax.Array
 
     @staticmethod
-    def start(tolerance: float, floor: float) -> _Progress:
+    def start(tolerance: float, floor: float, max_steps: int) -> _Progress:
         return _Progress(
             tolerance=jnp.asarray(tolerance),
             floor=jnp.asarray(floor),
             precision=jnp.asarray(0.0),
-            errors=jnp.zeros(_ERRORS),
+            errors=jnp.zeros(max_steps // _TRANSFER_BLOCK + 2),
             count=jnp.asarray(0),
         )
 
@@ -143,7 +144,7 @@ class _Progress:
         # The estimate is of the order of the error: twice it, so that an
         # error at the estimate does not stop each agreement
         reached = jnp.maximum(self.tolerance, 2 * self.precision)
-        index = jnp.arange(_ERRORS)
+        index = jnp.arange(self.errors.shape[0])
         recent = jnp.where(
             (index >= self.count - _STALL) & (index < self.count), self.errors, jnp.inf
         ).min()
@@ -210,9 +211,9 @@ class _Recurrence:
     vectors: tuple[jax.Array, ...]
     """v, w, the v and w before them, split into real and imaginary parts (`split`), and the last beta and delta."""
     alpha: jax.Array
-    """The diagonal of T, (_CAPACITY,), the first `steps` of it."""
+    """The diagonal of T, at least the padded size (`get_poles`) of the most steps, the first `steps` of it."""
     coupling: jax.Array
-    """beta_k delta_k, the products of the off-diagonals of T, (_CAPACITY,), zero beyond the steps."""
+    """beta_k delta_k, the products of the off-diagonals of T, as long as alpha, zero beyond the steps."""
     steps: jax.Array
     invariant: jax.Array
     """Whether the Krylov space is invariant, so that T_m is exact."""
@@ -223,16 +224,17 @@ class _Recurrence:
 
     @staticmethod
     def start(
-        start: jax.Array, measurement: jax.Array, scale: jax.Array
+        start: jax.Array, measurement: jax.Array, scale: jax.Array, max_steps: int
     ) -> _Recurrence:
+        capacity = get_size(max_steps + _BLOCK)
         size = jnp.linalg.norm(start)
         v = start / size
         w = measurement * (size / jnp.conj(scale))
         zero = jnp.zeros_like(split(v))
         return _Recurrence(
             vectors=(split(v), split(w), zero, zero, jnp.asarray(0j), jnp.asarray(0j)),
-            alpha=jnp.zeros(_CAPACITY, complex),
-            coupling=jnp.zeros(_CAPACITY, complex),
+            alpha=jnp.zeros(capacity, complex),
+            coupling=jnp.zeros(capacity, complex),
             steps=jnp.asarray(0),
             invariant=_FALSE,
             broken=_FALSE,
@@ -433,19 +435,20 @@ def get_transfer(
     _BreakdownError
         On a serious breakdown of the recurrence.
     RuntimeError
-        If it does not converge in _MAX_STEPS steps.
+        If it does not converge in the most steps (`_get_max_steps`).
     """
     measurement /= (eigen.rates - s).conj()
     scale = complex(jnp.vdot(measurement, start))
     if scale == 0:
         raise _BreakdownError
+    max_steps = _get_max_steps(start)
     recurrence, progress, value, agreed = _transfer_loop(
         eigen,
-        _Recurrence.start(start, measurement, jnp.asarray(scale)),
+        _Recurrence.start(start, measurement, jnp.asarray(scale), max_steps),
         jnp.asarray(complex(s)),
         jnp.asarray(scale),
-        _Progress.start(tolerance, 0.0),
-        max_steps=_MAX_STEPS,
+        _Progress.start(tolerance, 0.0, max_steps),
+        max_steps=max_steps,
     )
     steps, invariant, broken, agreed = jax.device_get(
         (recurrence.steps, recurrence.invariant, recurrence.broken, agreed)
@@ -453,7 +456,7 @@ def get_transfer(
     if broken:
         raise _BreakdownError
     if not (invariant or agreed):
-        msg = f"The transfer function did not converge in {_MAX_STEPS} Lanczos steps"
+        msg = f"The transfer function did not converge in {max_steps} Lanczos steps"
         raise RuntimeError(msg)
     if agreed:
         _warn("The transfer function", progress)
@@ -511,7 +514,7 @@ def _transforms(
     not converged: an O(m) test before the O(m^2) one.
     """
     s = decades[0]
-    valid = jnp.arange(_CAPACITY) < recurrence.steps
+    valid = jnp.arange(recurrence.alpha.shape[0]) < recurrence.steps
     width = jnp.maximum(jnp.where(valid, jnp.abs(recurrence.alpha), 0).max(), s)
     lines = jnp.minimum(jnp.ceil(jnp.log10(width / s) + 1).astype(int), _LINES)
     points = decades[:, None] * (1 + 1j * frequencies[None, :])
@@ -650,7 +653,7 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
     _BreakdownError
         On a serious breakdown of either recurrence before any evaluation.
     RuntimeError
-        If either does not converge in _MAX_STEPS steps.
+        If either does not converge in the most steps (`_get_max_steps`).
     """
     span = float(times.max())
     s = 1 / span
@@ -660,7 +663,8 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
     scale = complex(jnp.vdot(measurement, start))
     if scale == 0:
         raise _BreakdownError
-    recurrence = _Recurrence.start(start, measurement, jnp.asarray(scale))
+    max_steps = _get_max_steps(start)
+    recurrence = _Recurrence.start(start, measurement, jnp.asarray(scale), max_steps)
     frequencies = np.concatenate([[0.0], np.geomspace(1, 10**3, _FREQUENCIES)])
     constants = (
         jnp.asarray(scale),
@@ -676,17 +680,17 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
         reset=_FALSE,
         due=jnp.asarray(0),
     )
-    progress = _Progress.start(tolerance, _ROUNDOFF * tolerance / stop)
+    progress = _Progress.start(tolerance, _ROUNDOFF * tolerance / stop, max_steps)
     last = (jnp.zeros(len(times), complex), _FALSE, jnp.asarray(0))
     while True:
         recurrence, screen, progress, due = _advance(
-            eigen, recurrence, screen, progress, constants, max_steps=_MAX_STEPS
+            eigen, recurrence, screen, progress, constants, max_steps=max_steps
         )
         steps, stopped, due = jax.device_get(
             (recurrence.steps, recurrence.stopped, due)
         )
         if not due:
-            msg = f"The evolution did not converge in {_MAX_STEPS} Lanczos steps"
+            msg = f"The evolution did not converge in {max_steps} Lanczos steps"
             raise RuntimeError(msg)
         steps = int(steps)
         rates, weights = get_poles(
@@ -730,8 +734,8 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
             )
         if stopped:
             raise _BreakdownError
-        if steps >= _MAX_STEPS:
-            msg = f"The evolution did not converge in {_MAX_STEPS} Lanczos steps"
+        if steps >= max_steps:
+            msg = f"The evolution did not converge in {max_steps} Lanczos steps"
             raise RuntimeError(msg)
 
 
@@ -793,7 +797,7 @@ def get_reduced_evolution(
     ------
     RuntimeError
         If the split recurrences also break down, or a recurrence does not
-        converge in _MAX_STEPS steps.
+        converge in the most steps (`_get_max_steps`).
     """
     start = to_eigen(eigen, initial)
     measurement = get_measurement(eigen, measure, start)
