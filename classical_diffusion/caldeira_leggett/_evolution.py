@@ -17,6 +17,7 @@ from classical_diffusion.caldeira_leggett._linear import (
     apply_split,
     from_eigen,
     inner,
+    magnitudes,
     multiply,
     split,
     to_eigen,
@@ -229,7 +230,7 @@ class _Recurrence:
         size = jnp.linalg.norm(start)
         v = start / size
         w = measurement * (size / jnp.conj(scale))
-        zero = jnp.zeros((2, *v.shape))
+        zero = jnp.zeros_like(split(v))
         return _Recurrence(
             vectors=(split(v), split(w), zero, zero, jnp.asarray(0j), jnp.asarray(0j)),
             alpha=jnp.zeros(_CAPACITY, complex),
@@ -269,7 +270,7 @@ def _steps(
         alpha = inner(w, av)
         v_hat = av - multiply(alpha, v) - multiply(beta, v_last)
         w_hat = aw - multiply(alpha.conj(), w) - multiply(delta.conj(), w_last)
-        v_squares, w_squares = jnp.sum(v_hat**2, axis=0), jnp.sum(w_hat**2, axis=0)
+        v_squares, w_squares = magnitudes(v_hat), magnitudes(w_hat)
         delta_next = jnp.sqrt(v_squares.sum())
         beta_next = inner(w_hat, v_hat) / delta_next
         recorded = out.at[i].set(
@@ -522,7 +523,7 @@ def _transforms(
     s = decades[0]
     valid = jnp.arange(_CAPACITY) < recurrence.steps
     width = jnp.maximum(jnp.where(valid, jnp.abs(recurrence.alpha), 0).max(), s)
-    lines = jnp.minimum(jnp.floor(jnp.log10(width / s)).astype(int) + 1, _LINES)
+    lines = jnp.minimum(jnp.ceil(jnp.log10(width / s) + 1).astype(int), _LINES)
     points = decades[:, None] * (1 + 1j * frequencies[None, :])
     values = scale * continued_fraction(
         recurrence.alpha, recurrence.coupling, recurrence.steps, points.ravel()
