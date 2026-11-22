@@ -17,6 +17,7 @@ from classical_diffusion.caldeira_leggett._linear import (
     EigenLiouvillian,
     apply_eigen,
     bicgstab,
+    check,
     gmres,
     refine,
 )
@@ -164,21 +165,32 @@ def _get_amplitude(  # ruff:ignore[too-many-arguments]
     lambda is projected out, and then c = r^dagger (X - (L - lambda) y). It
     is solved to rtol by passes of BiCGSTAB (`refine`).
     """
-    shift = jnp.asarray(rate)
+    amplitude, coefficient, applications, reached = _amplitude(
+        eigen, jnp.asarray(rate), vector, state, measurement, rtol
+    )
+    check(reached, rtol)
+    return complex(amplitude), complex(coefficient), int(applications)
+
+
+@jax.jit
+def _amplitude(  # ruff:ignore[too-many-arguments, too-many-positional-arguments]
+    eigen: EigenLiouvillian,
+    shift: jax.Array,
+    vector: jax.Array,
+    state: jax.Array,
+    measurement: jax.Array,
+    rtol: float,
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    """Get the amplitude, coefficient, applications of L and residual reached of `_get_amplitude`, on the device."""
 
     def apply(y: jax.Array) -> jax.Array:
         out = apply_eigen(eigen, y, shift)
         return out - jnp.vdot(vector, out) * vector
 
     rhs = state - jnp.vdot(vector, state) * vector
-    if float(jnp.linalg.norm(rhs)) <= rtol * float(jnp.linalg.norm(state)):
-        # Less than rtol of the state is off the mode, as for the steady
-        # state at dK = 0, so y = 0 solves it to rtol: refining that rhs, of
-        # round off, to rtol of itself took 2,002 applications of L for
-        # hydrogen on Cu(111) in 1D
-        coefficient, applications = complex(jnp.vdot(vector, state)), 0
-    else:
-        y, applications = refine(
+
+    def solved(_: None) -> tuple[jax.Array, jax.Array, jax.Array]:
+        y, applications, reached = refine(
             apply,
             lambda residual, inner_rtol: _projected_solve(
                 eigen,
@@ -190,14 +202,29 @@ def _get_amplitude(  # ruff:ignore[too-many-arguments]
                 method="bicgstab",
             ),
             rhs,
-            rtol=rtol,
+            rtol=jnp.asarray(rtol),
             inner_rtol=INNER_RTOL,
             passes=PASSES,
         )
-        coefficient = complex(jnp.vdot(vector, state - apply_eigen(eigen, y, shift)))
-        applications += 1
-    amplitude = complex(jnp.vdot(measurement, vector)) * coefficient
-    return amplitude, coefficient, applications
+        coefficient = jnp.vdot(vector, state - apply_eigen(eigen, y, shift))
+        return coefficient, applications + 1, reached
+
+    def direct(_: None) -> tuple[jax.Array, jax.Array, jax.Array]:
+        return jnp.vdot(vector, state), jnp.asarray(0), jnp.asarray(0.0)
+
+    # Less than rtol of the state off the mode, as for the steady state at
+    # dK = 0, means y = 0 solves it to rtol: refining that rhs, of round
+    # off, to rtol of itself took 2,002 applications of L for hydrogen on
+    # Cu(111) in 1D
+    coefficient, applications, reached = jax.lax.cond(
+        jnp.linalg.norm(rhs) <= rtol * jnp.linalg.norm(state), direct, solved, None
+    )
+    return (
+        jnp.vdot(measurement, vector) * coefficient,
+        coefficient,
+        applications,
+        reached,
+    )
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -11,8 +11,6 @@ import numpy as np
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from classical_diffusion.caldeira_leggett._model import ComplexArray
-
 _EPS = float(np.finfo(float).eps)
 _SWEEPS = 100
 """The most Aberth sweeps at each level of the divide and conquer; 9 to 18 were needed on every tridiagonal tried."""
@@ -34,7 +32,7 @@ _CHUNK = 128
 """The roots taken together in the steps whose memory is m times their number."""
 
 
-def _size(m: int) -> int:
+def get_size(m: int) -> int:
     """Get the padded size, 2^k or 3 2^(k-1), so that compiled shapes are few and halve evenly."""
     size = 2
     while True:
@@ -265,34 +263,34 @@ def _weights(roots: jax.Array, alpha: jax.Array, coupling: jax.Array) -> jax.Arr
     ).ravel()
 
 
-@jax.jit
-def _fraction(alpha: jax.Array, coupling: jax.Array, points: jax.Array) -> jax.Array:
-    def row(
-        value: jax.Array, entries: tuple[jax.Array, jax.Array]
-    ) -> tuple[jax.Array, None]:
-        diagonal, product = entries
-        return 1 / (points - diagonal - product * value), None
-
-    return jax.lax.scan(row, jnp.zeros_like(points), (alpha, coupling), reverse=True)[0]
-
-
-def _padded(alpha: ComplexArray, coupling: ComplexArray) -> tuple[jax.Array, jax.Array]:
-    """Get alpha and coupling padded to `_size` by uncoupled diagonal entries left of the spectrum (|lambda| <= max |alpha| + 2 max |c|^1/2, the bound of the complex symmetric form), coupling with a zero last."""
-    m = len(alpha)
-    size = _size(m)
-    radius = np.abs(alpha).max() + 2 * np.sqrt(np.abs(coupling).max(initial=0.0))
-    padding = -2 * (radius + 1) * (1 + np.arange(size - m) / size)
-    return (
-        jnp.asarray(np.concatenate([alpha, padding]).astype(complex)),
-        jnp.asarray(np.concatenate([coupling, np.zeros(size - m + 1)]).astype(complex)),
-    )
-
-
 def continued_fraction(
-    alpha: ComplexArray, coupling: ComplexArray, s: ComplexArray
+    alpha: jax.Array, coupling: jax.Array, steps: jax.Array, points: jax.Array
 ) -> jax.Array:
-    """Get e_1^T (s - T)^-1 e_1 at each s, as a continued fraction from the last row back, O(m) for each s, on the device."""
-    return _fraction(*_padded(alpha, coupling), jnp.asarray(s, dtype=complex))
+    """Get e_1^T (s - T_m)^-1 e_1 at each point s for the first `steps` rows of alpha and coupling, as a continued fraction from the last row back, O(m) for each s.
+
+    The coupling of the last row (to the next, not yet in T_m) is not used.
+    """
+
+    def row(i: jax.Array, value: jax.Array) -> jax.Array:
+        k = steps - 1 - i
+        return 1 / (points - alpha[k] - coupling[k] * value)
+
+    return jax.lax.fori_loop(0, steps, row, jnp.zeros_like(points))
+
+
+@partial(jax.jit, static_argnames="size")
+def _padded(
+    alpha: jax.Array, coupling: jax.Array, steps: jax.Array, *, size: int
+) -> tuple[jax.Array, jax.Array]:
+    """Get the first `steps` rows of alpha and coupling padded to size (`get_size`) by uncoupled diagonal entries left of the spectrum (|lambda| <= max |alpha| + 2 max |c|^1/2, the bound of the complex symmetric form), coupling with a zero last."""
+    index = jnp.arange(size)
+    alpha, coupling = alpha[:size], coupling[:size]
+    diagonal, coupled = index < steps, index < steps - 1
+    radius = jnp.where(diagonal, jnp.abs(alpha), 0).max() + 2 * jnp.sqrt(
+        jnp.where(coupled, jnp.abs(coupling), 0).max()
+    )
+    padding = -2 * (radius + 1) * (1 + (index - steps) / size)
+    return jnp.where(diagonal, alpha, padding), jnp.where(coupled, coupling, 0)
 
 
 def _pairwise(
@@ -429,12 +427,13 @@ def _poles(
 
 
 def get_poles(
-    alpha: ComplexArray, coupling: ComplexArray, *, span: float
+    alpha: jax.Array, coupling: jax.Array, steps: int, *, span: float
 ) -> tuple[jax.Array, jax.Array]:
     """Get the eigenvalues lambda_j of T and their weights w_j, e_1^T (s - T)^-1 e_1 = sum_j w_j / (s - lambda_j), in O(m^2), on the device.
 
-    T is tridiagonal with alpha on its diagonal and the products of its
-    off-diagonals beta_k delta_k = coupling_k, nonzero (unreduced). Its
+    T is tridiagonal with the first `steps` of alpha on its diagonal and the
+    products of its off-diagonals beta_k delta_k = coupling_k, nonzero
+    (unreduced), each at least get_size(steps) long. Its
     eigenvalues are the roots of its characteristic polynomial, found by
     the Ehrlich-Aberth iteration (`_aberth`) on the recurrence of its
     leading minors, from those of its two halves, recursively (`_roots`);
@@ -444,4 +443,5 @@ def get_poles(
     and stays on the device (`_poles`), padded (`_padded`): the weights of
     the padding are zero.
     """
-    return _poles(*_padded(alpha, coupling), jnp.asarray(span))
+    alpha, coupling = _padded(alpha, coupling, jnp.asarray(steps), size=get_size(steps))
+    return _poles(alpha, coupling, jnp.asarray(span))

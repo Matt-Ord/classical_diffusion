@@ -9,8 +9,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from classical_diffusion.caldeira_leggett._liouvillian import add_jumps
-
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -34,29 +32,48 @@ class EigenLiouvillian:
     jump, rather than two more for the Hamiltonian and four for each
     application of the preconditioner: for hydrogen on Cu(111) in 2D, each
     iteration of a solve is 1.36 times faster.
+
+    The jumps K_j, B_j of every j are stacked, so that an application is
+    two products at each kappa whatever the number of jumps (`apply_split`),
+    and stored as the real part, imaginary part and their sum of each
+    matrix, (3, ...), for products of real matrices (`_product`).
     """
 
     rates: jax.Array
     """Z, (n_kappa, n_bands, n_bands)."""
-    jumps_ket: jax.Array
-    """The transformed jumps, (n_ops, n_kappa, n_bands, n_bands), or with at least _GAUSS_BANDS bands (n_ops, 3, n_kappa, n_bands, n_bands) as their real part, imaginary part and the sum of both (`_product`)."""
-    jumps_bra_dagger: jax.Array
+    forward_ket: jax.Array
+    """K_j[s] stacked over j at each source s, (3, n_kappa, n_ops n_bands, n_bands)."""
+    forward_bra: jax.Array
+    """B_j[s_j(kappa)] stacked over j at each kappa, where s_j(kappa) is the source from which the jump j reaches kappa, (3, n_kappa, n_ops n_bands, n_bands)."""
+    adjoint_ket: jax.Array
+    """The conjugate transposes of forward_ket at each kappa, the jumps of L^dagger, (3, n_kappa, n_bands, n_ops n_bands)."""
+    adjoint_bra: jax.Array
+    """The conjugate transposes of forward_bra."""
     sources: jax.Array
-    """(n_ops, n_kappa), the index of the kappa from which each jump reaches kappa."""
+    """(n_kappa, n_ops), the source s_j(kappa) of each kappa and jump."""
+    targets: jax.Array
+    """(n_kappa, n_ops), the kappa each jump reaches from kappa, the inverse of sources."""
     ket_vectors: jax.Array
     """A."""
     ket_inverse: jax.Array
     bra_vectors_dagger: jax.Array
     """B^dagger."""
     bra_inverse_dagger: jax.Array
-    trace: jax.Array
-    """W = (B^dagger A)^T, so that Tr[X] = sum(W * Y)."""
-    adjoint_ket: jax.Array
-    """The transformed jumps of L^dagger, K_j^dagger, stored as jumps_ket (`apply_adjoint`)."""
-    adjoint_bra_dagger: jax.Array
-    """B_j^dagger, the bra side of the jumps of L^dagger."""
-    targets: jax.Array
-    """(n_ops, n_kappa), the index of the kappa each jump reaches from kappa, the inverse of sources."""
+
+
+def _dagger(x: np.ndarray) -> np.ndarray:
+    return x.conj().swapaxes(-1, -2)
+
+
+def _parts(x: np.ndarray) -> jax.Array:
+    """Get the real part, imaginary part and their sum of complex matrices, (3, ...)."""
+    return jnp.asarray(np.stack([x.real, x.imag, x.real + x.imag]))
+
+
+def _stack(x: np.ndarray) -> np.ndarray:
+    """Stack the matrices (n_ops, n_kappa, n, n) over the jumps at each kappa, (n_kappa, n_ops n, n)."""
+    n_ops, n_kappa, n, _ = x.shape
+    return x.swapaxes(0, 1).reshape(n_kappa, n_ops * n, n)
 
 
 def get_eigen_liouvillian(liouvillian: Liouvillian) -> EigenLiouvillian:
@@ -70,60 +87,112 @@ def get_eigen_liouvillian(liouvillian: Liouvillian) -> EigenLiouvillian:
     sources = np.asarray(liouvillian.sources)
     # The jump j takes kappa to targets[j, kappa], as sources[j, targets[j, kappa]] = kappa
     targets = np.argsort(sources, axis=-1)
-    jumps_ket = a_inverse[targets] @ np.asarray(liouvillian.jumps_ket) @ a
-    jumps_bra_dagger = (
+    # K_j[s] and B_j[s], (n_ops, n_kappa, n_bands, n_bands), for the jump from s
+    ket = a_inverse[targets] @ np.asarray(liouvillian.jumps_ket) @ a
+    bra = (
         b_dagger @ np.asarray(liouvillian.jumps_bra_dagger) @ b_inverse_dagger[targets]
     )
+    # Stacked over the jumps, K_j[s] at each source and B_j[s_j(kappa)] at each kappa
+    forward_ket = _stack(ket)
+    forward_bra = _stack(bra[np.arange(len(bra))[:, None], sources])
     return EigenLiouvillian(
         rates=jnp.asarray(-1j * (mu[:, :, None] - nu.conj()[:, None, :])),
-        jumps_ket=_parts(jumps_ket),
-        jumps_bra_dagger=_parts(jumps_bra_dagger),
-        adjoint_ket=_parts(_dagger(jumps_ket)),
-        adjoint_bra_dagger=_parts(_dagger(jumps_bra_dagger)),
-        targets=jnp.asarray(targets),
-        sources=jnp.asarray(sources),
+        forward_ket=_parts(forward_ket),
+        forward_bra=_parts(forward_bra),
+        adjoint_ket=_parts(_dagger(forward_ket)),
+        adjoint_bra=_parts(_dagger(forward_bra)),
+        sources=jnp.asarray(sources.T),
+        targets=jnp.asarray(targets.T),
         ket_vectors=jnp.asarray(a),
         ket_inverse=jnp.asarray(a_inverse),
         bra_vectors_dagger=jnp.asarray(b_dagger),
         bra_inverse_dagger=jnp.asarray(b_inverse_dagger),
-        trace=jnp.asarray((b_dagger @ a).swapaxes(-1, -2)),
     )
 
 
-_GAUSS_BANDS = 64
-"""The number of bands from which the jumps are applied as real products (`_product`).
-
-Per application of L, complex against real products: 2D Li (139 bands)
-122 -> 79 ms, 2D H (23 bands) 5.2 -> 6.7 ms, 1D Li (17 bands) 0.06 ->
-0.10 ms, as XLA spends longer on each small product than on its
-arithmetic.
-"""
+def split(x: jax.Array) -> jax.Array:
+    """Get a complex array as its real and imaginary parts, (2, ...)."""
+    return jnp.stack([x.real, x.imag])
 
 
-def _dagger(x: np.ndarray) -> np.ndarray:
-    return x.conj().swapaxes(-1, -2)
+def join(x: jax.Array) -> jax.Array:
+    """Get the complex array of its real and imaginary parts (`split`)."""
+    return x[0] + 1j * x[1]
 
 
-def _parts(x: np.ndarray) -> jax.Array:
-    """Get the jumps as stored: (n, ...), or with at least _GAUSS_BANDS bands the real part, imaginary part and their sum of each matrix, (n, 3, ...)."""
-    if x.shape[-1] < _GAUSS_BANDS:
-        return jnp.asarray(x)
-    return jnp.asarray(np.stack([x.real, x.imag, x.real + x.imag], axis=1))
+def multiply(c: jax.Array, x: jax.Array) -> jax.Array:
+    """Get c x, for x split into real and imaginary parts and c complex, elementwise or a scalar."""
+    real, imaginary = jnp.real(c), jnp.imag(c)
+    return jnp.stack([real * x[0] - imaginary * x[1], real * x[1] + imaginary * x[0]])
 
 
-def _product(
-    a: tuple[jax.Array, jax.Array, jax.Array], b: tuple[jax.Array, jax.Array, jax.Array]
-) -> tuple[jax.Array, jax.Array]:
-    """Get the real and imaginary parts of a product of complex matrices, from three real products (Gauss).
+def inner(a: jax.Array, b: jax.Array) -> jax.Array:
+    """Get <a, b> = sum(conj(a) * b) of arrays split into real and imaginary parts."""
+    return jnp.sum(a[0] * b[0] + a[1] * b[1]) + 1j * jnp.sum(a[0] * b[1] - a[1] * b[0])
 
-    a and b are each (real, imaginary, real + imaginary). XLA multiplies
-    complex matrices on the CPU at about half the flop rate of real ones
-    (OpenBLAS does not): (9, 139, 139) by (9, 139, 139) takes 10.2 ms
-    complex and 1.45 ms real (OpenBLAS 5.9 and 1.45 ms), so three real
-    products take 4.4 ms.
+
+def _product(a: jax.Array, b: jax.Array) -> jax.Array:
+    """Get the real and imaginary parts (2, ...) of products of complex matrices, from three real products (Gauss).
+
+    a and b are each (real, imaginary, real + imaginary), (3, ...). XLA
+    multiplies complex matrices on the CPU at about half the flop rate of
+    real ones (OpenBLAS does not): (9, 139, 139) by (9, 139, 139) takes 10.2
+    ms complex and 1.45 ms real (OpenBLAS 5.9 and 1.45 ms), so three real
+    products take 4.4 ms. On a GPU they are 3/4 of the flops of a complex
+    product. The parts are behind a barrier, which keeps XLA from fusing
+    them into the products, which would then no longer be calls to its
+    matrix product.
     """
-    p_1, p_2, p_3 = a[0] @ b[0], a[1] @ b[1], a[2] @ b[2]
-    return p_1 - p_2, p_3 - p_1 - p_2
+    p = jnp.matmul(*jax.lax.optimization_barrier((a, b)))
+    return jnp.stack([p[0] - p[1], p[2] - p[0] - p[1]])
+
+
+def _parts_of(x: jax.Array) -> jax.Array:
+    """Get (real, imaginary, real + imaginary) of x split into its parts."""
+    return jnp.stack([x[0], x[1], x[0] + x[1]])
+
+
+def apply_split(eigen: EigenLiouvillian, y: jax.Array, shift: jax.Array) -> jax.Array:
+    """Apply L - shift to a split state in the eigenvectors (`EigenLiouvillian`).
+
+    L Y[kappa] = Z Y[kappa] + sum_j K_j[s] Y[s] B_j[s] with s = s_j(kappa):
+    the products K_j[s] Y[s] of every j are one product at each s, and the
+    sum over j at each kappa is one product of the row of those at the
+    sources of kappa with the column of B_j[s_j(kappa)].
+    """
+    n_kappa, n_ops = eigen.sources.shape
+    n_bands = y.shape[-1]
+    left = _product(eigen.forward_ket, _parts_of(y))
+    left = left.reshape(2, n_kappa, n_ops, n_bands, n_bands)[
+        :, eigen.sources, jnp.arange(n_ops)
+    ]
+    left = left.swapaxes(2, 3).reshape(2, n_kappa, n_bands, n_ops * n_bands)
+    return multiply(eigen.rates - shift, y) + _product(
+        _parts_of(left), eigen.forward_bra
+    )
+
+
+def apply_adjoint_split(
+    eigen: EigenLiouvillian, w: jax.Array, shift: jax.Array
+) -> jax.Array:
+    """Apply (L - shift)^dagger to a split state, the adjoint of `apply_split` in <w, y> = sum(conj(w) * y).
+
+    As L Y[kappa] = Z Y[kappa] + sum_j K_j[s] Y[s] B_j[s] with s = s_j(kappa),
+    L^dagger W[s] = conj(Z) W[s] + sum_j K_j[s]^dagger W[t_j(s)] B_j[s]^dagger
+    with t_j(s) the target of s: W[t] B_j[s_j(t)]^dagger of every j is one
+    product at each t, and the sum over j at each s one product, as many as
+    for L.
+    """
+    n_kappa, n_ops = eigen.targets.shape
+    n_bands = w.shape[-1]
+    right = _product(_parts_of(w), eigen.adjoint_bra)
+    right = right.reshape(2, n_kappa, n_bands, n_ops, n_bands).swapaxes(2, 3)[
+        :, eigen.targets, jnp.arange(n_ops)
+    ]
+    right = right.reshape(2, n_kappa, n_ops * n_bands, n_bands)
+    return multiply((eigen.rates - shift).conj(), w) + _product(
+        eigen.adjoint_ket, _parts_of(right)
+    )
 
 
 def to_eigen(eigen: EigenLiouvillian, x: jax.Array) -> jax.Array:
@@ -138,59 +207,14 @@ def from_eigen(eigen: EigenLiouvillian, y: jax.Array) -> jax.Array:
 
 @jax.jit
 def apply_eigen(eigen: EigenLiouvillian, y: jax.Array, shift: jax.Array) -> jax.Array:
-    """Apply L - shift to a state in the eigenvectors, adding the jumps one at a time, with at least _GAUSS_BANDS bands as real products."""
-    if eigen.jumps_ket.ndim == y.ndim + 1:
-        return add_jumps(
-            (eigen.rates - shift) * y,
-            y,
-            (eigen.jumps_ket, eigen.jumps_bra_dagger, eigen.sources),
-        )
-    # The barriers keep XLA from fusing the parts into the products, which
-    # would then no longer be calls to its matrix product
-    barrier = jax.lax.optimization_barrier
-    parts = barrier((y.real, y.imag, y.real + y.imag))
-    real, imaginary = jnp.zeros(y.shape), jnp.zeros(y.shape)
-    for ket, bra_dagger, sources in zip(
-        eigen.jumps_ket, eigen.jumps_bra_dagger, eigen.sources, strict=True
-    ):
-        left = _product(tuple(ket), parts)
-        left = barrier((*left, left[0] + left[1]))
-        out = _product(left, tuple(bra_dagger))
-        real += out[0][sources]
-        imaginary += out[1][sources]
-    return (eigen.rates - shift) * y + (real + 1j * imaginary)
+    """Apply L - shift to a complex state in the eigenvectors (`apply_split`)."""
+    return join(apply_split(eigen, split(y), shift))
 
 
 @jax.jit
 def apply_adjoint(eigen: EigenLiouvillian, w: jax.Array, shift: jax.Array) -> jax.Array:
-    """Apply (L - shift)^dagger to a state in the eigenvectors, the adjoint of `apply_eigen` in <w, y> = sum(conj(w) * y).
-
-    As L Y[kappa] = Z Y[kappa] + sum_j K_j[s] Y[s] B_j[s] with s the source of
-    kappa, L^dagger W[s] = conj(Z) W[s] + sum_j K_j[s]^dagger W[t_j(s)]
-    B_j[s]^dagger with t_j(s) the target of s: the same products, as many
-    as for L.
-    """
-    rates = (eigen.rates - shift).conj()
-    if eigen.adjoint_ket.ndim == w.ndim + 1:
-        return add_jumps(
-            rates * w,
-            w,
-            (eigen.adjoint_ket, eigen.adjoint_bra_dagger, eigen.targets),
-            gather=True,
-        )
-    barrier = jax.lax.optimization_barrier
-    real, imaginary = jnp.zeros(w.shape), jnp.zeros(w.shape)
-    for ket, bra_dagger, targets in zip(
-        eigen.adjoint_ket, eigen.adjoint_bra_dagger, eigen.targets, strict=True
-    ):
-        moved = w[targets]
-        parts = barrier((moved.real, moved.imag, moved.real + moved.imag))
-        left = _product(tuple(ket), parts)
-        left = barrier((*left, left[0] + left[1]))
-        out = _product(left, tuple(bra_dagger))
-        real += out[0]
-        imaginary += out[1]
-    return rates * w + (real + 1j * imaginary)
+    """Apply (L - shift)^dagger to a complex state in the eigenvectors (`apply_adjoint_split`)."""
+    return join(apply_adjoint_split(eigen, split(w), shift))
 
 
 def bicgstab(
@@ -245,40 +269,68 @@ def refine(  # ruff:ignore[too-many-arguments]
     solve_pass: Callable[[jax.Array, jax.Array], tuple[jax.Array, jax.Array]],
     rhs: jax.Array,
     *,
-    rtol: float,
+    rtol: jax.Array,
     inner_rtol: float,
     passes: int,
-) -> tuple[jax.Array, int]:
-    """Solve A x = rhs by passes of an inner solver, each from the true residual (iterative refinement), and get the applications of A.
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """Solve A x = rhs by passes of an inner solver, each from the true residual (iterative refinement), and get the applications of A and the residual reached, relative to |rhs|, or nan if it was still falling after the passes.
 
     solve_pass(residual, rtol) gives an approximate solution and its
     applications of A. Its residual is not monotonic, so each pass only reduces the
     true residual by inner_rtol (or to rtol), and the next starts afresh from
     that residual, which also recovers from a breakdown. The passes stop once
     the residual is below rtol of |rhs|, or once it no longer halves, when
-    round off has set its floor.
+    round off has set its floor. It is all one loop on the device: the
+    caller raises on a nan (`check`).
+    """
+    norm = jnp.maximum(jnp.linalg.norm(rhs), 1e-300)
+
+    def proceed(state: tuple) -> jax.Array:
+        *_, done, k = state
+        return ~done & (k < passes)
+
+    def iterate(state: tuple) -> tuple:
+        solution, residual, best, applications, _, k = state
+        step, count = solve_pass(residual, jnp.maximum(inner_rtol, rtol / best))
+        update = solution + step
+        update_residual = rhs - apply(update)
+        relative = jnp.linalg.norm(update_residual) / norm
+        worse = relative > best / 2
+        return (
+            jnp.where(worse, solution, update),
+            jnp.where(worse, residual, update_residual),
+            jnp.where(worse, best, relative),
+            applications + count + 1,
+            worse | (relative <= rtol),
+            k + 1,
+        )
+
+    solution, _, best, applications, done, _ = jax.lax.while_loop(
+        proceed,
+        iterate,
+        (
+            jnp.zeros_like(rhs),
+            rhs,
+            jnp.asarray(1.0),
+            jnp.asarray(0),
+            jnp.zeros((), bool),
+            jnp.asarray(0),
+        ),
+    )
+    return solution, applications, jnp.where(done, best, jnp.nan)
+
+
+def check(reached: jax.Array, rtol: float) -> None:
+    """Raise if a refinement (`refine`) did not settle within its passes.
 
     Raises
     ------
     RuntimeError
-        If the residual is still falling after the passes.
+        If the residual was still falling after PASSES passes.
     """
-    norm = max(float(jnp.linalg.norm(rhs)), 1e-300)
-    solution, residual, best = jnp.zeros_like(rhs), rhs, 1.0
-    applications = 0
-    for _ in range(passes):
-        step, count = solve_pass(residual, jnp.asarray(max(inner_rtol, rtol / best)))
-        update = solution + step
-        update_residual = rhs - apply(update)
-        applications += int(count) + 1
-        relative = float(jnp.linalg.norm(update_residual)) / norm
-        if relative > best / 2:
-            return solution, applications
-        solution, residual, best = update, update_residual, relative
-        if best <= rtol:
-            return solution, applications
-    msg = f"BiCGSTAB reached a residual of {best:.1e}, above {rtol:.1e}, after {passes} passes"
-    raise RuntimeError(msg)
+    if np.isnan(float(reached)):
+        msg = f"BiCGSTAB did not reach a residual of {rtol:.1e} in {PASSES} passes"
+        raise RuntimeError(msg)
 
 
 MAXITER = 1000
@@ -311,6 +363,21 @@ def _solve_pass(
     return y / eigen.rates, 2 * iterations
 
 
+@jax.jit
+def _solve(
+    eigen: EigenLiouvillian, rhs: jax.Array, rtol: float
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """Solve L Y = rhs in the eigenvectors (`solve`), and get the applications of L and the residual reached (`refine`)."""
+    return refine(
+        lambda y: apply_eigen(eigen, y, jnp.asarray(0j)),
+        lambda residual, rtol: _solve_pass(eigen, residual, rtol, maxiter=MAXITER),
+        rhs,
+        rtol=jnp.asarray(rtol),
+        inner_rtol=INNER_RTOL,
+        passes=PASSES,
+    )
+
+
 def solve(
     eigen: EigenLiouvillian, rhs: jax.Array, config: CaldeiraLeggettConfig
 ) -> jax.Array:
@@ -330,14 +397,8 @@ def solve(
     nor D (within 5e-10) for H, Li and Na on Cu(111), as the refinement stops
     once the residual no longer halves.
     """
-    y, _ = refine(
-        lambda y: apply_eigen(eigen, y, jnp.asarray(0j)),
-        lambda residual, rtol: _solve_pass(eigen, residual, rtol, maxiter=MAXITER),
-        to_eigen(eigen, rhs),
-        rtol=config.linear_rtol,
-        inner_rtol=INNER_RTOL,
-        passes=PASSES,
-    )
+    y, _, reached = _solve(eigen, to_eigen(eigen, rhs), config.linear_rtol)
+    check(reached, config.linear_rtol)
     return from_eigen(eigen, y)
 
 
