@@ -718,12 +718,11 @@ def _get_derivative(
     direction: tuple[float, ...] | None,
 ) -> tuple[Operators, Operators, FloatArray]:
     """Get the operators, their twist derivative along the direction (by default the first axis), and its unit vector."""
-    couplings = get_couplings(model, bands)
-    operators = get_operators(bands.energies, couplings)
     unit = np.eye(model.n_dim)[0] if direction is None else np.asarray(direction, float)
     unit /= np.linalg.norm(unit)
-    velocity = get_velocity(model, bands, unit)
-    derivative = get_twist_derivative(bands.energies, couplings, operators, velocity)
+    operators, derivative = get_twist_derivative(
+        bands.energies, get_couplings(model, bands), get_velocity(model, bands, unit)
+    )
     return operators, derivative, unit
 
 

@@ -139,10 +139,27 @@ def get_operators(energies: FloatArray, couplings: Couplings) -> Operators:
     is a constant for e^{+-i q x}, but the part from the symmetric spectrum is
     not, and is added to H at each kappa (`_lamb_amplitude`).
     """
+    omega = _get_omega(energies, couplings)
+    return _build_operators(
+        energies, couplings, _bath_amplitude(omega), _lamb_amplitude(omega)
+    )
+
+
+def _get_omega(energies: FloatArray, couplings: Couplings) -> FloatArray:
+    """Get E_b - E_a for each coupling, b at its target and a at its source."""
+    return energies[couplings.targets][..., :, None] - energies[:, None, :]
+
+
+def _build_operators(
+    energies: FloatArray,
+    couplings: Couplings,
+    bath: FloatArray,
+    lamb_amplitude: ComplexArray,
+) -> Operators:
+    """Get the operators from the bath and Lamb amplitudes of each coupling (`get_operators`)."""
     coupling = couplings.matrices
-    omega = energies[couplings.targets][..., :, None] - energies[:, None, :]
-    jumps = coupling * _bath_amplitude(omega)
-    m = _dagger(coupling) @ (coupling * _lamb_amplitude(omega))
+    jumps = coupling * bath
+    m = _dagger(coupling) @ (coupling * lamb_amplitude)
     lamb = np.sum(m + _dagger(m), axis=0)
     gamma = np.einsum("jkab,jkac->kbc", jumps.conj(), jumps)
     hamiltonian = _diagonal(energies) + lamb - 0.5j * gamma
@@ -186,6 +203,7 @@ def get_offset_operators(
 
 def _get_perturbed_function(
     function: Callable[[FloatArray], FloatArray | ComplexArray],
+    f: FloatArray | ComplexArray,
     couplings: Couplings,
     energies: FloatArray,
     velocity: ComplexArray,
@@ -202,12 +220,12 @@ def _get_perturbed_function(
 
     Each sum separates into two matrix products, so the cost is that of
     building the operators. Between degenerate bands the divided difference
-    is the derivative of f, found by a central difference.
+    is the derivative of f, found by a central difference. f is the function
+    at E_b - E_a (`_get_omega`).
     """
     coupling = couplings.matrices
     target_energies = energies[couplings.targets]
-    omega = target_energies[..., :, None] - energies[:, None, :]
-    f = function(omega)
+    omega = _get_omega(energies, couplings)
     df = (function(omega + _DERIVATIVE_STEP) - function(omega - _DERIVATIVE_STEP)) / (
         2 * _DERIVATIVE_STEP
     )
@@ -235,27 +253,34 @@ def _get_perturbed_function(
 def get_twist_derivative(
     energies: FloatArray,
     couplings: Couplings,
-    operators: Operators,
     velocity: ComplexArray,
-) -> Operators:
-    """Get the derivative of the operators with the offset of the grid along a direction, of velocity v.
+) -> tuple[Operators, Operators]:
+    """Get the operators (`get_operators`) and their derivative with the offset of the grid along a direction, of velocity v.
 
     These are the derivatives at theta = 0 of e^{-i theta x} O e^{i theta x},
     the operators of `get_offset_operators`, found analytically by k . p
     perturbation theory. In the basis of the bands e^{i q x} does not depend on
     the offset, and H gains theta v, so each Lindblad operator and the Lamb
     shift changes only through the spectral function
-    (`_get_perturbed_function`).
+    (`_get_perturbed_function`). The spectral functions at the energies of the
+    bands are found once for both.
     """
-    jumps = _get_perturbed_function(_bath_amplitude, couplings, energies, velocity)
+    omega = _get_omega(energies, couplings)
+    bath, lamb_amplitude = _bath_amplitude(omega), _lamb_amplitude(omega)
+    operators = _build_operators(energies, couplings, bath, lamb_amplitude)
+    jumps = _get_perturbed_function(
+        _bath_amplitude, bath, couplings, energies, velocity
+    )
     m = _dagger(couplings.matrices) @ _get_perturbed_function(
-        _lamb_amplitude, couplings, energies, velocity
+        _lamb_amplitude, lamb_amplitude, couplings, energies, velocity
     )
     gamma = np.einsum("jkab,jkac->kbc", jumps.conj(), operators.jumps)
     hamiltonian = (
         velocity + np.sum(m + _dagger(m), axis=0) - 0.5j * (gamma + _dagger(gamma))
     )
-    return Operators(jumps=jumps, targets=couplings.targets, hamiltonian=hamiltonian)
+    return operators, Operators(
+        jumps=jumps, targets=couplings.targets, hamiltonian=hamiltonian
+    )
 
 
 @jax.tree_util.register_dataclass
