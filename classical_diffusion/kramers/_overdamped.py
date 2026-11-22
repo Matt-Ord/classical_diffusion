@@ -1,5 +1,5 @@
-# cspell: ignore btol lsqr tocsr unconverged vdot
-"""The overdamped limit of the Langevin equation, the Smoluchowski equation, solved by Lanczos on its symmetrised generator."""
+# cspell: ignore btol lsqr reorthogonalization tocsr unconverged vdot
+"""The overdamped limit of the Langevin equation, the Smoluchowski equation, solved by Krylov methods (Arnoldi, which is Lanczos for this Hermitian operator) on its symmetrised generator."""
 
 import dataclasses
 import operator
@@ -18,7 +18,7 @@ from classical_diffusion._results import (
     select_modes,
 )
 from classical_diffusion.kramers._config import DEFAULT_CONFIG, KramersConfig
-from classical_diffusion.kramers._lanczos import LanczosProblem, get_modal_sum
+from classical_diffusion.kramers._krylov import KrylovProblem, get_modal_sum
 from classical_diffusion.kramers._model import (
     Model,
     build_model,
@@ -85,7 +85,7 @@ def scaled_delta_k(
 
 
 _BLOCK = 8
-"""The Lanczos steps between evaluations of the modal sum."""
+"""The Arnoldi steps between evaluations of the modal sum."""
 
 
 def _get_modes(  # ruff:ignore[too-many-arguments]
@@ -97,9 +97,9 @@ def _get_modes(  # ruff:ignore[too-many-arguments]
     error: Callable[[ModalSum, ModalSum], float],
     tol: float,
 ) -> ModalSum:
-    """Get <u| e^{L t} |u> / norm as a modal sum, by Lanczos on the Hermitian -L (`get_modal_sum`)."""
+    """Get <u| e^{L t} |u> / norm as a modal sum, by Arnoldi (Lanczos with full reorthogonalization) on the Hermitian -L (`get_modal_sum`)."""
     modal = get_modal_sum(
-        LanczosProblem(
+        KrylovProblem(
             apply=apply,
             parity=None,
             rates_of=operator.neg,
@@ -199,7 +199,7 @@ def solve_isf_overdamped(
     A = grad - i K + grad V / 2, Hermitian, so the ISF
     I(K, t) = <w| e^{L t} |w> / <w|w>, w = e^{-V / 2}, is a sum of decaying
     exponentials. Their rates and weights are the Gauss quadrature of the
-    spectral measure of -L in w, by the Lanczos method (`get_modal_sum`),
+    spectral measure of -L in w, by Arnoldi (`get_modal_sum`),
     extended until the ISF at the times changes by less than config.tol / 10
     over two blocks of steps.
 

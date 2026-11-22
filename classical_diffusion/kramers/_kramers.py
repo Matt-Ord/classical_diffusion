@@ -20,7 +20,11 @@ from classical_diffusion._results import (
     select_modes,
 )
 from classical_diffusion.kramers._config import DEFAULT_CONFIG, KramersConfig
-from classical_diffusion.kramers._lanczos import LanczosProblem, get_modal_sum
+from classical_diffusion.kramers._krylov import (
+    KrylovProblem,
+    get_modal_sum,
+    get_ritz_pairs,
+)
 from classical_diffusion.kramers._model import (
     Model,
     build_model,
@@ -33,7 +37,6 @@ from classical_diffusion.kramers._smoluchowski import get_amplitude, get_grid_si
 from classical_diffusion.kramers._stepping import (
     MatrixFreeOperator,
     build_matrix_free_operator,
-    get_ritz_pairs,
     propagate_form,
     propagate_state,
     solve_by_propagation,
@@ -50,7 +53,7 @@ if TYPE_CHECKING:
     from classical_diffusion.langevin._system import PeriodicSystem
 
 _SHIFT = 1.0
-"""The shift sigma of the shift-invert Lanczos method, in units of the thermal velocity over the length unit."""
+"""The shift sigma of the shift-invert Arnoldi method, in units of the thermal velocity over the length unit."""
 _GROW = 1.3
 """The factor by which the Hermite order and the plane wave radius grow while the basis converges."""
 
@@ -185,14 +188,14 @@ def _get_modes(
     error: Callable[[ModalSum, ModalSum], float],
     tol: float,
 ) -> ModalSum:
-    """Get the correlation [u, e^{L t} u] / <w|w> = u^T J e^{L t} u / <w|w> as a modal sum, by Lanczos on (shift - L)^-1 in the form x^T J y.
+    """Get the correlation [u, e^{L t} u] / <w|w> = u^T J e^{L t} u / <w|w> as a modal sum, by Arnoldi on (shift - L)^-1 (`get_modal_sum`).
 
     The shift maps the slow modes, close to the origin, to the largest
-    eigenvalues of the inverse, which the Lanczos method finds first, so a
+    eigenvalues of the inverse, which the Arnoldi method finds first, so a
     few tens of solves give the correlation at every time.
     """
     modal = get_modal_sum(
-        LanczosProblem(
+        KrylovProblem(
             apply=problem.solve,
             parity=problem.parity,
             rates_of=lambda mu: _SHIFT - 1 / mu,
@@ -412,7 +415,7 @@ def solve_isf(
     unit cell. In the frame symmetrised by the equilibrium, the Kramers
     operator L is real and J-symmetric, with J the parity of the momentum,
     so the ISF, <w| e^{L t} |w> / <w|w> for w = e^{-V / 2}, is a sum of modes
-    found by Lanczos on (1 - L)^{-1} in the form x^T J y (`get_modes`), with
+    found by Arnoldi on (1 - L)^{-1} (`get_modal_sum`), with
     one sparse LU factorisation. The modes give the ISF at any time at once.
     The basis grows until the ISF changes by less than config.tol / 3.
     Beyond 1D, the LU fills in, and the state is stepped in time instead

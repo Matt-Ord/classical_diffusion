@@ -1,4 +1,4 @@
-# cspell: ignore indptr matvec tocsr
+# cspell: ignore ascontiguousarray indptr matvec tocsr unconverged
 """The Kramers operator applied without being stored, and exponential time steps in its Krylov spaces, for systems too large to factorise."""
 
 from dataclasses import dataclass
@@ -9,6 +9,7 @@ import scipy.linalg
 import scipy.sparse
 import scipy.sparse.linalg
 
+from classical_diffusion.kramers._krylov import get_arnoldi_space
 from classical_diffusion.kramers._real import (
     _get_ladder_matrices,
     _get_plane_wave_operators,
@@ -22,7 +23,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     from classical_diffusion.kramers._model import (
-        ComplexArray,
         FloatArray,
         IntArray,
         Model,
@@ -46,8 +46,8 @@ class MatrixFreeOperator:
     """gamma sum_j R_j."""
     wavevector: FloatArray
     """(G - K), (n_dim, n_plane_waves)."""
-    force_t: list[scipy.sparse.csr_array]
-    """F_j^T."""
+    force: list[scipy.sparse.csr_array]
+    """F_j."""
     shape: tuple[int, int]
     parity: FloatArray
     """(-1)^{|n|} of each Hermite multi-index."""
@@ -55,14 +55,20 @@ class MatrixFreeOperator:
     width: float
 
     def apply(self, x: FloatArray) -> FloatArray:
-        """Apply L to a flat state."""
+        """Apply L to a flat state.
+
+        D_j and F_j act on different axes, so (D_j X) F_j^T = D_j (F_j X^T)^T:
+        the plane wave factor is applied to one transposed copy of the state,
+        each a sparse product with contiguous columns.
+        """
         state = x.reshape(self.shape)
         out = -(self.friction @ state)
+        transposed = np.ascontiguousarray(state.T)
         for p, d, k, f in zip(
-            self.momentum, self.derivative, self.wavevector, self.force_t, strict=True
+            self.momentum, self.derivative, self.wavevector, self.force, strict=True
         ):
             out += (p @ state) * k
-            out -= (d @ state) @ f
+            out -= d @ np.ascontiguousarray((f @ transposed).T)
         return out.reshape(-1)
 
 
@@ -105,7 +111,7 @@ def build_matrix_free_operator(
         derivative=derivative,
         friction=(model.friction * total_friction).tocsr(),
         wavevector=np.array([d.diagonal().imag for d in derivatives]),
-        force_t=[as_real(f, "imag").T.tocsr() for f in forces],
+        force=[as_real(f, "imag") for f in forces],
         shape=(len(indices), len(vectors)),
         parity=np.asarray(1.0 - 2.0 * (indices.sum(axis=1) % 2), dtype=np.float64),
         indices=indices,
@@ -115,40 +121,11 @@ def build_matrix_free_operator(
 
 @dataclass(frozen=True, kw_only=True)
 class _Step:
-    """The Krylov space of one step: an orthonormal basis V and L in it, H, with one more row."""
+    """The Krylov space of one step: an orthonormal basis V and L in it, H, with one more row (`get_arnoldi_space`)."""
 
     basis: FloatArray
     hessenberg: FloatArray
     norm: float
-
-
-def _arnoldi(apply: Callable[[FloatArray], FloatArray], u: FloatArray, m: int) -> _Step:
-    norm = float(np.linalg.norm(u))
-    basis = np.zeros((m + 1, u.size))
-    basis[0] = u / norm
-    hessenberg = np.zeros((m + 1, m))
-    for j in range(m):
-        w = apply(basis[j])
-        before = float(np.linalg.norm(w))
-        overlap = basis[: j + 1] @ w
-        w -= overlap @ basis[: j + 1]
-        hessenberg[: j + 1, j] = overlap
-        # A second pass only where the first cancelled most of w (Daniel,
-        # Gragg, Kaufman and Stewart 1976), which keeps the basis orthogonal
-        # to round off at half the cost of always reorthogonalising
-        if np.linalg.norm(w) < 0.7 * before:
-            overlap = basis[: j + 1] @ w
-            w -= overlap @ basis[: j + 1]
-            hessenberg[: j + 1, j] += overlap
-        h = float(np.linalg.norm(w))
-        hessenberg[j + 1, j] = h
-        if h <= 1e-14 * norm:
-            # An invariant subspace: the step is exact for any length
-            return _Step(
-                basis=basis[: j + 1], hessenberg=hessenberg[: j + 1, : j + 1], norm=norm
-            )
-        basis[j + 1] = w / h
-    return _Step(basis=basis, hessenberg=hessenberg, norm=norm)
 
 
 def _augmented(step: _Step, extra: int) -> FloatArray:
@@ -161,6 +138,11 @@ def _augmented(step: _Step, extra: int) -> FloatArray:
         for i in range(extra - 1):
             out[rows + i, rows + i + 1] = 1.0
     return out
+
+
+def _arnoldi(apply: Callable[[FloatArray], FloatArray], u: FloatArray, m: int) -> _Step:
+    basis, hessenberg, norm = get_arnoldi_space(apply, u, m)
+    return _Step(basis=basis, hessenberg=hessenberg, norm=norm)
 
 
 def _steps(  # ruff:ignore[too-many-arguments]
@@ -180,26 +162,39 @@ def _steps(  # ruff:ignore[too-many-arguments]
     Expokit), held below tol |u(0)| h / t_end, so the error at the end is
     below tol |u(0)|. The same space gives the state at any time within the
     step, and the exponential of H augmented by `extra` rows its integrals.
+
+    Raises
+    ------
+    RuntimeError
+        If a step cannot meet its error below 1e-12 of t_end, rather than
+        taking it unconverged.
     """
     scale = float(np.linalg.norm(start))
     u = start
     t, h = 0.0, t_end / 20
     while t < t_end * (1 - 1e-14):
         step = _arnoldi(apply, u, m)
-        rows = step.basis.shape[0]
+        rows, cols = step.hessenberg.shape
         augmented = _augmented(step, extra)
         while True:
             length = min(h, t_end - t)
             exponential = scipy.linalg.expm(length * augmented)
-            error = 0.0 if rows < m + 1 else abs(step.norm * exponential[m, 0])
+            # A square H is an invariant space: the step is exact
+            error = 0.0 if rows == cols else abs(step.norm * exponential[cols, 0])
             allowed = tol * scale * length / t_end
-            if error <= allowed or length < 1e-12 * t_end:
+            if error <= allowed:
                 break
-            h = 0.9 * length * (allowed / error) ** (1 / m)
+            if length < 1e-12 * t_end:
+                msg = (
+                    f"The time steps stalled at t = {t:.3e} of {t_end:.3e}: the error"
+                    f" estimate of a step, {error:.1e}, does not fall to {allowed:.1e}"
+                )
+                raise RuntimeError(msg)
+            h = 0.9 * length * (allowed / error) ** (1 / cols)
         yield t, length, step, augmented
         u = step.norm * exponential[:rows, 0] @ step.basis
         t += length
-        h = min(0.9 * length * (allowed / max(error, 1e-300)) ** (1 / m), 5 * length)
+        h = min(0.9 * length * (allowed / max(error, 1e-300)) ** (1 / cols), 5 * length)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -239,14 +234,14 @@ def propagate_form(  # ruff:ignore[too-many-arguments]
     for t, length, step, augmented in _steps(
         apply, start, float(half[-1]), tol=tol / 2, m=m, extra=0
     ):
-        count += step.basis.shape[0]
+        count += step.hessenberg.shape[1]
         rows = step.basis.shape[0]
         if monitor is not None:
             monitor(step.norm * step.basis[0])
-        form = (step.basis * parity) @ step.basis.T
         while i < len(half) and half[i] <= t + length * (1 + 1e-12):
             c = step.norm * scipy.linalg.expm((half[i] - t) * augmented)[:rows, 0]
-            out[i] = c @ form @ c
+            state = c @ step.basis
+            out[i] = state @ (parity * state)
             i += 1
     return Propagation(values=out, n_applications=count)
 
@@ -272,7 +267,7 @@ def propagate_state(  # ruff:ignore[too-many-arguments]
     ):
         if monitor is not None:
             monitor(step.norm * step.basis[0])
-        count += step.basis.shape[0]
+        count += step.hessenberg.shape[1]
         rows = step.basis.shape[0]
         e = scipy.linalg.expm(length * augmented)
         integral += step.norm * e[:rows, rows] @ step.basis
@@ -322,17 +317,3 @@ def solve_by_propagation(
         msg = "GMRES did not converge on (1 - e^{L tau}) x = int_0^tau e^{L t} b dt"
         raise RuntimeError(msg)
     return solution, applications[0]
-
-
-def get_ritz_pairs(
-    apply: Callable[[FloatArray], FloatArray], start: FloatArray, m: int
-) -> tuple[ComplexArray, ComplexArray, FloatArray]:
-    """Get the Ritz values, vectors (as rows) and residual norms |L r - lambda r| of L in the Krylov space of m vectors of start."""
-    step = _arnoldi(apply, start, m)
-    rows = min(step.basis.shape[0], step.hessenberg.shape[1])
-    square = step.hessenberg[:rows, :rows]
-    values, vectors = scipy.linalg.eig(square)
-    vectors /= np.linalg.norm(vectors, axis=0)
-    last = step.hessenberg[rows, rows - 1] if step.hessenberg.shape[0] > rows else 0.0
-    residuals = np.abs(last * vectors[-1])
-    return values, vectors.T @ step.basis[:rows], residuals
