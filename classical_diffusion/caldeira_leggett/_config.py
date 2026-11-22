@@ -27,14 +27,11 @@ class CaldeiraLeggettConfig:
     basis_tol: float = 1e-4
     """The error allowed from the basis of bands and plane waves, in D relative to D and in the ISF.
 
-    No cutoff is set by hand: the bands and plane waves are raised until the
-    population the steady state leaves at their edge, times D_free / D
-    (D_free = k_B T / m gamma) and a ratio measured for the system from the
-    change of D between two bases, is below it (`_caldeira_leggett._get_basis`),
-    and for each ISF until rho e^{-i dK x} loses less than it above the
-    highest band (`_caldeira_leggett._get_sector`). Against converged
-    references (H, Li and Na on Cu(111) in 1D and 2D, and 11 harder systems)
-    every result was within 0.35 of it.
+    No cutoff is set by hand: the bands and plane waves are raised until
+    the change of D over three larger bases shows that D converges, and
+    bounds its error below it (`_caldeira_leggett._get_basis`), or a
+    RuntimeError is raised; and for each ISF until rho e^{-i dK x} loses less
+    than it above the highest band (`_caldeira_leggett._get_sector`).
     """
     linear_rtol: float = 1e-12
     """The relative residual of each linear solve (BiCGSTAB), or its floor from round off if that is higher.
