@@ -337,8 +337,12 @@ def refine(  # ruff:ignore[too-many-arguments]
     rtol: jax.Array,
     inner_rtol: float,
     passes: int,
+    initial: jax.Array | None = None,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
     """Solve A x = rhs by passes of an inner solver, each from the true residual (iterative refinement), and get the applications of A and the residual reached, relative to |rhs|, or nan if it was still falling after the passes.
+
+    The passes start from x = initial (by default 0), and stop at the same
+    residual, rtol |rhs|, whatever the start.
 
     solve_pass(residual, rtol) gives an approximate solution and its
     applications of A. Its residual is not monotonic, so each pass only reduces the
@@ -349,6 +353,8 @@ def refine(  # ruff:ignore[too-many-arguments]
     caller raises on a nan (`check`).
     """
     norm = jnp.maximum(jnp.linalg.norm(rhs), 1e-300)
+    solution = jnp.zeros_like(rhs) if initial is None else initial
+    residual = rhs if initial is None else rhs - apply(initial)
 
     def proceed(state: tuple) -> jax.Array:
         *_, done, k = state
@@ -374,10 +380,10 @@ def refine(  # ruff:ignore[too-many-arguments]
         proceed,
         iterate,
         (
-            jnp.zeros_like(rhs),
-            rhs,
-            jnp.asarray(1.0),
-            jnp.asarray(0),
+            solution,
+            residual,
+            jnp.linalg.norm(residual) / norm,
+            jnp.asarray(0 if initial is None else 1),
             jnp.zeros((), bool),
             jnp.asarray(0),
         ),
@@ -430,9 +436,9 @@ def _solve_pass(
 
 @jax.jit
 def _solve(
-    eigen: EigenLiouvillian, rhs: jax.Array, rtol: float
+    eigen: EigenLiouvillian, rhs: jax.Array, initial: jax.Array | None, rtol: float
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
-    """Solve L Y = rhs in the eigenvectors (`solve`), and get the applications of L and the residual reached (`refine`)."""
+    """Solve L Y = rhs in the eigenvectors from Y = initial (`solve`), and get the applications of L and the residual reached (`refine`)."""
     return refine(
         lambda y: apply_eigen(eigen, y, jnp.asarray(0j)),
         lambda residual, rtol: _solve_pass(eigen, residual, rtol, maxiter=MAXITER),
@@ -440,13 +446,17 @@ def _solve(
         rtol=jnp.asarray(rtol),
         inner_rtol=INNER_RTOL,
         passes=PASSES,
+        initial=initial,
     )
 
 
 def solve(
-    eigen: EigenLiouvillian, rhs: jax.Array, config: CaldeiraLeggettConfig
+    eigen: EigenLiouvillian,
+    rhs: jax.Array,
+    config: CaldeiraLeggettConfig,
+    initial: jax.Array | None = None,
 ) -> jax.Array:
-    """Solve L X = rhs for a state X in the basis of the bands, for a rhs in the range of L.
+    """Solve L X = rhs for a state X in the basis of the bands, for a rhs in the range of L, from X = initial (by default 0) to a residual of config.linear_rtol |rhs|.
 
     BiCGSTAB in the eigenvectors of K, preconditioned on the right by N^-1, N
     the no-jump part of L, with iterative refinement (`refine`). BiCGSTAB
@@ -462,7 +472,8 @@ def solve(
     nor D (within 5e-10) for H, Li and Na on Cu(111), as the refinement stops
     once the residual no longer halves.
     """
-    y, _, reached = _solve(eigen, to_eigen(eigen, rhs), config.linear_rtol)
+    start = None if initial is None else to_eigen(eigen, initial)
+    y, _, reached = _solve(eigen, to_eigen(eigen, rhs), start, config.linear_rtol)
     check(reached, config.linear_rtol)
     return from_eigen(eigen, y)
 

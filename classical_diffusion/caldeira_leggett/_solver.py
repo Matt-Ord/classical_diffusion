@@ -35,18 +35,25 @@ def _trace(x: jax.Array) -> jax.Array:
 
 
 def get_steady_state(
-    operators: Operators, energies: FloatArray, config: CaldeiraLeggettConfig
+    operators: Operators,
+    energies: FloatArray,
+    config: CaldeiraLeggettConfig,
+    initial: ComplexArray | None = None,
 ) -> ComplexArray:
-    """Get the steady state in the basis of the bands, by a preconditioned linear solve starting from a Gibbs state.
+    """Get the steady state in the basis of the bands, by a preconditioned linear solve for its difference from a Gibbs state, from initial (by default the Gibbs state).
 
     L is singular, but -L rho_gibbs is in its range. The null component of the
-    correction only changes the normalization, which is restored after.
+    correction only changes the normalization, which is restored after. The
+    residual reached is linear_rtol |L rho_gibbs| from any start.
     """
     liouvillian = get_liouvillian(operators, operators)
     weights = np.exp(-(energies - energies.min()))
     gibbs = (weights / weights.sum())[..., None] * np.eye(energies.shape[1])
     rhs = -apply_liouvillian(liouvillian, jnp.asarray(gibbs))
-    rho = gibbs + np.asarray(solve(get_eigen_liouvillian(liouvillian), rhs, config))
+    start = None if initial is None else jnp.asarray(initial - gibbs)
+    rho = gibbs + np.asarray(
+        solve(get_eigen_liouvillian(liouvillian), rhs, config, start)
+    )
     rho /= np.einsum("kaa->", rho)
     return 0.5 * (rho + rho.conj().swapaxes(-1, -2))
 
@@ -139,9 +146,10 @@ def _get_response(
     source: jax.Array,
     steady_state: jax.Array,
     config: CaldeiraLeggettConfig,
+    initial: jax.Array | None = None,
 ) -> jax.Array:
-    """Solve L_0 X = source (eigen is L_0), for a source with no trace, with no component along the steady state (X has no trace)."""
-    response = solve(eigen, source, config)
+    """Solve L_0 X = source (eigen is L_0) from initial (by default 0), for a source with no trace, with no component along the steady state (X has no trace)."""
+    response = solve(eigen, source, config, initial)
     return response - _trace(response) * steady_state
 
 
@@ -150,8 +158,9 @@ def get_diffusion_coefficient(
     derivative: Operators,
     steady_state: ComplexArray,
     config: CaldeiraLeggettConfig,
+    initial: ComplexArray | None = None,
 ) -> tuple[float, ComplexArray]:
-    """Get the diffusion coefficient D along a direction, from the curvature of the dephasing rate at dK = 0.
+    """Get the diffusion coefficient D along a direction, from the curvature of the dephasing rate at dK = 0, solving for the response from initial (by default 0).
 
     The slowest eigenvalue of L(theta) (`_get_twist`) is -D theta^2 +
     O(theta^4), and second order perturbation theory around the steady state
@@ -171,6 +180,7 @@ def get_diffusion_coefficient(
         twist.drift,
         jnp.asarray(steady_state),
         config,
+        None if initial is None else jnp.asarray(initial),
     )
     return _get_diffusion_from_response(twist, response), np.asarray(response)
 
