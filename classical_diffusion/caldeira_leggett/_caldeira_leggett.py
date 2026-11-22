@@ -1,5 +1,6 @@
 # cspell: ignore rint Hermiticity polyfit
 import dataclasses
+import itertools
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -81,7 +82,7 @@ class SteadyState:
     response: ComplexArray
     """The response X_1 = L_0^+ L_1 rho_ss from which D is found, which the mean square displacement also needs."""
     error: float
-    """The estimated error of D from the basis, relative to D (`_get_basis`)."""
+    """The error of D from the basis, relative to D, measured by the change of D in larger bases (`_get_basis`)."""
 
 
 def _get_steady_state_path(
@@ -113,28 +114,22 @@ for hydrogen, lithium and sodium on Cu(111) in 1D and 2D are 12-30 k_B T.
 """
 _PLANE_WAVE_FACTOR = 2.5
 """The first plane wave factor (`Model.plane_wave_factor`), raised by 1.5 if the plane waves are what limit D."""
-_SAFETY = 600.0
-"""The error of D relative to D_free per unit of population left at the edge of the basis, before it is measured (`_get_basis`).
+_STEP = 10.0
+"""The least factor by which each raise aims to lower the population at the edge of the basis (`_get_basis`)."""
+_RATE = 0.5
+"""The largest ratio of the changes of D over the last two raises at which the convergence of D is trusted, and the least factor by which the last raise is then taken to have lowered the error of D (`_get_basis`)."""
+_CONTRACTION = 3.0
+"""The least factor by which each of the last two raises must have lowered the population at the edge of the basis for the changes of D to measure its convergence (`_get_basis`)."""
+_DRIFT = 10.0
+"""The most by which the change of D may fall faster than the population at the edge, over the last two raises, for the changes to measure the convergence of D (`_get_basis`).
 
-Against bands to 40-150 k_B T (`~/cd-agents/adaptive`), the error of D
-over the population of the highest band times D_free / D is, where the
-error is 1e-6 to 1e-2: 2-80 for hydrogen on Cu(111) in 1D, 0.3-20
-lithium, 9-11 sodium, 2-140 hydrogen in 2D, 5-13 lithium in 2D, 6-12 a
-nearly free particle, 11-160 lithium at 300 K, 27-90 xenon at 121 K,
-200-310 CO at 150 K, 220-240 hydrogen at 50 K (deep tunnelling) and
-170-580 potassium at 300 K. 600 bounds it on all, but is 50 times too
-much for lithium, so it is measured for each system instead.
+The error of D falls with the population at the edge, at a ratio which
+drifts by at most 3 as the population falls by 4 decades (`~/cd-agents/adaptive`).
+A raise which adds only one of a pair of nearly degenerate bands lowers
+the population at the edge but leaves D, and its error, nearly unchanged:
+for lithium at 100 K over a barrier of 130 meV, D changed by 6e-8 from 21
+to 22 bands where its error was 9e-7 (and 1e-8 at 23 bands).
 """
-_MARGIN = 3.0
-"""The margin on the measured ratio of the error of D to the population at the edge (`_get_basis`).
-
-Within a system the ratio grows by up to 3 as the population falls by 4
-decades (2-10 times as it falls by 8).
-"""
-_FLOOR = 3.0
-"""The smallest ratio of the error of D to the population at the edge, should D change by less between two bases."""
-_FIRST_STEP = 10.0
-"""The most the population at the edge is lowered by before the ratio is measured."""
 _MAX_TRIES = 20
 
 
@@ -175,70 +170,104 @@ def _get_basis(  # ruff:ignore[too-many-locals]
     direction: tuple[float, ...] | None,
     start: SteadyState | None,
 ) -> SteadyState:
-    """Get the steady state in bands raised until D along the direction (by default the first axis) has an estimated error below config.basis_tol.
+    """Get the steady state in bands whose error in D along the direction (by default the first axis) the change of D in larger bases shows to be below config.basis_tol.
 
-    From a cutoff of _START above the saddle (or that of start), each try
-    finds the steady state and D. The error of D is the population at the
-    edge of the basis (`_get_edge`), p, times D_free / D, times a ratio
-    which differs from system to system by over 100, so it is measured:
-    once two tries have found D_1 and D_2, the error of D_1 is about
-    |D_2 - D_1|, which gives the ratio, and _MARGIN times the largest
-    measured (and at least _FLOOR) estimates the error of each later try.
-    Before that _SAFETY bounds it, and the population is lowered by at most
-    _FIRST_STEP. The plane waves are raised if they hold more of the
-    population at the edge, and otherwise the cutoff, by as much as the
-    population falls with the energy of the bands needs (`_get_growth`).
+    From a cutoff of _START above the saddle (or the basis of start), each
+    try raises the basis and finds the steady state and D. The tries are
+    checked on D itself, not on a model of its error. With three tries whose
+    D change by c_1 and then c_2 (relative to D), D converges at the rate
+    r = c_2 / c_1 if r <= _RATE, each raise lowered the population at the
+    edge (`_get_edge`) by _CONTRACTION, and D did not converge more than
+    _DRIFT times faster than that population fell (a raise which adds one
+    of a pair of nearly degenerate bands leaves D unchanged, which is not
+    convergence). The last raise is then taken to have lowered the error by
+    _RATE or more (it lowered it by 0.27 where r was 0.005, for hydrogen at
+    100 K), so the error of the middle D is at most c_2 / (1 - _RATE), and
+    that of each try before it at most that plus its distance to the middle
+    D. The smallest basis within the tolerance is returned with its error.
+    Each raise lowers the population at the edge by _STEP, or by as much as
+    the change of D per unit of population at the edge says the next basis
+    needs to be within a quarter of the tolerance. The plane waves are
+    raised if they hold more of the population at the edge, and otherwise
+    the cutoff (`_get_growth`).
 
     Raises
     ------
     RuntimeError
-        If the error is not below the tolerance after _MAX_TRIES tries.
+        If no basis is confirmed within _MAX_TRIES tries.
     """
     cutoff = _START if start is None else start.model.cutoff
     factor = _PLANE_WAVE_FACTOR if start is None else start.model.plane_wave_factor
-    last: tuple[float, float] | None = None
-    ratio = None
+    tries: list[tuple[SteadyState, float]] = []
     for _ in range(_MAX_TRIES):
-        model = build_model(system, config, cutoff=cutoff, plane_wave_factor=factor)
-        energies = get_energies(model)
-        bands = get_bands(model, energies)
+        if not tries and start is not None:
+            model, bands, density = start.model, start.bands, start.density
+            energies = get_energies(model)
+        else:
+            model = build_model(system, config, cutoff=cutoff, plane_wave_factor=factor)
+            energies = get_energies(model)
+            bands = get_bands(model, energies)
         operators, derivative, _ = _get_derivative(model, bands, direction)
-        density = get_band_steady_state(operators, bands.energies, config)
+        if tries or start is None:
+            density = get_band_steady_state(operators, bands.energies, config)
         diffusion, response = get_diffusion_coefficient(
             operators, derivative, density, config
         )
         top, plane_waves = _get_edge(model, bands, density)
-        free = 1 / model.friction
-        if last is not None:
-            measured = _MARGIN * abs(diffusion - last[1]) / (last[0] * free)
-            ratio = max(ratio or _FLOOR, measured)
-        scale = (top + plane_waves) * free / max(abs(diffusion), 1e-300)
-        error = (_SAFETY if ratio is None else ratio) * scale
-        if error <= config.basis_tol:
-            return SteadyState(
-                model=model,
-                bands=bands,
-                density=density,
-                diffusion=diffusion,
-                response=response,
-                error=error,
+        tries.append(
+            (
+                SteadyState(
+                    model=model,
+                    bands=bands,
+                    density=density,
+                    diffusion=diffusion,
+                    response=response,
+                    error=np.inf,
+                ),
+                top + plane_waves,
             )
-        last = (top + plane_waves, diffusion)
+        )
+        changes = [
+            abs(b.diffusion - a.diffusion) / max(abs(diffusion), 1e-300)
+            for (a, _), (b, _) in itertools.pairwise(tries[-3:])
+        ]
+        target = _STEP
+        if len(changes) == 2:  # ruff:ignore[magic-value-comparison]
+            first, second = changes
+            edges = [edge for _, edge in tries[-3:]]
+            if (
+                second <= _RATE * first
+                and edges[0] >= _CONTRACTION * edges[1] >= _CONTRACTION**2 * edges[2]
+                and second * edges[0] >= first * edges[1] / _DRIFT
+            ):
+                # The error of the middle D, and of each try before it by its
+                # distance to the middle D
+                middle = tries[-2][0].diffusion
+                bound = second / (1 - _RATE)
+                for state, _ in tries[:-1]:
+                    error = bound + abs(state.diffusion - middle) / abs(diffusion)
+                    if error <= config.basis_tol:
+                        return dataclasses.replace(state, error=error)
+        if changes:
+            # The error of this D, if it is the change per unit of edge
+            error = changes[-1] * tries[-1][1] / max(tries[-2][1], 1e-300)
+            target = max(_STEP, 4 * error / config.basis_tol)
         if plane_waves > top:
             factor *= 1.5
             continue
-        lower = 2 * error / config.basis_tol
         cutoff = get_next_cutoff(
             model,
             energies,
             cutoff
             + _get_growth(
-                bands.energies,
-                np.real(np.einsum("kaa->ka", density)),
-                lower if ratio is not None else min(lower, _FIRST_STEP),
+                bands.energies, np.real(np.einsum("kaa->ka", density)), target
             ),
         )
-    msg = f"The basis did not reach an error of {config.basis_tol:.0e} in D"
+    msg = (
+        f"No basis confirmed D to {config.basis_tol:.0e} within {_MAX_TRIES} tries:"
+        " D did not converge, which it cannot if it is below the round off of"
+        " the linear solves (linear_rtol D_free)"
+    )
     raise RuntimeError(msg)
 
 
@@ -670,9 +699,9 @@ def _get_state(
     """Get the steady state with D and its response along the direction, in bands which give that D to config.basis_tol.
 
     The steady state finds them along the first axis. Along another, D can
-    be far smaller (across the rows of an fcc(110) surface), and with it the
-    population the basis may leave at its edge, so the bands are raised
-    from there if they need to be (`_get_basis`).
+    be far smaller (across the rows of an fcc(110) surface), so it is
+    checked by a larger basis again, from the bands of the steady state
+    (`_get_basis`).
     """
     state = get_steady_state.load_or_call_uncached(system, config=config)
     unit = np.eye(state.model.n_dim)[0]
@@ -680,18 +709,7 @@ def _get_state(
         np.asarray(direction) / np.linalg.norm(direction), unit
     ):
         return state
-    model, bands, density = state.model, state.bands, state.density
-    operators, derivative, _ = _get_derivative(model, bands, direction)
-    diffusion, response = get_diffusion_coefficient(
-        operators, derivative, density, config
-    )
-    # The error of the steady state's D scaled to this D (`_get_basis`)
-    error = state.error * abs(state.diffusion / diffusion)
-    if error > config.basis_tol:
-        return _get_basis(system, config, direction, state)
-    return dataclasses.replace(
-        state, diffusion=diffusion, response=response, error=error
-    )
+    return _get_basis(system, config, direction, state)
 
 
 def _get_derivative(
