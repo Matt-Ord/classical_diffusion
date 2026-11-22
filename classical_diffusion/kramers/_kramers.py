@@ -505,11 +505,23 @@ def get_slow_modes(
         raise ValueError(msg)
     scaled = scaled_delta_k(system, model, delta_k)
     window = 20 / model.friction
-    modes = (
-        ModalSum.of(*_get_stepped_slow_modes(model, scaled, config), window, config.tol)
-        if _is_stepped(model)
-        else _get_isf_modes(model, scaled, np.linspace(0, window, 200), config)
-    )
+    if _is_stepped(model):
+        modes = ModalSum.of(
+            *_get_stepped_slow_modes(model, scaled, config), window, config.tol
+        )
+    else:
+        # The ISF to tol over the window fixes a rate only to about
+        # tol / (weight window): the window grows to 20 times the slowest
+        # decay time seen, so that a hop far slower than the friction (a
+        # barrier of 16 k_B T: 3e-3 relative over 20 / gamma) is resolved
+        for _ in range(_MAX_WINDOWS):
+            modes = _get_isf_modes(model, scaled, np.linspace(0, window, 200), config)
+            decaying = modes.kept[0].real
+            decaying = decaying[decaying < 0]
+            slowest = 20 / -decaying.max() if len(decaying) else window
+            if slowest <= 1.5 * window:
+                break
+            window = slowest
     rates, weights = modes.kept
     # A Ritz value of a mode the start barely holds can land anywhere, with
     # no weight
@@ -524,6 +536,8 @@ def get_slow_modes(
     )
 
 
+_MAX_WINDOWS = 6
+"""The most windows of the ISF over which the slow modes of a 1D system are found (`get_slow_modes`)."""
 _RITZ_VECTORS = 80
 _RITZ_RTOL = 1e-4
 """The residual of a Ritz pair, in units of the friction, above which it is not a mode: those kept have rates good to about its square."""
