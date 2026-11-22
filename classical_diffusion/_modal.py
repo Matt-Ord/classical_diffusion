@@ -88,7 +88,8 @@ class ModalSum:
         """
         # Capped where it would overflow: such a pole is dropped either way
         growth = np.abs(residues) * np.expm1(np.clip(rates.real * span, 0, 700))
-        return ModalSum(rates=rates, residues=residues, stable=growth <= tolerance)
+        stable = (growth <= tolerance) & (rates.real * span < 700)  # ruff:ignore[magic-value-comparison]
+        return ModalSum(rates=rates, residues=residues, stable=stable)
 
     @property
     def dropped(self) -> float:
