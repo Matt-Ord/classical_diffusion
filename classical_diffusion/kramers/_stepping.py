@@ -238,11 +238,22 @@ def propagate_form(  # ruff:ignore[too-many-arguments]
         rows = step.basis.shape[0]
         if monitor is not None:
             monitor(step.norm * step.basis[0])
-        while i < len(half) and half[i] <= t + length * (1 + 1e-12):
-            c = step.norm * scipy.linalg.expm((half[i] - t) * augmented)[:rows, 0]
-            state = c @ step.basis
-            out[i] = state @ (parity * state)
-            i += 1
+        end = int(np.searchsorted(half, t + length * (1 + 1e-12), side="right"))
+        coefficients = np.array(
+            [
+                step.norm * scipy.linalg.expm((h - t) * augmented)[:rows, 0]
+                for h in half[i:end]
+            ]
+        ).reshape(-1, rows)
+        # u^T J u at each time, by whichever is cheaper: the states, O(k m n)
+        # for k times, or the J-Gram matrix of the basis, O(m^2 n)
+        if len(coefficients) < rows:
+            states = coefficients @ step.basis
+            out[i:end] = np.sum(states * (parity * states), axis=1)
+        else:
+            form = (step.basis * parity) @ step.basis.T
+            out[i:end] = np.einsum("ki,ij,kj->k", coefficients, form, coefficients)
+        i = end
     return Propagation(values=out, n_applications=count)
 
 
