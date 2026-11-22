@@ -11,6 +11,7 @@ import scipy.sparse
 import scipy.sparse.linalg
 
 from classical_diffusion._modal import ModalSum
+from classical_diffusion._periodic import get_saddle_energy
 from classical_diffusion._results import (
     RmsResult,
     SlowModes,
@@ -72,8 +73,18 @@ class Basis:
     def grow_order(self) -> Basis:
         return Basis(max_order=int(np.ceil(self.max_order * _GROW)), radius=self.radius)
 
-    def grow_radius(self) -> Basis:
-        return Basis(max_order=self.max_order, radius=self.radius * _GROW)
+    def grow_radius(self, model: Model) -> Basis:
+        """Grow the radius by 1.3, or to the next plane waves if that adds none."""
+        radius = self.radius * _GROW
+        lengths = np.linalg.norm(
+            get_plane_waves_within(
+                model, radius + 2 * np.max(np.linalg.norm(model.reciprocal, axis=-1))
+            )
+            @ model.reciprocal,
+            axis=-1,
+        )
+        beyond = lengths[lengths > self.radius + 1e-9]
+        return Basis(max_order=self.max_order, radius=max(radius, float(beyond.min())))
 
 
 def get_initial_basis(
@@ -95,6 +106,33 @@ def get_initial_basis(
     return Basis(
         max_order=int(max(30, 12 / np.sqrt(model.friction))),
         radius=max(radius * margin + float(np.linalg.norm(delta_k)), 1.0),
+    )
+
+
+def get_initial_diffusion_basis(model: Model, config: KramersConfig) -> Basis:
+    """Get a first guess of the basis which converges D to config.tol, for a saddle at E_s above the minimum.
+
+    D is a quadratic form, so a component of e^{-V / 2} of size e left out
+    of the plane waves errs by about e^2 D_0, which relative to D,
+    about e^{-E_s} D_0 over a barrier, is e^2 e^{E_s}: the plane waves hold
+    e^{-V / 2} to sqrt(tol e^{-E_s}). As the friction falls, the particles
+    near the saddle energy fill the boundary layer of the separatrix, which
+    narrows as gamma^{-1/2}: the radius grows by (0.6 E_s + 0.5) / sqrt(gamma),
+    and the Hermite order is (4.6 + 4.3 p_s) / sqrt(gamma) + 4, with
+    p_s = sqrt(2 E_s) the momentum that crosses the saddle (`get_width`).
+    These are the smallest bases that give D to tol / 4 for cosines of
+    0.5 to 16 k_B T and hydrogen, lithium, sodium and xenon on Cu(111) and
+    Pt(111) in 1D, at 0.1 to 100 times their friction, with 0 to 40 % to
+    spare; the basis is checked on D itself (`_converge_basis`).
+    """
+    saddle, minimum = get_saddle_energy(tuple(model.potential), model.n_dim)
+    energy = saddle - minimum
+    root = np.sqrt(model.friction)
+    vectors = get_plane_waves(model, np.sqrt(config.tol * np.exp(-energy)))
+    radius = float(np.max(np.linalg.norm(vectors @ model.reciprocal, axis=-1)))
+    return Basis(
+        max_order=int(np.ceil((4.6 + 4.3 * np.sqrt(2 * energy)) / root + 4)),
+        radius=max(radius + (0.6 * energy + 0.5) / root, 1.0),
     )
 
 
@@ -140,14 +178,23 @@ def _build_problem(model: Model, basis: Basis, delta_k: FloatArray) -> _Problem:
     )
 
 
-def _converge_basis[R](
+def _converge_basis[R](  # ruff:ignore[too-many-arguments]
+    model: Model,
     initial: Basis,
     compute_new: Callable[[Basis], R],
     change: Callable[[R, R], float],
     tol: float,
+    *,
     max_rounds: int = 12,
-) -> tuple[Basis, R]:
-    """Grow the Hermite order and the plane wave radius until neither changes the result by tol / 3.
+) -> tuple[Basis, R, float]:
+    """Get the result in a basis whose error, bounded by twice its change as the Hermite order and the plane wave radius each grow by 1.3, is below tol, with that bound.
+
+    Each grows the basis by at least one Hermite order or plane wave
+    shell, and the result converges exponentially in both, by far more
+    than a factor of two each time once it is near tol, so twice the sum
+    of the two changes bounds the error of the smaller basis, which is
+    returned. Where the bound is above tol, the direction whose change is
+    above tol / 4 grows.
 
     Raises
     ------
@@ -163,24 +210,18 @@ def _converge_basis[R](
         return known[basis]
 
     basis = initial
-    result = compute(basis)
     for _ in range(max_rounds):
-        by_order = compute(basis.grow_order())
-        by_radius = compute(basis.grow_radius())
-        d_order, d_radius = change(result, by_order), change(result, by_radius)
-        if d_order < tol / 3 and d_radius < tol / 3:
-            return (
-                (basis.grow_order(), by_order)
-                if d_order > d_radius
-                else (basis.grow_radius(), by_radius)
-            )
-        basis = Basis(
-            max_order=basis.grow_order().max_order
-            if d_order >= tol / 3
-            else basis.max_order,
-            radius=basis.grow_radius().radius if d_radius >= tol / 3 else basis.radius,
-        )
         result = compute(basis)
+        by_order, by_radius = basis.grow_order(), basis.grow_radius(model)
+        d_order = change(result, compute(by_order))
+        d_radius = change(result, compute(by_radius))
+        error = 2 * (d_order + d_radius)
+        if error <= tol:
+            return basis, result, error
+        basis = Basis(
+            max_order=by_order.max_order if d_order >= tol / 4 else basis.max_order,
+            radius=by_radius.radius if d_radius >= tol / 4 else basis.radius,
+        )
     msg = "The basis did not converge"
     raise RuntimeError(msg)
 
@@ -230,8 +271,8 @@ def _get_isf_modes(
             1e-2 * config.tol,
         )
 
-    _, modes = _converge_basis(
-        get_initial_basis(model, delta_k, config), compute, change, config.tol
+    _, modes, _ = _converge_basis(
+        model, get_initial_basis(model, delta_k, config), compute, change, config.tol
     )
     return modes
 
@@ -682,8 +723,9 @@ def get_diffusion_constant(
         # Running orbits move ballistically forever
         return float("inf")
     unit = get_unit_direction(model.n_dim, direction)
-    _, diffusion = _converge_basis(
-        get_initial_basis(model, np.zeros(model.n_dim), config),
+    _, diffusion, _ = _converge_basis(
+        model,
+        get_initial_diffusion_basis(model, config),
         (lambda basis: _get_stepped_diffusion(model, basis, unit, config.tol))
         if _is_stepped(model)
         else (lambda basis: _get_diffusion(model, basis, unit)),
@@ -782,7 +824,8 @@ def solve_rms(
         )
         return -2 * modes.double_integral(natural).real
 
-    _, mean_square = _converge_basis(
+    _, mean_square, _ = _converge_basis(
+        model,
         get_initial_basis(model, np.zeros(model.n_dim), config),
         compute,
         change,
