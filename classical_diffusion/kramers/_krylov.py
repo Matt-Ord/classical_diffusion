@@ -263,13 +263,55 @@ def get_arnoldi_space(
     return arnoldi.vectors[: k + 1], arnoldi.hessenberg[: k + 1, :k], size
 
 
-def get_ritz_pairs(
-    apply: Callable[[np.ndarray], np.ndarray], start: np.ndarray, m: int
-) -> tuple[ComplexArray, ComplexArray, np.ndarray]:
-    """Get the Ritz values, vectors (as rows) and residual norms |A r - lambda r| of A in the Arnoldi space of m vectors of start."""
-    basis, hessenberg, _ = get_arnoldi_space(apply, start, m)
-    k = hessenberg.shape[1]
-    values, ritz = scipy.linalg.eig(hessenberg[:k, :k])
-    ritz /= np.linalg.norm(ritz, axis=0)
-    last = hessenberg[k, k - 1] if hessenberg.shape[0] > k else 0.0
-    return values, ritz.T @ basis[:k], np.abs(last * ritz[-1])
+def get_slow_pairs(  # ruff:ignore[too-many-arguments]
+    apply: Callable[[np.ndarray], np.ndarray],
+    propagate: Callable[[np.ndarray], np.ndarray],
+    start: np.ndarray,
+    *,
+    duration: float,
+    rate: float,
+    count: int,
+    residual: float,
+) -> tuple[ComplexArray, ComplexArray]:
+    """Get the eigenvalues and vectors (lambda, r) of A that start holds with Re lambda > -rate, and at least the count slowest, as Ritz pairs of E = e^{A tau} (`propagate`).
+
+    E maps the slow modes near 1 and the fast ones near 0, so its Arnoldi
+    space of start finds the slow modes in a few vectors, where that of A
+    itself needs hundreds: A spreads its spectrum over |lambda| ~ 100 times
+    the slow rates. The space grows a vector at a time until each wanted
+    pair has |A r - lambda r| <= residual |r|, with lambda the Rayleigh
+    quotient of A. The vectors are rows.
+
+    Raises
+    ------
+    RuntimeError
+        If the pairs do not converge within _MAX_SLOW_STEPS vectors.
+    """
+    size = float(np.linalg.norm(start))
+    vectors = np.zeros((count + 8, start.size))
+    vectors[0] = start / size
+    arnoldi = _Arnoldi(
+        apply=propagate, vectors=vectors, hessenberg=np.zeros((count + 8, count + 7))
+    )
+    while arnoldi.steps < _MAX_SLOW_STEPS:
+        arnoldi.extend(1)
+        m = arnoldi.steps
+        mu, ritz = scipy.linalg.eig(arnoldi.hessenberg[:m, :m])
+        order = np.argsort(-np.abs(mu))
+        wanted = order[
+            : max(count, int(np.count_nonzero(np.abs(mu) > np.exp(-rate * duration))))
+        ]
+        pairs = ritz[:, wanted].T @ arnoldi.vectors[:m]
+        images = np.array([apply(r.real) + 1j * apply(r.imag) for r in pairs])
+        norms = np.sum(np.abs(pairs) ** 2, axis=1)
+        values = np.sum(pairs.conj() * images, axis=1) / norms
+        errors = np.linalg.norm(images - values[:, None] * pairs, axis=1)
+        converged = len(wanted) >= count and np.all(errors <= residual * np.sqrt(norms))
+        if arnoldi.invariant or converged:
+            return values, pairs
+    msg = f"The slow modes did not converge within {_MAX_SLOW_STEPS} vectors"
+    raise RuntimeError(msg)
+
+
+_MAX_SLOW_STEPS = 60
+"""The most vectors of the Arnoldi space of e^{A tau} for the slow modes: those of lithium on Cu(111) at 10 times its friction converge in 10."""
