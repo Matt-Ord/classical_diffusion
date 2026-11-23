@@ -86,6 +86,9 @@ def _right(x: np.ndarray) -> jax.Array:
 
 
 def get_eigen_liouvillian(liouvillian: Liouvillian) -> EigenLiouvillian:
+    if not jax.config.jax_enable_x64:
+        msg = 'The solver needs jax.config.update("jax_enable_x64", True)'
+        raise RuntimeError(msg)
     mu, a = np.linalg.eig(np.asarray(liouvillian.hamiltonian_ket))
     nu, b = np.linalg.eig(
         np.asarray(liouvillian.hamiltonian_bra_dagger).conj().swapaxes(-1, -2)
