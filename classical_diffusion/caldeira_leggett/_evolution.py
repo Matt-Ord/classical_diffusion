@@ -102,6 +102,11 @@ _SPLIT_SEED = 2026
 """The seed of the vector that splits a measurement on a breakdown."""
 
 
+def _trace(x: jax.Array) -> jax.Array:
+    """Get the trace of a state in the bands, summed over kappa."""
+    return jnp.einsum("kaa->", x)
+
+
 _FALSE = jnp.zeros((), bool)
 _TRUE = jnp.ones((), bool)
 _LINES = 24
@@ -640,8 +645,9 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
     times: FloatArray,
     tolerance: float,
     stop: float,
+    steady: jax.Array,
 ) -> Evolution:
-    """Get <measurement, exp(L t) start> at the times to an absolute tolerance, which is stop relative (`get_reduced_evolution`).
+    """Get <measurement, exp(L t) (start + steady)> at the times to an absolute tolerance, which is stop relative (`get_reduced_evolution`), for steady a zero mode of L.
 
     The blocks of the recurrence and the screen between evaluations run on
     the device (`_advance`); the host reads the steps and flags once per
@@ -657,9 +663,13 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
     """
     span = float(times.max())
     s = 1 / span
+    plateau = complex(jnp.vdot(measurement, steady))
+    # The transform of the whole, less that of the plateau: so the error of
+    # the steady state counts in the comparison with the transform of F_m
     reference, transfer_applications = get_transfer(
-        eigen, start, measurement, s, _TRANSFER_TOL * tolerance / s
+        eigen, start + steady, measurement, s, _TRANSFER_TOL * tolerance / s
     )
+    reference -= plateau / s
     scale = complex(jnp.vdot(measurement, start))
     if scale == 0:
         raise _BreakdownError
@@ -726,7 +736,7 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
                 )
             _warn("The evolution", progress)
             return Evolution(
-                values=np.asarray(values[: len(times)]),
+                values=plateau + np.asarray(values[: len(times)]),
                 applications={
                     "lanczos": 2 * steps,
                     "transfer": transfer_applications,
@@ -739,13 +749,14 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
             raise RuntimeError(msg)
 
 
-def get_reduced_evolution(
+def get_reduced_evolution(  # ruff:ignore[too-many-arguments]
     eigen: EigenLiouvillian,
     initial: jax.Array,
     measure: Callable[[jax.Array], jax.Array],
     times: FloatArray,
     *,
     config: EvolutionConfig,
+    steady_state: jax.Array | None = None,
 ) -> Evolution:
     """Get measure(exp(L t) initial) at the times (from zero), by two-sided Lanczos (Pade via Lanczos, PVL).
 
@@ -775,8 +786,7 @@ def get_reduced_evolution(
 
     Poles with Re lambda > 0 are spurious (L has no growing mode): they are
     dropped, and their weight must be below the tolerance. A pole that grows
-    by less than a factor 1 + stop over the span, such as the steady state at
-    dK = 0 (whose rate comes out at +-1e-16), is kept.
+    by less than a factor 1 + stop over the span is kept.
 
     The recurrence has an accuracy floor in finite precision, from 1e-16 to
     2e-9 of |F(0)| on the benchmark: asked for less, it stops once its error
@@ -789,6 +799,15 @@ def get_reduced_evolution(
     2.2e-5 from the reference: the tolerance is raised to it, with a
     warning.
 
+    If L preserves the trace, it has the steady state rho as an exact zero
+    mode, whose rate the recurrence fixes only to about eps |L|: over a span
+    of 168 to 1.4e6 (3 m_H at 10 / ps, Li at 12 k_B T) that misses the
+    plateau by 1.5e-6 relative, above the stop, forever. So the evolution
+    is of X_0 - c rho with c = Tr X_0 / Tr rho, which has no zero mode, and
+    the plateau c measure(rho) is added: exact, as Tr exp(L t) X = Tr X. The
+    transfer function is of X_0 itself, so an error of the steady state
+    counts in its comparison with the transform of F_m.
+
     A serious breakdown of the recurrence (<w, v> = 0, as when F(0) = 0)
     belongs to the pair (X_0, g), and is cured by splitting the
     measurement, g = (g + h) - h for a fixed random h.
@@ -799,13 +818,16 @@ def get_reduced_evolution(
         If the split recurrences also break down, or a recurrence does not
         converge in the most steps (`_get_max_steps`).
     """
-    start = to_eigen(eigen, initial)
-    measurement = get_measurement(eigen, measure, start)
     times = np.asarray(times, dtype=np.float64)
+    steady = jnp.zeros_like(initial)
+    if steady_state is not None:
+        steady = steady_state * (_trace(initial) / _trace(steady_state))
+    start, steady = to_eigen(eigen, initial - steady), to_eigen(eigen, steady)
+    measurement = get_measurement(eigen, measure, start)
     first, size = jax.device_get(
         (
-            jnp.vdot(measurement, start),
-            jnp.linalg.norm(measurement) * jnp.linalg.norm(start),
+            jnp.vdot(measurement, start + steady),
+            jnp.linalg.norm(measurement) * jnp.linalg.norm(start + steady),
         )
     )
     first, size = complex(first), float(size)
@@ -818,7 +840,7 @@ def get_reduced_evolution(
     # the largest it could be
     tolerance = config.stop * (abs(first) if abs(first) > 1e-12 * size else size)
     try:
-        return _evolve(eigen, start, measurement, times, tolerance, config.stop)
+        return _evolve(eigen, start, measurement, times, tolerance, config.stop, steady)
     except _BreakdownError:
         pass
     rng = np.random.default_rng(_SPLIT_SEED)
@@ -828,9 +850,9 @@ def get_reduced_evolution(
     split *= jnp.linalg.norm(measurement) / jnp.linalg.norm(split)
     try:
         both = _evolve(
-            eigen, start, measurement + split, times, tolerance / 2, config.stop
+            eigen, start, measurement + split, times, tolerance / 2, config.stop, steady
         )
-        alone = _evolve(eigen, start, split, times, tolerance / 2, config.stop)
+        alone = _evolve(eigen, start, split, times, tolerance / 2, config.stop, steady)
     except _BreakdownError as error:
         msg = (
             "The two-sided Lanczos recurrence broke down, also with a split measurement"
