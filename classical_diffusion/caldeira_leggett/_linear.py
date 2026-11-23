@@ -276,12 +276,6 @@ def apply_eigen(eigen: EigenLiouvillian, y: jax.Array, shift: jax.Array) -> jax.
     return join(apply_split(eigen, split(y), shift))
 
 
-@jax.jit
-def apply_adjoint(eigen: EigenLiouvillian, w: jax.Array, shift: jax.Array) -> jax.Array:
-    """Apply (L - shift)^dagger to a complex state in the eigenvectors (`apply_adjoint_split`)."""
-    return join(apply_adjoint_split(eigen, split(w), shift))
-
-
 _STAGNATION = 100
 """The BiCGSTAB iterations over which a residual that has not halved has reached the floor of round off, which ends the pass (`bicgstab`)."""
 
