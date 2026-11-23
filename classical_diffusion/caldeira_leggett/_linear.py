@@ -282,6 +282,10 @@ def apply_adjoint(eigen: EigenLiouvillian, w: jax.Array, shift: jax.Array) -> ja
     return join(apply_adjoint_split(eigen, split(w), shift))
 
 
+_STAGNATION = 100
+"""The BiCGSTAB iterations over which a residual that has not halved has reached the floor of round off, which ends the pass (`bicgstab`)."""
+
+
 def bicgstab(
     operator: Callable[[jax.Array], jax.Array],
     rhs: jax.Array,
@@ -290,19 +294,24 @@ def bicgstab(
 ) -> tuple[jax.Array, jax.Array]:
     """Solve A x = rhs from x = 0 by BiCGSTAB, and get the number of iterations, each two applications of A.
 
-    It stops once |rhs - A x| <= rtol |rhs|, after maxiter iterations, or on
-    a breakdown, which the next pass of `refine` recovers from.
+    It stops once |rhs - A x| <= rtol |rhs|, after maxiter iterations, once
+    the residual has not halved over _STAGNATION iterations, or on a
+    breakdown, which the next pass of `refine` recovers from.
     """
     target = rtol * jnp.linalg.norm(rhs)
     zero = jnp.zeros_like(rhs)
     one = jnp.asarray(1.0 + 0j)
 
     def proceed(carry: tuple) -> jax.Array:
-        _x, r, _p, _v, rho, _alpha, omega, k = carry
-        return (k < maxiter) & (jnp.linalg.norm(r) > target) & (rho != 0) & (omega != 0)
+        _x, r, _p, _v, rho, _alpha, omega, k, mark = carry
+        norm = jnp.linalg.norm(r)
+        stagnant = (k > 0) & (k % _STAGNATION == 0) & (norm > mark / 2)
+        return (k < maxiter) & (norm > target) & (rho != 0) & (omega != 0) & ~stagnant
 
     def iterate(carry: tuple) -> tuple:
-        x, r, p, v, rho, alpha, omega, k = carry
+        x, r, p, v, rho, alpha, omega, k, mark = carry
+        # The residual at the start of each _STAGNATION iterations
+        mark = jnp.where(k % _STAGNATION == 0, jnp.linalg.norm(r), mark)
         rho_new = jnp.vdot(rhs, r)
         p = r + (rho_new / rho) * (alpha / omega) * (p - omega * v)
         v = operator(p)
@@ -321,10 +330,13 @@ def bicgstab(
             alpha,
             omega,
             k + 1,
+            mark,
         )
 
-    x, *_, k = jax.lax.while_loop(
-        proceed, iterate, (zero, rhs, zero, zero, one, one, one, jnp.asarray(0))
+    x, *_, k, _ = jax.lax.while_loop(
+        proceed,
+        iterate,
+        (zero, rhs, zero, zero, one, one, one, jnp.asarray(0), jnp.linalg.norm(rhs)),
     )
     return x, k
 
