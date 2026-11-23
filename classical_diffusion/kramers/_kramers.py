@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING
 
-import jax.numpy as jnp
 import numpy as np
 import scipy.sparse
 import scipy.sparse.linalg
@@ -328,7 +327,7 @@ def _get_isf(
         problem = _build_stepped_problem(model, basis, delta_k)
         tails = _Tails(problem, basis, model)
         result = propagate_form(
-            problem.operator.apply,
+            problem.operator,
             problem.start(),
             problem.parity,
             times,
@@ -603,7 +602,7 @@ def _get_stepped_slow_modes(
         tails = _Tails(problem, basis, model)
         start = problem.start()
         state, _, _ = propagate_state(
-            problem.operator.apply,
+            problem.operator,
             start,
             4 / model.friction,
             tol=1e-2 * config.tol,
@@ -621,10 +620,10 @@ def _get_stepped_slow_modes(
         raise RuntimeError(msg)
     duration = 1 / model.friction
     values, vectors = get_slow_pairs(
-        lambda x: np.asarray(problem.operator.apply(jnp.asarray(x))),
-        lambda x: propagate_state(
-            problem.operator.apply, x, duration, tol=1e-2 * config.tol
-        )[0],
+        problem.operator.apply,
+        lambda x: propagate_state(problem.operator, x, duration, tol=1e-2 * config.tol)[
+            0
+        ],
         state,
         duration=duration,
         rate=2 * selection.rate if isinstance(selection, RateCut) else 0.0,
@@ -664,7 +663,7 @@ def _get_doubled_mean_square(
     points = (middle[:, None] + half[:, None] * nodes[None, :]).ravel()
     correlation = (
         -propagate_form(
-            problem.operator.apply,
+            problem.operator,
             v,
             problem.parity,
             np.concatenate([[0.0], points]),
@@ -693,7 +692,7 @@ def _get_stepped_diffusion(
     problem = _build_stepped_problem(model, basis, np.zeros(model.n_dim))
     v = problem.start(direction)
     solution, _ = solve_by_propagation(
-        problem.operator.apply, v, 1 / model.friction, tol=1e-2 * tol
+        problem.operator, v, 1 / model.friction, tol=1e-2 * tol
     )
     return float(v @ solution) / problem.norm
 

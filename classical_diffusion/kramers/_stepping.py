@@ -1,8 +1,9 @@
-# cspell: ignore argnums orthogonalize REORTHOGONALIZE Gragg ascontiguousarray indptr matvec tocsr unconverged
+# cspell: ignore fori orthogonalize REORTHOGONALIZE Gragg matvec triu unconverged
 """The Kramers operator applied without being stored, and exponential time steps in its Krylov spaces, for systems too large to factorise."""
 
 import functools
 from dataclasses import dataclass, field
+from itertools import starmap
 from typing import TYPE_CHECKING
 
 import jax
@@ -44,19 +45,25 @@ _PAD = 2
 """The largest Hermite ladder offset: the friction in narrowed Hermite functions couples n to n +- 2."""
 
 
+_BANDS = (4, 2)
+"""The slabs the Hermite and the plane wave axes are cut into (along their first axis), each trimmed to the basis (`_Kernel`)."""
+
+
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True, kw_only=True)
 class _Kernel:
-    """The real form of the Kramers operator as a stencil on the (Hermite box) x (plane wave box) array.
+    """The real form of the Kramers operator as a stencil on blocks of the (Hermite box) x (plane wave box) array.
 
     L X = sum_j [k_j (P_j X) - D_j (F_j X)] - gamma sum_j R_j X, where P_j,
     D_j and R_j shift the order n_j by a few steps with a coefficient of the
     target order (`bands`), and F_j shifts the plane waves by the reciprocal
     vectors of the Fourier terms of the potential. In the box padded once,
-    each term is a static slice times a coefficient, so the whole operator
-    is one streaming loop, with no index arrays, on any device. The compact
-    state of the basis is expanded into the box by one gather and read back
-    at its positions by another.
+    each term is a static slice times a coefficient. The Hermite triangle
+    |n| <= N and the plane wave disc fill only part of the box, so the box
+    is cut into slabs along n_1 and along the first plane wave axis, and the
+    stencil runs only on each slab's bounding box of the basis: a few
+    streaming loops, with no index arrays. The compact state is expanded
+    into the box by one gather and read back from the blocks by another.
     """
 
     momentum: tuple[jax.Array, ...]
@@ -67,48 +74,94 @@ class _Kernel:
     expand: jax.Array
     """The compact index of each point of the box, or the number of unknowns (a zero) outside the basis."""
     positions: jax.Array
-    """The point of the box of each unknown."""
+    """The point of the blocks (flattened in turn) of each unknown."""
     offsets: tuple[tuple[int, ...], ...] = field(metadata={"static": True})
     """The offsets of the bands of P, D and R."""
     forces: tuple[tuple[tuple[int, ...], tuple[float, ...]], ...] = field(
         metadata={"static": True}
     )
-    """Each shift c of F and its coefficient for each j."""
+    """Each shift c of F and its coefficient for each j: constants of the program, which makes it 8% faster than reading them."""
     box: tuple[int, ...] = field(metadata={"static": True})
     margins: tuple[int, ...] = field(metadata={"static": True})
+    blocks: tuple[tuple[tuple[int, int], ...], ...] = field(metadata={"static": True})
+    """The range (first, end) of each block on each axis of the box."""
 
 
-@jax.jit
-def _apply(kernel: _Kernel, x: jax.Array) -> jax.Array:
+def _stencil(
+    kernel: _Kernel, padded: jax.Array, block: tuple[tuple[int, int], ...]
+) -> jax.Array:
+    """Get L X on one block of the box, from the padded box."""
     n_dim = len(kernel.box) // 2
-    padded = jnp.take(jnp.append(x, 0.0), kernel.expand).reshape(kernel.box)
-    padded = jnp.pad(
-        jax.lax.optimization_barrier(padded), [(m, m) for m in kernel.margins]
-    )
+    first = [f for f, _ in block]
+    shape = [e - f for f, e in block]
 
     def window(j: int, o: int, shift: tuple[int, ...] = (0,) * 3) -> jax.Array:
-        start = [m + (o if a == j else 0) for a, m in enumerate(kernel.margins)]
+        start = [
+            f + m + (o if a == j else 0)
+            for a, (f, m) in enumerate(zip(first, kernel.margins, strict=True))
+        ]
         for a in range(n_dim):
             start[n_dim + a] -= shift[a]
         return jax.lax.slice(
-            padded, start, [s + b for s, b in zip(start, kernel.box, strict=False)]
+            padded, start, [s + b for s, b in zip(start, shape, strict=True)]
         )
 
     def along(c: jax.Array, j: int) -> jax.Array:
-        return c.reshape([-1 if a == j else 1 for a in range(len(kernel.box))])
+        return c[block[j][0] : block[j][1]].reshape(
+            [-1 if a == j else 1 for a in range(len(shape))]
+        )
 
+    wavevector = kernel.wavevector[slice(None), *starmap(slice, block[n_dim:])]
     p_offsets, d_offsets, r_offsets = kernel.offsets
-    out = jnp.zeros(kernel.box)
+    out = jnp.zeros(shape)
     for j in range(n_dim):
         for o, c in zip(r_offsets, kernel.friction, strict=True):
             out -= along(c, j) * window(j, o)
         for o, c in zip(p_offsets, kernel.momentum, strict=True):
-            out += along(c, j) * kernel.wavevector[j] * window(j, o)
+            out += along(c, j) * wavevector[j] * window(j, o)
         for o, c in zip(d_offsets, kernel.derivative, strict=True):
             for shift, coefficient in kernel.forces:
                 if coefficient[j]:
                     out -= coefficient[j] * along(c, j) * window(j, o, shift)
-    return jnp.take(out.reshape(-1), kernel.positions)
+    return out
+
+
+@jax.jit
+def _apply(kernel: _Kernel, x: jax.Array) -> jax.Array:
+    padded = (
+        jnp.append(x, 0.0)
+        .at[kernel.expand]
+        .get(mode="promise_in_bounds")
+        .reshape(kernel.box)
+    )
+    padded = jnp.pad(
+        jax.lax.optimization_barrier(padded), [(m, m) for m in kernel.margins]
+    )
+    # Each block is a vectorized loop; without the barriers XLA would fuse
+    # them into the read back and evaluate the stencil at each position by
+    # scattered loads (3x slower)
+    out = [
+        jax.lax.optimization_barrier(_stencil(kernel, padded, b)).reshape(-1)
+        for b in kernel.blocks
+    ]
+    out = jnp.concatenate([*out, jnp.zeros(1)])
+    return out.at[kernel.positions].get(mode="promise_in_bounds")
+
+
+def _slabs(points: IntArray, count: int) -> list[tuple[int, int]]:
+    """Cut the range of points[:, 0] into count slabs of about equal height, as (first, end)."""
+    low, high = int(points[:, 0].min()), int(points[:, 0].max()) + 1
+    cuts = np.unique(np.linspace(low, high, count + 1).round().astype(int))
+    return list(zip(cuts[:-1].tolist(), cuts[1:].tolist(), strict=True))
+
+
+def _bounding(points: IntArray, slab: tuple[int, int]) -> tuple[tuple[int, int], ...]:
+    """Get the bounding box, (first, end) per axis, of the points in a slab of the first axis."""
+    inside = points[(points[:, 0] >= slab[0]) & (points[:, 0] < slab[1])]
+    return tuple(
+        (int(lo), int(hi) + 1)
+        for lo, hi in zip(inside.min(axis=0), inside.max(axis=0), strict=True)
+    )
 
 
 def _bands(matrix: FloatArray) -> tuple[tuple[int, ...], tuple[FloatArray, ...]]:
@@ -136,10 +189,10 @@ class MatrixFreeOperator:
     indices: IntArray
     width: float
 
-    def apply(self, x: jax.Array) -> jax.Array:
+    def apply(self, x: FloatArray) -> FloatArray:
         """Apply L to a flat state."""
         with jax.enable_x64(new_val=True):
-            return _apply(self.kernel, jnp.asarray(x))
+            return np.asarray(_apply(self.kernel, jnp.asarray(x)))
 
 
 def build_matrix_free_operator(  # ruff:ignore[too-many-locals]
@@ -160,20 +213,49 @@ def build_matrix_free_operator(  # ruff:ignore[too-many-locals]
         _bands(model.friction * real_form[2].real),
     ]
     shifts = [
-        (tuple(int(i) for i in c), tuple(float(f) for f in np.imag(coefficient)))
-        for c, coefficient in get_force_shifts(model)
+        (tuple(int(i) for i in c), np.imag(f)) for c, f in get_force_shifts(model)
     ]
     low = vectors.min(axis=0)
     hermite_box = (max_order + 1,) * n_dim
     plane_wave_box = tuple(int(b) for b in vectors.max(axis=0) - low + 1)
     box = hermite_box + plane_wave_box
+    waves = vectors - low
+
+    def cut(points: IntArray, count: int) -> tuple[list, IntArray, IntArray, IntArray]:
+        """Cut points into slabs: each slab's bounding box, and each point's slab, place in its box, and box size."""
+        slabs = _slabs(points, count)
+        boxes = [_bounding(points, slab) for slab in slabs]
+        which = np.searchsorted([f for f, _ in slabs], points[:, 0], side="right") - 1
+        first = np.array([[f for f, _ in b] for b in boxes])[which]
+        shapes = [[e - f for f, e in b] for b in boxes]
+        local = np.array(
+            [
+                np.ravel_multi_index(tuple(q), shapes[k])
+                for q, k in zip(points - first, which, strict=True)
+            ]
+        )
+        return boxes, which, local, np.array([int(np.prod(sh)) for sh in shapes])
+
+    hermite_blocks, h_slab, h_local, h_size = cut(indices, _BANDS[0])
+    wave_blocks, w_slab, w_local, w_size = cut(waves, _BANDS[1])
+    blocks = [h + w for h in hermite_blocks for w in wave_blocks]
+    sizes = np.outer(h_size, w_size).ravel()
+    starts = np.concatenate([[0], np.cumsum(sizes)])[:-1].reshape(
+        len(h_size), len(w_size)
+    )
+    # The place of each unknown in the blocks, flattened one after another
     positions = (
+        starts[h_slab[:, None], w_slab[None, :]]
+        + h_local[:, None] * w_size[w_slab][None, :]
+        + w_local[None, :]
+    )
+    flat_box = (
         np.ravel_multi_index(tuple(indices.T), hermite_box)[:, None]
         * int(np.prod(plane_wave_box))
-        + np.ravel_multi_index(tuple((vectors - low).T), plane_wave_box)[None, :]
+        + np.ravel_multi_index(tuple(waves.T), plane_wave_box)[None, :]
     )
-    expand = np.full(int(np.prod(box)), positions.size, np.int32)
-    expand[positions.ravel()] = np.arange(positions.size)
+    expand = np.full(int(np.prod(box)), flat_box.size, np.int32)
+    expand[flat_box.ravel()] = np.arange(flat_box.size)
     grid = np.indices(plane_wave_box).reshape(n_dim, -1).T + low
     wavevector = (grid @ model.reciprocal - delta_k).T.reshape((n_dim, *plane_wave_box))
     reach = np.max(np.abs([c for c, _ in shifts] or [[0] * n_dim]), axis=0)
@@ -186,9 +268,10 @@ def build_matrix_free_operator(  # ruff:ignore[too-many-locals]
             expand=jnp.asarray(expand),
             positions=jnp.asarray(positions.ravel().astype(np.int32)),
             offsets=tuple(b[0] for b in bands),
-            forces=tuple(shifts),
+            forces=tuple((c, tuple(float(x) for x in f)) for c, f in shifts),
             box=box,
             margins=(_PAD,) * n_dim + tuple(int(r) for r in reach),
+            blocks=tuple(blocks),
         )
     return MatrixFreeOperator(
         kernel=kernel,
@@ -199,37 +282,111 @@ def build_matrix_free_operator(  # ruff:ignore[too-many-locals]
     )
 
 
-_CHUNK = 8
-"""The rows of each block of the Krylov basis: Gram-Schmidt works on the blocks a step has filled, each a separate array, so no slice of the basis is copied."""
+_BLOCK = 4
+"""The rows of each block of the Krylov basis. Gram-Schmidt reads only the blocks filled so far: XLA copies a slice of one array of rows before a product, and reading every row doubles the traffic."""
 
 
 @dataclass(frozen=True, kw_only=True)
 class _Step:
     """The Krylov space of one step: an orthonormal basis V, as blocks of rows on the device, and L in it, H, with one more row (`_arnoldi`)."""
 
+    start: jax.Array
     blocks: tuple[jax.Array, ...]
     hessenberg: FloatArray
     norm: float
 
-    def combine(self, coefficients: FloatArray) -> jax.Array:
-        """Get the states c V for coefficients c, (k, rows)."""
-        return _combine(self.blocks, _padded(coefficients, self.blocks))
 
-    def forms(self, coefficients: FloatArray, parity: jax.Array) -> FloatArray:
-        """Get s^T J s for each state s = c V, by whichever is cheaper: the states, O(k m n) for k of them, or the J-Gram matrix of the basis, O(m^2 n)."""
-        k = len(coefficients)
-        padded = _padded(coefficients, self.blocks)
-        if k < padded.shape[1]:
-            return np.asarray(_forms(self.blocks, padded, parity))[:k]
-        gram = np.asarray(_gram(self.blocks, parity))
-        return np.einsum("ki,ij,kj->k", padded, gram, padded)[:k]
+@functools.partial(jax.jit, static_argnames="m")
+def _arnoldi_device(
+    kernel: _Kernel, u: jax.Array, m: int
+) -> tuple[tuple[jax.Array, ...], jax.Array, jax.Array]:
+    """Get the blocks of V, the Hessenberg H with one more row and |u|.
+
+    Gram-Schmidt goes a block at a time (block modified Gram-Schmidt), over
+    the blocks filled so far, twice where the first pass cancelled most of w.
+    """
+    norm = jnp.linalg.norm(u)
+    count = -(-(m + 1) // _BLOCK)
+    blocks = tuple(
+        jnp.split(jnp.zeros((count * _BLOCK, u.size)).at[0].set(u / norm), count)
+    )
+
+    def project(
+        blocks: tuple[jax.Array, ...], k: jax.Array, w: jax.Array
+    ) -> tuple[jax.Array, jax.Array]:
+        def remove(w: jax.Array, b: jax.Array) -> tuple[jax.Array, jax.Array]:
+            h = b @ w
+            return w - h @ b, h
+
+        overlaps = []
+        for i, b in enumerate(blocks):
+            w, h = jax.lax.cond(
+                i * _BLOCK <= k,
+                functools.partial(remove, b=b),
+                lambda w: (w, jnp.zeros(_BLOCK)),
+                w,
+            )
+            overlaps.append(h)
+        return w, jnp.concatenate(overlaps)[: m + 1]
+
+    def step(k: jax.Array, carry: tuple) -> tuple:
+        blocks, hessenberg, v = carry
+        # Without the barrier XLA recomputes L v inside each of its consumers
+        w = jax.lax.optimization_barrier(_apply(kernel, v))
+
+        # One pass, and a second where the first cancelled most of w: a loop
+        # rather than a branch, so Gram-Schmidt is compiled once
+        def again(c: tuple) -> jax.Array:
+            w, _, before, passes = c
+            return (passes == 0) | (
+                (passes == 1) & (jnp.linalg.norm(w) < _REORTHOGONALIZE * before)
+            )
+
+        def orthogonalize(c: tuple) -> tuple:
+            w, overlap, _, passes = c
+            projected, more = project(blocks, k, w)
+            return projected, overlap + more, jnp.linalg.norm(w), passes + 1
+
+        w, overlap, _, _ = jax.lax.while_loop(
+            again, orthogonalize, (w, jnp.zeros(m + 1), 0.0, 0)
+        )
+        beta = jnp.linalg.norm(w)
+        v = jnp.where(beta > 0, w / beta, 0.0)
+        # A branch per block: a select over the blocks would rewrite each whole
+        blocks = tuple(
+            jax.lax.cond(
+                (k + 1) // _BLOCK == i,
+                lambda b: b.at[(k + 1) % _BLOCK].set(v),
+                lambda b: b,
+                b,
+            )
+            for i, b in enumerate(blocks)
+        )
+        return blocks, hessenberg.at[:, k].set(overlap.at[k + 1].set(beta)), v
+
+    carry = (blocks, jnp.zeros((m + 1, m)), u / norm)
+    blocks, hessenberg, _ = jax.lax.fori_loop(0, m, step, carry)
+    return blocks, hessenberg, norm
 
 
-def _padded(coefficients: FloatArray, blocks: tuple[jax.Array, ...]) -> FloatArray:
-    """Pad coefficients (k, rows) to whole blocks of rows and to a multiple of _CHUNK states, so that few shapes are compiled."""
-    k, rows = coefficients.shape
-    out = np.zeros((-(-k // _CHUNK) * _CHUNK, len(blocks) * _CHUNK))
-    out[:k, :rows] = coefficients
+def _arnoldi(operator: MatrixFreeOperator, u: jax.Array, m: int) -> _Step:
+    """Get an orthonormal basis V of the Krylov space of m vectors of u, L in it, the Hessenberg H with one more row, and |u|, with u = |u| V e_0, in one call on the device.
+
+    The space ends early, with a square H, where it is invariant.
+    """
+    blocks, hessenberg, norm = _arnoldi_device(operator.kernel, u, m)
+    h = np.asarray(hessenberg)
+    scale = np.maximum(np.abs(np.triu(h[:-1])).max(axis=0), 1e-300)
+    invariant = np.flatnonzero(np.diagonal(h, -1) <= _INVARIANT * scale)
+    if len(invariant):
+        h = h[: invariant[0] + 1, : invariant[0] + 1]
+    return _Step(start=u, blocks=blocks, hessenberg=h, norm=float(norm))
+
+
+def _padded(coefficients: FloatArray, step: _Step, k: int) -> FloatArray:
+    """Pad coefficients to k states and to every row of the blocks, so that one shape compiles whatever the size of H."""
+    out = np.zeros((k, len(step.blocks) * _BLOCK))
+    out[: len(coefficients), : coefficients.shape[1]] = coefficients
     return out
 
 
@@ -237,8 +394,12 @@ def _padded(coefficients: FloatArray, blocks: tuple[jax.Array, ...]) -> FloatArr
 def _combine(blocks: tuple[jax.Array, ...], c: jax.Array) -> jax.Array:
     return functools.reduce(
         jnp.add,
-        (c[:, i * _CHUNK : (i + 1) * _CHUNK] @ b for i, b in enumerate(blocks)),
+        (c[:, i * _BLOCK : (i + 1) * _BLOCK] @ b for i, b in enumerate(blocks)),
     )
+
+
+_STATES = 8
+"""The states whose J-forms are found from the states themselves (padded to this number, so one shape compiles), rather than from the J-Gram matrix of the basis."""
 
 
 @jax.jit
@@ -249,77 +410,18 @@ def _forms(blocks: tuple[jax.Array, ...], c: jax.Array, parity: jax.Array) -> ja
 
 @jax.jit
 def _gram(blocks: tuple[jax.Array, ...], parity: jax.Array) -> jax.Array:
-    return jnp.block([[(a * parity) @ b.T for b in blocks] for a in blocks])
+    basis = jnp.concatenate(blocks)
+    return (basis * parity) @ basis.T
 
 
-@functools.partial(jax.jit, static_argnames=("count", "target"), donate_argnums=0)
-def _orthogonalize(
-    blocks: tuple[jax.Array, ...], w: jax.Array, row: int, *, count: int, target: int
-) -> tuple[tuple[jax.Array, ...], jax.Array, jax.Array, jax.Array]:
-    """Remove from w its components on the first count blocks, twice where the first pass cancelled most of it, and store w / |w| as the row of block target (and return it, the next vector to apply L to)."""
-    before = jnp.linalg.norm(w)
-
-    def project(w: jax.Array) -> tuple[jax.Array, jax.Array]:
-        overlaps = [blocks[i] @ w for i in range(count)]
-        w -= sum(h @ blocks[i] for i, h in enumerate(overlaps))
-        return w, jnp.concatenate(overlaps)
-
-    def again(args: tuple[jax.Array, jax.Array]) -> tuple[jax.Array, jax.Array]:
-        w, overlap = args
-        w, more = project(w)
-        return w, overlap + more
-
-    w, overlap = project(w)
-    w, overlap = jax.lax.cond(
-        jnp.linalg.norm(w) < _REORTHOGONALIZE * before,
-        again,
-        lambda args: args,
-        (w, overlap),
-    )
-    norm = jnp.linalg.norm(w)
-    following = jnp.where(norm > 0, w / norm, 0.0)
-    out = list(blocks)
-    if target < len(blocks):
-        out[target] = jax.lax.dynamic_update_slice_in_dim(
-            blocks[target], following[None], row, 0
-        )
-    return tuple(out), overlap, norm, following
-
-
-def _arnoldi(apply: Callable[[jax.Array], jax.Array], u: jax.Array, m: int) -> _Step:
-    """Get an orthonormal basis V of the Krylov space of m vectors of u, L in it, the Hessenberg H with one more row, and |u|, with u = |u| V e_0.
-
-    The steps are queued on the device without waiting for each other; the
-    space ends early, with a square H, where it is invariant.
-    """
-    norm = float(jnp.linalg.norm(u))
-    blocks = [jnp.zeros((_CHUNK, u.size)) for _ in range(-(-(m + 1) // _CHUNK))]
-    following = u / norm
-    blocks[0] = blocks[0].at[0].set(following)
-    blocks_tuple = tuple(blocks)
-    columns = []
-    for k in range(m):
-        blocks_tuple, overlap, beta, following = _orthogonalize(
-            blocks_tuple,
-            apply(following),
-            (k + 1) % _CHUNK,
-            count=k // _CHUNK + 1,
-            target=(k + 1) // _CHUNK,
-        )
-        columns.append((overlap, beta))
-    hessenberg = np.zeros((m + 1, m))
-    for k, (overlap, beta) in enumerate(columns):
-        hessenberg[: k + 1, k] = np.asarray(overlap)[: k + 1]
-        hessenberg[k + 1, k] = float(beta)
-        if hessenberg[k + 1, k] <= _INVARIANT * max(
-            float(np.abs(hessenberg[: k + 1, k]).max()), 1e-300
-        ):
-            return _Step(
-                blocks=blocks_tuple,
-                hessenberg=hessenberg[: k + 1, : k + 1],
-                norm=norm,
-            )
-    return _Step(blocks=blocks_tuple, hessenberg=hessenberg, norm=norm)
+def _get_forms(step: _Step, coefficients: FloatArray, parity: jax.Array) -> FloatArray:
+    """Get s^T J s for each state s = c V, by whichever is cheaper: the states, O(k m n) for k of them, or the J-Gram matrix of the basis, O(m^2 n)."""
+    k, rows = coefficients.shape
+    if k <= _STATES:
+        padded = _padded(coefficients, step, _STATES)
+        return np.asarray(_forms(step.blocks, padded, parity))[:k]
+    gram = np.asarray(_gram(step.blocks, parity))[:rows, :rows]
+    return np.einsum("ki,ij,kj->k", coefficients, gram, coefficients)
 
 
 _REORTHOGONALIZE = 0.7
@@ -341,15 +443,15 @@ def _augmented(step: _Step, extra: int) -> FloatArray:
 
 
 def _steps(  # ruff:ignore[too-many-arguments]
-    apply: Callable[[jax.Array], jax.Array],
+    operator: MatrixFreeOperator,
     start: FloatArray,
     t_end: float,
     *,
     tol: float,
     m: int,
     extra: int,
-) -> Iterator[tuple[float, float, _Step, FloatArray]]:
-    """Step u(t) = e^{L t} u to t_end, yielding (t, h, the Krylov space of u(t), the augmented H) of each step.
+) -> Iterator[tuple[float, float, _Step, FloatArray, jax.Array]]:
+    """Step u(t) = e^{L t} u to t_end, yielding (t, h, the Krylov space of u(t), the augmented H, and u(t + h) with the `extra` integrals over the step) of each step.
 
     Each step builds the Krylov space of m vectors of the state, in which
     L is the Hessenberg matrix H, and e^{h L} u = |u| V exp(h H) e_0. The
@@ -368,7 +470,7 @@ def _steps(  # ruff:ignore[too-many-arguments]
     u = jnp.asarray(start)
     t, h = 0.0, t_end / 20
     while t < t_end * (1 - 1e-14):
-        step = _arnoldi(apply, u, m)
+        step = _arnoldi(operator, u, m)
         rows, cols = step.hessenberg.shape
         augmented = _augmented(step, extra)
         while True:
@@ -386,8 +488,13 @@ def _steps(  # ruff:ignore[too-many-arguments]
                 )
                 raise RuntimeError(msg)
             h = 0.9 * length * (allowed / error) ** (1 / cols)
-        yield t, length, step, augmented
-        u = step.combine(step.norm * exponential[None, :rows, 0])[0]
+        columns = [0, *range(rows, rows + extra)]
+        states = _combine(
+            step.blocks,
+            _padded(step.norm * exponential[:rows, columns].T, step, 1 + extra),
+        )
+        yield t, length, step, augmented, states
+        u = states[0]
         t += length
         h = min(0.9 * length * (allowed / max(error, 1e-300)) ** (1 / cols), 5 * length)
 
@@ -402,7 +509,7 @@ class Propagation:
 
 @_x64
 def propagate_form(  # ruff:ignore[too-many-arguments]
-    apply: Callable[[jax.Array], jax.Array],
+    operator: MatrixFreeOperator,
     start: FloatArray,
     parity: FloatArray,
     times: FloatArray,
@@ -428,13 +535,13 @@ def propagate_form(  # ruff:ignore[too-many-arguments]
         i += 1
     if i == len(half):
         return Propagation(values=out, n_applications=0)
-    for t, length, step, augmented in _steps(
-        apply, start, float(half[-1]), tol=tol / 2, m=m, extra=0
+    for t, length, step, augmented, _ in _steps(
+        operator, start, float(half[-1]), tol=tol / 2, m=m, extra=0
     ):
         count += step.hessenberg.shape[1]
         rows = step.hessenberg.shape[0]
         if monitor is not None:
-            monitor(step.norm * np.asarray(step.blocks[0][0]))
+            monitor(np.asarray(step.start))
         end = int(np.searchsorted(half, t + length * (1 + 1e-12), side="right"))
         coefficients = np.array(
             [
@@ -443,14 +550,14 @@ def propagate_form(  # ruff:ignore[too-many-arguments]
             ]
         ).reshape(-1, rows)
         if len(coefficients):
-            out[i:end] = step.forms(coefficients, device_parity)
+            out[i:end] = _get_forms(step, coefficients, device_parity)
         i = end
     return Propagation(values=out, n_applications=count)
 
 
 @_x64
 def propagate_state(  # ruff:ignore[too-many-arguments]
-    apply: Callable[[jax.Array], jax.Array],
+    operator: MatrixFreeOperator,
     start: FloatArray,
     duration: float,
     *,
@@ -465,24 +572,20 @@ def propagate_state(  # ruff:ignore[too-many-arguments]
     integral = jnp.zeros(start.shape)
     state = jnp.asarray(start)
     count = 0
-    for _, length, step, augmented in _steps(
-        apply, start, duration, tol=tol, m=m, extra=1
+    for _, _, step, _, states in _steps(
+        operator, start, duration, tol=tol, m=m, extra=1
     ):
         if monitor is not None:
-            monitor(step.norm * np.asarray(step.blocks[0][0]))
+            monitor(np.asarray(step.start))
         count += step.hessenberg.shape[1]
-        rows = step.hessenberg.shape[0]
-        e = scipy.linalg.expm(length * augmented)
-        integral, state = (
-            integral + step.combine(step.norm * e[None, :rows, rows])[0],
-            step.combine(step.norm * e[None, :rows, 0])[0],
-        )
+        state = states[0]
+        integral += states[1]
     return np.array(state), np.array(integral), count
 
 
 @_x64
 def solve_by_propagation(
-    apply: Callable[[jax.Array], jax.Array],
+    operator: MatrixFreeOperator,
     rhs: FloatArray,
     duration: float,
     *,
@@ -502,22 +605,22 @@ def solve_by_propagation(
     RuntimeError
         If GMRES does not converge.
     """
-    _, integral, count = propagate_state(apply, rhs, duration, tol=1e-2 * tol, m=m)
+    _, integral, count = propagate_state(operator, rhs, duration, tol=1e-2 * tol, m=m)
     applications = [count]
 
     def matvec(x: FloatArray) -> FloatArray:
-        state, _, k = propagate_state(apply, x, duration, tol=1e-2 * tol, m=m)
+        state, _, k = propagate_state(operator, x, duration, tol=1e-2 * tol, m=m)
         applications[0] += k
         return x - state
 
     # The stubs of scipy omit the matvec form of the constructor
-    operator = scipy.sparse.linalg.LinearOperator(  # ty: ignore[missing-argument]
+    system = scipy.sparse.linalg.LinearOperator(  # ty: ignore[missing-argument]
         (rhs.size, rhs.size),
         matvec=matvec,  # ty: ignore[unknown-argument]
         dtype=np.float64,  # ty: ignore[parameter-already-assigned]
     )
     solution, info = scipy.sparse.linalg.gmres(
-        operator, integral, rtol=tol, atol=0, restart=60, maxiter=4
+        system, integral, rtol=tol, atol=0, restart=60, maxiter=4
     )
     if info != 0:
         msg = "GMRES did not converge on (1 - e^{L tau}) x = int_0^tau e^{L t} b dt"
