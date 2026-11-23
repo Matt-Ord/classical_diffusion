@@ -137,11 +137,11 @@ class _Progress:
     @staticmethod
     def start(tolerance: float, floor: float, max_steps: int) -> _Progress:
         return _Progress(
-            tolerance=jnp.asarray(tolerance),
-            floor=jnp.asarray(floor),
-            precision=jnp.asarray(0.0),
+            tolerance=jnp.asarray(tolerance, float),
+            floor=jnp.asarray(floor, float),
+            precision=jnp.zeros(()),
             errors=jnp.zeros(max_steps // _TRANSFER_BLOCK + 2),
-            count=jnp.asarray(0),
+            count=jnp.zeros((), int),
         )
 
     @property
@@ -236,15 +236,15 @@ class _Recurrence:
         size = jnp.linalg.norm(start)
         v = start / size
         w = measurement * (size / jnp.conj(scale))
-        zero = jnp.zeros_like(split(v))
+        zero, scalar = jnp.zeros_like(split(v)), jnp.zeros((), complex)
         return _Recurrence(
-            vectors=(split(v), split(w), zero, zero, jnp.asarray(0j), jnp.asarray(0j)),
+            vectors=(split(v), split(w), zero, zero, scalar, scalar),
             alpha=jnp.zeros(capacity, complex),
             coupling=jnp.zeros(capacity, complex),
-            steps=jnp.asarray(0),
+            steps=jnp.zeros((), int),
             invariant=_FALSE,
             broken=_FALSE,
-            roundoff=jnp.asarray(0.0),
+            roundoff=jnp.zeros(()),
         )
 
     @property
@@ -774,13 +774,13 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
     )
     screen = _Screen(
         transforms=jnp.zeros((_LINES, 2 * _FREQUENCIES + 1), complex),
-        lines=jnp.asarray(-1),
-        screen=jnp.asarray(np.inf),
+        lines=jnp.asarray(-1, int),
+        screen=jnp.asarray(np.inf, float),
         reset=_FALSE,
-        due=jnp.asarray(0),
+        due=jnp.zeros((), int),
     )
     progress = _Progress.start(tolerance, _ROUNDOFF * tolerance / stop, max_steps)
-    last = (jnp.zeros(len(times), complex), _FALSE, jnp.asarray(0))
+    last = (jnp.zeros(len(times), complex), _FALSE, jnp.zeros((), int))
     while True:
         recurrence, screen, progress, due = _advance(
             eigen, recurrence, screen, progress, constants, max_steps=max_steps
@@ -818,7 +818,9 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
         screen = dataclasses.replace(
             screen,
             reset=_FALSE,
-            due=jnp.asarray(steps + max(_BLOCK, steps // _SPREAD // _BLOCK * _BLOCK)),
+            due=jnp.asarray(
+                steps + max(_BLOCK, steps // _SPREAD // _BLOCK * _BLOCK), int
+            ),
         )
         done, broken = jax.device_get((done, recurrence.broken))
         if done:
