@@ -14,6 +14,7 @@ import numpy as np
 from classical_diffusion.caldeira_leggett._linear import (
     EigenLiouvillian,
     apply_adjoint_split,
+    apply_eigen,
     apply_split,
     from_eigen,
     inner,
@@ -741,12 +742,23 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
     span = float(times.max())
     s = 1 / span
     plateau = complex(jnp.vdot(measurement, steady))
-    # The transform of the whole, less that of the plateau: so the error of
-    # the steady state counts in the comparison with the transform of F_m
+    accuracy = _TRANSFER_TOL * tolerance / s
     reference, transfer_applications = get_transfer(
-        eigen, start + steady, measurement, s, _TRANSFER_TOL * tolerance / s
+        eigen, start, measurement, s, accuracy
     )
-    reference -= plateau / s
+    if plateau != 0:
+        # The transform of the plateau's error, (s - L)^-1 rho - rho / s =
+        # (s - L)^-1 L rho / s, from the residual of the steady state: so it
+        # counts in the comparison with the transform of F_m. Not from start
+        # + steady at once: the steady state (weight 0.2 / s) swamped the
+        # rest, and for H on Cu(111) in 2D at 1 |G| over 1.8 ns the transform
+        # came out 3e-4 / s wrong, so that F_m never agreed with it.
+        residual = apply_eigen(eigen, steady, jnp.asarray(0j))
+        drift, applications = get_transfer(
+            eigen, residual, measurement, s, accuracy * s
+        )
+        reference += drift / s
+        transfer_applications += applications
     scale = complex(jnp.vdot(measurement, start))
     if scale == 0:
         raise _BreakdownError
@@ -897,8 +909,8 @@ def get_reduced_evolution(  # ruff:ignore[too-many-arguments]
     plateau by 1.5e-6 relative, above the stop, forever. So the evolution
     is of X_0 - c rho with c = Tr X_0 / Tr rho, which has no zero mode, and
     the plateau c measure(rho) is added: exact, as Tr exp(L t) X = Tr X. The
-    transfer function is of X_0 itself, so an error of the steady state
-    counts in its comparison with the transform of F_m.
+    transfer function of c rho is found too, so that an error of the steady
+    state counts in the comparison with the transform of F_m.
 
     A serious breakdown of the recurrence (<w, v> = 0, as when F(0) = 0)
     belongs to the pair (X_0, g), and is cured by splitting the
