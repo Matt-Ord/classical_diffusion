@@ -18,6 +18,7 @@ from classical_diffusion.caldeira_leggett._linear import (
     EigenLiouvillian,
     apply_eigen,
     bicgstab,
+    check,
     gmres,
     refine,
 )
@@ -149,21 +150,32 @@ def _get_amplitude(  # ruff:ignore[too-many-arguments]
     lambda is projected out, and then c = r^dagger (X - (L - lambda) y). It
     is solved to rtol by passes of BiCGSTAB (`refine`).
     """
-    shift = jnp.asarray(rate)
+    amplitude, coefficient, applications, reached = jax.device_get(
+        _amplitude(eigen, jnp.asarray(rate), vector, state, measurement, rtol)
+    )
+    check(reached, rtol)
+    return complex(amplitude), complex(coefficient), int(applications)
+
+
+@jax.jit
+def _amplitude(  # ruff:ignore[too-many-arguments, too-many-positional-arguments]
+    eigen: EigenLiouvillian,
+    shift: jax.Array,
+    vector: jax.Array,
+    state: jax.Array,
+    measurement: jax.Array,
+    rtol: float,
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    """Get the amplitude, coefficient, applications of L and residual reached of `_get_amplitude`, on the device."""
 
     def apply(y: jax.Array) -> jax.Array:
         out = apply_eigen(eigen, y, shift)
         return out - jnp.vdot(vector, out) * vector
 
     rhs = state - jnp.vdot(vector, state) * vector
-    if float(jnp.linalg.norm(rhs)) <= rtol * float(jnp.linalg.norm(state)):
-        # Less than rtol of the state is off the mode, as for the steady
-        # state at dK = 0, so y = 0 solves it to rtol: refining that rhs, of
-        # round off, to rtol of itself took 2,002 applications of L for
-        # hydrogen on Cu(111) in 1D
-        coefficient, applications = complex(jnp.vdot(vector, state)), 0
-    else:
-        y, applications = refine(
+
+    def solved(_: None) -> tuple[jax.Array, jax.Array, jax.Array]:
+        y, applications, reached = refine(
             apply,
             lambda residual, inner_rtol: _projected_solve(
                 eigen,
@@ -175,14 +187,29 @@ def _get_amplitude(  # ruff:ignore[too-many-arguments]
                 method="bicgstab",
             ),
             rhs,
-            rtol=rtol,
+            rtol=jnp.asarray(rtol),
             inner_rtol=INNER_RTOL,
             passes=PASSES,
         )
-        coefficient = complex(jnp.vdot(vector, state - apply_eigen(eigen, y, shift)))
-        applications += 1
-    amplitude = complex(jnp.vdot(measurement, vector)) * coefficient
-    return amplitude, coefficient, applications
+        coefficient = jnp.vdot(vector, state - apply_eigen(eigen, y, shift))
+        return coefficient, applications + 1, reached
+
+    def direct(_: None) -> tuple[jax.Array, jax.Array, jax.Array]:
+        return jnp.vdot(vector, state), jnp.asarray(0), jnp.asarray(0.0)
+
+    # Less than rtol of the state off the mode, as for the steady state at
+    # dK = 0, means y = 0 solves it to rtol: refining that rhs, of round
+    # off, to rtol of itself took 2,002 applications of L for hydrogen on
+    # Cu(111) in 1D
+    coefficient, applications, reached = jax.lax.cond(
+        jnp.linalg.norm(rhs) <= rtol * jnp.linalg.norm(state), direct, solved, None
+    )
+    return (
+        jnp.vdot(measurement, vector) * coefficient,
+        coefficient,
+        applications,
+        reached,
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -197,9 +224,64 @@ class _Ritz:
     order: list[int]
 
 
+@partial(jax.jit, donate_argnames=("basis", "images"))
+def _expand(  # ruff:ignore[too-many-arguments, too-many-positional-arguments]
+    eigen: EigenLiouvillian,
+    locked: jax.Array,
+    basis: jax.Array,
+    images: jax.Array,
+    size: jax.Array,
+    x: jax.Array,
+    vectors: tuple[jax.Array, jax.Array],
+    threshold: jax.Array,
+) -> tuple[jax.Array, jax.Array, tuple[jax.Array, ...]]:
+    """Add x, orthogonalized twice against the locked vectors and the basis, at row size of the buffers, if more than threshold of it is new (`_Search.expand`).
+
+    Get the buffers and the norm of the new part of x, the new column and row
+    of V^dagger W, its diagonal, <x, X_0> and <measurement, x>, all small.
+    Rows of zeros pad the buffers and the locked vectors.
+    """
+    start, measurement = vectors
+    for _ in range(2):
+        x -= jnp.tensordot(_dot(locked, x[None])[:, 0], locked, axes=1)
+        x -= jnp.tensordot(_dot(basis, x[None])[:, 0], basis, axes=1)
+    norm = jnp.linalg.norm(x)
+    accepted = norm > threshold
+    x /= jnp.where(accepted, norm, 1)
+    image = _project_out(locked, apply_eigen(eigen, x, jnp.asarray(0j)))
+    small = (
+        norm,
+        _dot(basis, image[None])[:, 0],
+        _dot(x[None], images)[0],
+        jnp.vdot(x, image),
+        jnp.vdot(x, start),
+        jnp.vdot(measurement, x),
+    )
+    return (
+        basis.at[size].set(jnp.where(accepted, x, 0)),
+        images.at[size].set(jnp.where(accepted, image, 0)),
+        small,
+    )
+
+
+@jax.jit
+def _pair(
+    basis: jax.Array, images: jax.Array, s: jax.Array, theta: jax.Array
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """Get the Ritz vector u = V s, its residual r = W s - theta u, and |r|."""
+    u = jnp.tensordot(s, basis, axes=1)
+    r = jnp.tensordot(s, images, axes=1) - theta * u
+    return u, r, jnp.linalg.norm(r)
+
+
 @dataclass(kw_only=True)
 class _Search:
-    """The search of Jacobi-Davidson: the locked Schur vectors Q with T = Q^dagger L Q, and the search space V, with W = (1 - Q Q^dagger) L V."""
+    """The search of Jacobi-Davidson: the locked Schur vectors Q with T = Q^dagger L Q, and the search space V, with W = (1 - Q Q^dagger) L V.
+
+    V and W are held in buffers on the device whose rows beyond `size` are
+    zero, grown _PAD rows at a time, so that each iteration compiles nothing
+    new, copies no state, and reads back only small arrays (`_expand`).
+    """
 
     eigen: EigenLiouvillian
     start: jax.Array
@@ -207,9 +289,10 @@ class _Search:
     locked: list[jax.Array] = field(default_factory=list)
     schur: ComplexArray = field(default_factory=lambda: np.zeros((0, 0), complex))
     basis: jax.Array = field(init=False)
-    """V, (k, ...), orthonormal."""
+    """V, orthonormal, in its first `size` rows."""
     images: jax.Array = field(init=False)
     """W."""
+    size: int = 0
     projected: ComplexArray = field(default_factory=lambda: np.zeros((0, 0), complex))
     """V^dagger W, kept as V grows, rather than k^2 products of states each iteration."""
     overlaps: ComplexArray = field(default_factory=lambda: np.zeros(0, complex))
@@ -218,11 +301,31 @@ class _Search:
     """<measurement, V>."""
     applications: int = 0
     """The applications of L to find the modes."""
+    inner: list[jax.Array] = field(default_factory=list)
+    """The applications of L of the correction solves, on the device until the end."""
     coefficient_applications: int = 0
     """The applications of L to find their coefficients."""
+    reference: float = field(init=False)
+    """|<measurement, X_0>|."""
+    norm: float = field(init=False)
+    """|X_0|."""
 
     def __post_init__(self) -> None:
-        self.basis = self.images = jnp.zeros((0, *self.start.shape), self.start.dtype)
+        self.basis, self.images = (_padded(self.start[None][:0]) for _ in range(2))
+        self.reference, self.norm = (
+            float(x)
+            for x in jax.device_get(
+                (
+                    jnp.abs(jnp.vdot(self.measurement, self.start)),
+                    jnp.linalg.norm(self.start),
+                )
+            )
+        )
+
+    def _set(self, basis: jax.Array, images: jax.Array) -> None:
+        """Set V and W to stacks of states, padded into buffers."""
+        self.size = len(basis)
+        self.basis, self.images = _padded(basis), _padded(images)
 
     def expand(self, x: jax.Array, *, scale: float = 1.0) -> bool:
         """Add x, orthogonalized, to the search space, unless less than _STAGNATION scale of it is new.
@@ -230,34 +333,35 @@ class _Search:
         A correction already in the space means the search has stagnated. A
         restart vector is measured against its own norm.
         """
-        known = (
-            jnp.concatenate([jnp.stack(self.locked), self.basis])
-            if self.locked
-            else self.basis
+        if self.size == len(self.basis):
+            self.basis, self.images = (
+                _padded(jnp.concatenate([x, jnp.zeros_like(x[:1])]))
+                for x in (self.basis, self.images)
+            )
+        self.basis, self.images, small = _expand(
+            self.eigen,
+            _padded(jnp.stack(self.locked) if self.locked else self.start[None][:0]),
+            self.basis,
+            self.images,
+            jnp.asarray(self.size),
+            x,
+            (self.start, self.measurement),
+            jnp.asarray(_STAGNATION * scale),
         )
-        if len(known):
-            for _ in range(2):
-                x = _project_out(known, x)
-        size = float(jnp.linalg.norm(x))
-        if size <= _STAGNATION * scale:
+        norm, column, row, diagonal, overlap, measured = jax.device_get(small)
+        if norm <= _STAGNATION * scale:
             return False
-        x /= size
-        image = apply_eigen(self.eigen, x, jnp.asarray(0j))
         self.applications += 1
-        if self.locked:
-            image = _project_out(jnp.stack(self.locked), image)
-        k = len(self.basis)
+        k = self.size
         grown = np.zeros((k + 1, k + 1), complex)
         grown[:k, :k] = self.projected
-        if k:
-            grown[:k, k] = np.asarray(_dot(self.basis, image[None])[:, 0])
-            grown[k, :k] = np.asarray(_dot(x[None], self.images)[0])
-        grown[k, k] = complex(jnp.vdot(x, image))
+        grown[:k, k] = column[:k]
+        grown[k, :k] = row[:k]
+        grown[k, k] = diagonal
         self.projected = grown
-        self.overlaps = np.append(self.overlaps, complex(jnp.vdot(x, self.start)))
-        self.measured = np.append(self.measured, complex(jnp.vdot(self.measurement, x)))
-        self.basis = jnp.concatenate([self.basis, x[None]])
-        self.images = jnp.concatenate([self.images, image[None]])
+        self.overlaps = np.append(self.overlaps, overlap)
+        self.measured = np.append(self.measured, measured)
+        self.size += 1
         return True
 
     def correct(self, u: jax.Array, r: jax.Array, theta: complex) -> bool:
@@ -271,8 +375,13 @@ class _Search:
             maxiter=_INNER_MAXITER,
             method="gmres",
         )
-        self.applications += int(inner)
+        self.inner.append(inner)
         return self.expand(correction)
+
+    @property
+    def total(self) -> int:
+        """The applications of L to find the modes, with the correction solves."""
+        return self.applications + int(sum(int(n) for n in jax.device_get(self.inner)))
 
     def ritz(self) -> _Ritz:
         values, left, right = scipy.linalg.eig(self.projected, left=True, right=True)
@@ -282,22 +391,25 @@ class _Search:
             np.einsum("ij,ij->j", left.conj(), right)
         )
         estimates = (self.measured @ right) * weights
-        reference = abs(complex(jnp.vdot(self.measurement, self.start)))
         order = [int(j) for j in np.argsort(-values.real)]
-        seen = [j for j in order if abs(estimates[j]) >= _AMPLITUDE_TOL * reference]
+        seen = [
+            j for j in order if abs(estimates[j]) >= _AMPLITUDE_TOL * self.reference
+        ]
         return _Ritz(
             values=values,
             right=right,
-            weights=weights / float(jnp.linalg.norm(self.start)),
+            weights=weights / self.norm,
             order=seen or order,
         )
 
-    def pair(self, ritz: _Ritz, j: int) -> tuple[jax.Array, jax.Array]:
-        """Get the Ritz vector u and its residual r = (1 - Q Q^dagger) L u - theta u."""
-        s = jnp.asarray(ritz.right[:, j])
-        u = jnp.tensordot(s, self.basis, axes=1)
-        r = jnp.tensordot(s, self.images, axes=1) - ritz.values[j] * u
-        return u, r
+    def pair(self, ritz: _Ritz, j: int) -> tuple[jax.Array, jax.Array, float]:
+        """Get the Ritz vector u, its residual r = (1 - Q Q^dagger) L u - theta u, and |r|."""
+        s = np.zeros(len(self.basis), complex)
+        s[: self.size] = ritz.right[:, j]
+        u, r, norm = _pair(
+            self.basis, self.images, jnp.asarray(s), jnp.asarray(ritz.values[j])
+        )
+        return u, r, float(norm)
 
     def extend(self, u: jax.Array) -> None:
         """Extend the Schur form with u, of unit norm and orthogonal to the locked vectors."""
@@ -323,19 +435,19 @@ class _Search:
         rest = ritz.right[:, ritz.order[1 : 1 + _RESTART]]
         q, r = np.linalg.qr(rest - np.outer(s_0, s_0.conj() @ rest))
         q = jnp.asarray(q[:, np.abs(np.diag(r)) > _INDEPENDENT])
-        basis = jnp.tensordot(q.T, self.basis, axes=1)
-        images = jnp.tensordot(q.T, self.images, axes=1)
+        basis = jnp.tensordot(q.T, self.basis[: self.size], axes=1)
+        images = jnp.tensordot(q.T, self.images[: self.size], axes=1)
         images -= jnp.tensordot(_dot(u[None], images)[0], u[None], axes=0)[:, 0]
-        self.basis, self.images = basis, images
+        self._set(basis, images)
         q = np.asarray(q)
         # The images lose only their part along u, to which V q is orthogonal
         self.projected = q.conj().T @ self.projected @ q
         self.overlaps = q.conj().T @ self.overlaps
         self.measured = np.matmul(self.measured, q)
-        if not len(self.basis):
+        if not self.size:
             # No other Ritz vector is seen, as at dK = 0, where X_0 is the
             # steady state: search on in what is left of X_0, if anything
-            self.expand(self.start, scale=float(jnp.linalg.norm(self.start)))
+            self.expand(self.start, scale=self.norm)
 
     def modes(self, rtol: float) -> list[Mode]:
         """Get the modes from the Schur form, slowest first, with their amplitudes from coefficients to rtol of |X_0|.
@@ -387,7 +499,7 @@ def find_slow_modes(
     search = _search(eigen, start, measurement, selection, config=config)
     # The coefficients to well below the error allowed in an evolution
     return search.modes(0.1 * config.stop), {
-        "modes": search.applications,
+        "modes": search.total,
         "coefficients": search.coefficient_applications,
     }
 
@@ -424,12 +536,11 @@ def _search(
     search.expand(start)
     iterations = 0
     # The search space is empty once X_0 is in the span of the modes locked
-    while len(search.locked) < target and len(search.basis):
+    while len(search.locked) < target and search.size:
         ritz = search.ritz()
         j = ritz.order[0]
         theta = complex(ritz.values[j])
-        u, r = search.pair(ritz, j)
-        norm = float(jnp.linalg.norm(r))
+        u, r, norm = search.pair(ritz, j)
         if (
             isinstance(selection, RateCut)
             and search.locked
