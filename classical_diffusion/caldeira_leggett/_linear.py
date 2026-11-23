@@ -37,19 +37,18 @@ class EigenLiouvillian:
     application is two products at each kappa whatever the number of jumps
     (`_jumps`), and L^dagger is the same products of the conjugate
     transposes.
-    The products are of real matrices (`split`): from _GAUSS_BANDS bands on
-    the CPU, each complex product is three real products (Gauss, `_gauss`),
-    of the real part, imaginary part and their sum of each matrix, stored
-    (3, ...); otherwise one real product with a block matrix
-    [[Re, Im], [-Im, Re]] or [Re; Im] (`apply_split`).
+    The products are of real matrices (`split`), each one product with a
+    block matrix [[Re, Im], [-Im, Re]] or [Re; Im], on the CPU as on a GPU:
+    three real products (Gauss) were 11-13% faster on the CPU from 100
+    bands (2D Li, 176 bands), at the cost of a second path.
     """
 
     rates: jax.Array
     """Z, (n_kappa, n_bands, n_bands)."""
     forward_ket: jax.Array
-    """K_j[s_j(kappa)] side by side over j at each kappa, where s_j(kappa) is the source from which the jump j reaches kappa, (n_kappa, n_bands, n_ops n_bands): as the blocks [Re; Im], or as Gauss parts (3, ...)."""
+    """K_j[s_j(kappa)] side by side over j at each kappa, where s_j(kappa) is the source from which the jump j reaches kappa, (n_kappa, n_bands, n_ops n_bands): as the blocks [Re; Im], (n_kappa, 2 n_bands, n_ops n_bands)."""
     forward_bra: jax.Array
-    """B_j[s] side by side over j at each source s, (n_kappa, n_bands, n_ops n_bands): as the blocks [[Re, Im], [-Im, Re]], or as Gauss parts."""
+    """B_j[s] side by side over j at each source s, (n_kappa, n_bands, n_ops n_bands): as the blocks [[Re, Im], [-Im, Re]]."""
     adjoint_ket: jax.Array
     """K_j[s]^dagger side by side at each s, the jumps of L^dagger, as forward_ket."""
     adjoint_bra: jax.Array
@@ -66,17 +65,6 @@ class EigenLiouvillian:
     bra_inverse_dagger: jax.Array
 
 
-_GAUSS_BANDS = 100
-"""The number of bands from which, on the CPU, each complex product of an application is three real products (Gauss) rather than one real product of block matrices (`EigenLiouvillian`).
-
-The block products have 4/3 of the flops, but no sums of parts before and
-after each product. Per application of L in a Lanczos step: 2D H (52
-bands) 20.8 ms Gauss and 18.4 ms blocks, 2D Li (176 bands) 84 and 94 ms,
-1D Na (22 bands) 0.067 and 0.058 ms. On a GPU the blocks are plain
-products of real matrices.
-"""
-
-
 def _dagger(x: np.ndarray) -> np.ndarray:
     return x.conj().swapaxes(-1, -2)
 
@@ -87,17 +75,13 @@ def _row(x: np.ndarray) -> np.ndarray:
     return x.transpose(1, 2, 0, 3).reshape(n_kappa, n, n_ops * n)
 
 
-def _left(x: np.ndarray, *, gauss: bool) -> jax.Array:
-    """Get matrices as left factors: their Gauss parts, or the blocks [Re; Im]."""
-    if gauss:
-        return jnp.asarray(np.stack([x.real, x.imag, x.real + x.imag]))
+def _left(x: np.ndarray) -> jax.Array:
+    """Get matrices as left factors, the blocks [Re; Im]."""
     return jnp.asarray(np.concatenate([x.real, x.imag], axis=-2))
 
 
-def _right(x: np.ndarray, *, gauss: bool) -> jax.Array:
-    """Get matrices as right factors: their Gauss parts, or the blocks [[Re, Im], [-Im, Re]]."""
-    if gauss:
-        return jnp.asarray(np.stack([x.real, x.imag, x.real + x.imag]))
+def _right(x: np.ndarray) -> jax.Array:
+    """Get matrices as right factors, the blocks [[Re, Im], [-Im, Re]]."""
     return jnp.asarray(np.block([[x.real, x.imag], [-x.imag, x.real]]))
 
 
@@ -119,13 +103,12 @@ def get_eigen_liouvillian(liouvillian: Liouvillian) -> EigenLiouvillian:
     )
     # K_j[s_j(kappa)] and B_j[s_j(kappa)] of the jumps which reach each kappa
     ket_in, bra_in = (x[np.arange(len(x))[:, None], sources] for x in (ket, bra))
-    gauss = ket.shape[-1] >= _GAUSS_BANDS and jax.default_backend() == "cpu"
     return EigenLiouvillian(
         rates=jnp.asarray(-1j * (mu[:, :, None] - nu.conj()[:, None, :])),
-        forward_ket=_left(_row(ket_in), gauss=gauss),
-        forward_bra=_right(_row(bra), gauss=gauss),
-        adjoint_ket=_left(_row(_dagger(ket)), gauss=gauss),
-        adjoint_bra=_right(_row(_dagger(bra_in)), gauss=gauss),
+        forward_ket=_left(_row(ket_in)),
+        forward_bra=_right(_row(bra)),
+        adjoint_ket=_left(_row(_dagger(ket))),
+        adjoint_bra=_right(_row(_dagger(bra_in))),
         sources=jnp.asarray(sources.T),
         targets=jnp.asarray(targets.T),
         ket_vectors=jnp.asarray(a),
@@ -176,26 +159,6 @@ def magnitudes(x: jax.Array) -> jax.Array:
     return real**2 + imaginary**2
 
 
-def _gauss(a: jax.Array, b: jax.Array) -> tuple[jax.Array, jax.Array]:
-    """Get the real and imaginary parts of products of complex matrices, from three real products (Gauss).
-
-    a and b are each (real, imaginary, real + imaginary), (3, ...). XLA
-    multiplies complex matrices on the CPU at about half the flop rate of
-    real ones (OpenBLAS does not): (9, 139, 139) by (9, 139, 139) takes 10.2
-    ms complex and 1.45 ms real (OpenBLAS 5.9 and 1.45 ms), so three real
-    products take 4.4 ms. The parts are behind a barrier, which keeps XLA
-    from fusing them into the products, which would then no longer be calls
-    to its matrix product.
-    """
-    p = jnp.matmul(*jax.lax.optimization_barrier((a, b)))
-    return p[0] - p[1], p[2] - p[0] - p[1]
-
-
-def _parts(real: jax.Array, imaginary: jax.Array) -> jax.Array:
-    """Get (real, imaginary, real + imaginary), (3, ...)."""
-    return jnp.stack([real, imaginary, real + imaginary])
-
-
 def _jumps(
     ket: jax.Array, bra: jax.Array, gather: jax.Array, y: jax.Array
 ) -> jax.Array:
@@ -203,18 +166,13 @@ def _jumps(
 
     Y[t] Q_j[t] of every j is one product at each t, with Q side by side,
     and the sum over j at each kappa one product of the row of P_j[kappa]
-    with the column of those at g_j(kappa). With blocks,
+    with the column of those at g_j(kappa):
     [Re Y, Im Y] [[Re Q, Im Q], [-Im Q, Re Q]] = [Re YQ, Im YQ], and
     [Re P; Im P] [Re R, Im R] holds the four real products of P R.
     """
     n_kappa, n_ops = gather.shape
     n = y.shape[-2]
     pick = (gather, jnp.arange(n_ops))
-    if ket.ndim == y.ndim + 1:
-        real, imaginary = _gauss(_parts(*_halves(y)), bra)
-        right = jnp.stack([real, imaginary]).reshape(2, n_kappa, n, n_ops, n)
-        right = right.swapaxes(2, 3)[:, *pick].reshape(2, n_kappa, n_ops * n, n)
-        return jnp.concatenate(_gauss(ket, _parts(*right)), axis=-1)
     right = (y @ bra).reshape(n_kappa, n, 2, n_ops, n)
     right = right.transpose(0, 3, 1, 2, 4)[pick].reshape(n_kappa, n_ops * n, 2 * n)
     out = (ket @ right).reshape(n_kappa, 2, n, 2, n)
