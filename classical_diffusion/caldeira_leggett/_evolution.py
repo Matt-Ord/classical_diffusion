@@ -1,6 +1,6 @@
 """The time evolution of a measurement of exp(L t) X_0, by two-sided Lanczos (Pade via Lanczos)."""
 
-# cspell: ignore vdot fori finfo jitted LAPACK's Strakos Tichy Liouvillians Feldmann Freund rebiorthogonalization
+# cspell: ignore vdot fori finfo jitted LAPACK's Strakos Tichy Liouvillians Feldmann Freund rebiorthogonalization gammaln
 import dataclasses
 import warnings
 from dataclasses import dataclass
@@ -304,6 +304,52 @@ def _steps(
     return jax.lax.fori_loop(0, steps, step, (vectors, out))
 
 
+def _get_exact(
+    recurrence: _Recurrence, alpha: jax.Array, coupling: jax.Array, span: jax.Array
+) -> jax.Array:
+    """Get whether T_m is exact over the span to round off, at each new step.
+
+    T_m matches the first 2 m moments of F, so the next step changes F_m by
+    c_1 ... c_m t^{2m} / (2m)! (c_k the couplings), times at most
+    exp(2 |T| t) for the higher moments, |T| <= max |alpha| + 2 max |c|^1/2.
+    Over a span short against 1 / |T| this falls faster than geometrically,
+    and once it is below eps of F(0) at two steps in a row, so that it is
+    not a single near breakdown (a small c_k, which the next makes up for),
+    F_m is F to round off: the recurrence has nothing more to find, and its
+    next steps would only make T_m ill conditioned. For a free particle
+    (barrier 0) over a few hops, |T| span ~ 5, F_m is exact from m = 5, and
+    at m = 40 the near breakdowns of the steps since (cosines 4e-8) make
+    T_m so ill conditioned (weights 350 times F(0)) that its poles give F_m
+    wrong by 7e-5, and by 9e-3 at m = 50. Over a long span the bound is
+    astronomical and never stops the recurrence.
+    """
+    m = recurrence.steps
+    valid = jnp.arange(recurrence.alpha.shape[0]) < m
+    logs = jnp.log(jnp.abs(coupling))
+    width = jnp.maximum(
+        jnp.where(valid, jnp.abs(recurrence.alpha), 0).max(),
+        jax.lax.cummax(jnp.abs(alpha)),
+    ) + 2 * jnp.sqrt(
+        jnp.maximum(
+            jnp.where(valid, jnp.abs(recurrence.coupling), 0).max(),
+            jax.lax.cummax(jnp.abs(coupling)),
+        )
+    )
+    # The bound of the change from the step after each: rows k = m + i + 1
+    k = m + 1 + jnp.arange(alpha.shape[0])
+    total = jnp.where(
+        valid, jnp.log(jnp.abs(recurrence.coupling)), 0
+    ).sum() + jnp.cumsum(logs)
+    bound = (
+        total
+        + 2 * k * jnp.log(span)
+        - jax.scipy.special.gammaln(2 * k + 1.0)
+        + 2 * width * span
+    )
+    below = bound <= np.log(_EPS)
+    return below & jnp.concatenate([_FALSE[None], below[:-1]])
+
+
 def _take(  # ruff:ignore[too-many-arguments]
     eigen: EigenLiouvillian,
     recurrence: _Recurrence,
@@ -312,11 +358,13 @@ def _take(  # ruff:ignore[too-many-arguments]
     *,
     steps: int,
     preconditioned: bool,
+    span: jax.Array | None = None,
 ) -> _Recurrence:
     """Take steps more, or fewer if the space becomes invariant or the recurrence breaks down, keeping the steps before (and the diagonal of that step).
 
     norm is the scale of A: the largest rate of its no-jump part, or 1
-    preconditioned.
+    preconditioned. With a span, the space is also invariant once T_m is
+    exact over it (`_get_exact`).
     """
     vectors, out = _steps(
         eigen, recurrence.vectors, shift, steps=steps, preconditioned=preconditioned
@@ -327,6 +375,8 @@ def _take(  # ruff:ignore[too-many-arguments]
     invariant = ~(jnp.isfinite(alpha) & jnp.isfinite(beta) & jnp.isfinite(delta)) | (
         jnp.minimum(jnp.abs(delta), jnp.abs(w_hat) / jnp.abs(w)) <= _INVARIANT * norm
     )
+    if span is not None:
+        invariant |= _get_exact(recurrence, alpha, beta * delta, span)
     broken = ~invariant & (jnp.abs(beta) / jnp.abs(w_hat) < _BREAKDOWN)
     stop = invariant | broken
     first = jnp.where(stop.any(), jnp.argmax(stop), steps)
@@ -551,7 +601,13 @@ def _advance(  # ruff:ignore[too-many-arguments]
     def block(state: tuple) -> tuple:
         recurrence, screen, progress, _ = state
         recurrence = _take(
-            eigen, recurrence, jnp.asarray(0j), norm, steps=_BLOCK, preconditioned=False
+            eigen,
+            recurrence,
+            jnp.asarray(0j),
+            norm,
+            steps=_BLOCK,
+            preconditioned=False,
+            span=1 / decades[0],
         )
         progress = dataclasses.replace(
             progress, precision=recurrence.roundoff * jnp.abs(scale)
@@ -783,6 +839,11 @@ def get_reduced_evolution(  # ruff:ignore[too-many-arguments]
       0.3 |G|, the exchange mode (0.010 / ps, weight 1e-3) is found only
       after 350 steps, and the change of F_m alone stops after 175-250
       steps with an error of 1.1e-3 when asked for 1e-4.
+
+    Over a span short against 1 / |T| (a free particle over a few hops),
+    T_m is exact to round off after a few steps, and the recurrence stops
+    there as on an invariant space (`_get_exact`): its next steps, past the
+    moments it can still resolve, would only make T_m ill conditioned.
 
     Poles with Re lambda > 0 are spurious (L has no growing mode): they are
     dropped, and their weight must be below the tolerance. A pole that grows
