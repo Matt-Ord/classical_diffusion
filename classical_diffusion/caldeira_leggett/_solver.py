@@ -61,10 +61,12 @@ def get_isf(  # ruff:ignore[too-many-arguments]
     delta_k: tuple[float, ...],
     units: UnitSystem,
     isf_config: EvolutionConfig,
+    steady_state: ComplexArray | None = None,
 ) -> IsfResult:
     """Get the ISF Tr[O^dagger X(t)], where X(t) evolves from the initial state, at the times and scattering vector in the units.
 
-    The evolution is by two-sided Lanczos (`get_reduced_evolution`).
+    The evolution is by two-sided Lanczos (`get_reduced_evolution`), less
+    the steady state, if the Liouvillian preserves the trace.
     """
     o = jnp.asarray(observable)
     evolution = get_reduced_evolution(
@@ -73,6 +75,7 @@ def get_isf(  # ruff:ignore[too-many-arguments]
         lambda x: jnp.sum(o.conj() * x),
         times,
         config=isf_config,
+        steady_state=None if steady_state is None else jnp.asarray(steady_state),
     )
     return IsfResult(times=times, isf=evolution.values, delta_k=delta_k, units=units)
 

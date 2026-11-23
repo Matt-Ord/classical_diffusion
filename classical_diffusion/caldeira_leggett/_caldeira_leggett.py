@@ -285,6 +285,8 @@ class _Sector:
     """O."""
     delta_k: FloatArray
     """dK, in the natural units."""
+    steady_state: ComplexArray | None
+    """The steady state in the bands of the sector, if dK is on the reciprocal lattice: the sector is then that of dK = 0, whose Liouvillian preserves the trace."""
 
 
 _LOST_RATE = 0.25
@@ -314,6 +316,10 @@ def _raise_cutoff(
         ),
         plane_wave_factor=model.plane_wave_factor,
     )
+
+
+_ON_GRID = 1e-9
+"""The distance from a point of the grid of crystal momenta, in units of its spacing, below which dK is on it (`_get_sector`)."""
 
 
 def _get_sector(  # ruff:ignore[too-many-locals]
@@ -348,9 +354,14 @@ def _get_sector(  # ruff:ignore[too-many-locals]
     # e^{-i theta x} O e^{i theta x} (`get_offset_operators`). The ISF is then
     # Tr[e^{i (dK - theta) x} X(t)], so any dK is reached with the same cell.
     scaled = np.asarray(delta_k) / system.units.length_into(1.0, model.units)
-    n = np.rint(np.linalg.solve(model.cell_reciprocal.T, scaled)).astype(int)
+    fraction = np.linalg.solve(model.cell_reciprocal.T, scaled)
+    n = np.rint(fraction).astype(int)
     shift = tuple(-int(i) for i in n)
-    offset = scaled - n @ model.cell_reciprocal
+    # An offset of round off, as dK = |G| has in the natural units, is none,
+    # so that the sector of dK on the grid is exactly that of its point
+    offset = np.where(np.abs(fraction - n) < _ON_GRID, 0.0, fraction - n) @ (
+        model.cell_reciprocal
+    )
     shifted_kappa = get_shifted_kappa(model, shift)
     last: tuple[float, float] | None = None
     for _ in range(_MAX_TRIES):
@@ -377,12 +388,20 @@ def _get_sector(  # ruff:ignore[too-many-locals]
     couplings = get_couplings(model, bands)
     operators = get_operators(bands.energies, couplings)
     bra = get_offset_operators(model, bands, couplings, offset)
+    steady_state = None
+    if np.all(offset == 0) and np.all(shifted_kappa == np.arange(model.n_kappa)):
+        steady_state = (
+            state.density
+            if model is state.model
+            else get_band_steady_state(operators, bands.energies, config)
+        )
     return _Sector(
         model=model,
         liouvillian=get_liouvillian(operators, bra, shifted_kappa),
         initial=initial,
         observable=scattering,
         delta_k=scaled,
+        steady_state=steady_state,
     )
 
 
@@ -494,6 +513,7 @@ def solve_isf(
         delta_k=tuple(sector.delta_k),
         units=sector.model.units,
         isf_config=isf_config,
+        steady_state=sector.steady_state,
     )
     # The ISF at exactly the given times, rather than at their round trip
     # through the natural units
