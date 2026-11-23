@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING
 
+import jax.numpy as jnp
 import numpy as np
 import scipy.sparse
 import scipy.sparse.linalg
@@ -620,7 +621,7 @@ def _get_stepped_slow_modes(
         raise RuntimeError(msg)
     duration = 1 / model.friction
     values, vectors = get_slow_pairs(
-        problem.operator.apply,
+        lambda x: np.asarray(problem.operator.apply(jnp.asarray(x))),
         lambda x: propagate_state(
             problem.operator.apply, x, duration, tol=1e-2 * config.tol
         )[0],
