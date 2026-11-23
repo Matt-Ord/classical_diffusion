@@ -1,6 +1,6 @@
 """The time evolution of a measurement of exp(L t) X_0, by two-sided Lanczos (Pade via Lanczos)."""
 
-# cspell: ignore vdot fori finfo jitted LAPACK's Strakos Tichy Liouvillians Feldmann Freund rebiorthogonalization
+# cspell: ignore vdot fori finfo jitted LAPACK's Strakos Tichy Liouvillians Feldmann Freund rebiorthogonalization gammaln
 import dataclasses
 import warnings
 from dataclasses import dataclass
@@ -14,6 +14,7 @@ import numpy as np
 from classical_diffusion.caldeira_leggett._linear import (
     EigenLiouvillian,
     apply_adjoint_split,
+    apply_eigen,
     apply_split,
     from_eigen,
     inner,
@@ -100,6 +101,11 @@ coefficients) with an error of up to 1.4 stop (sodium in 1D at 0.3 |G|,
 """
 _SPLIT_SEED = 2026
 """The seed of the vector that splits a measurement on a breakdown."""
+
+
+def _trace(x: jax.Array) -> jax.Array:
+    """Get the trace of a state in the bands, summed over kappa."""
+    return jnp.einsum("kaa->", x)
 
 
 _FALSE = jnp.zeros((), bool)
@@ -299,6 +305,52 @@ def _steps(
     return jax.lax.fori_loop(0, steps, step, (vectors, out))
 
 
+def _get_exact(
+    recurrence: _Recurrence, alpha: jax.Array, coupling: jax.Array, span: jax.Array
+) -> jax.Array:
+    """Get whether T_m is exact over the span to round off, at each new step.
+
+    T_m matches the first 2 m moments of F, so the next step changes F_m by
+    c_1 ... c_m t^{2m} / (2m)! (c_k the couplings), times at most
+    exp(2 |T| t) for the higher moments, |T| <= max |alpha| + 2 max |c|^1/2.
+    Over a span short against 1 / |T| this falls faster than geometrically,
+    and once it is below eps of F(0) at two steps in a row, so that it is
+    not a single near breakdown (a small c_k, which the next makes up for),
+    F_m is F to round off: the recurrence has nothing more to find, and its
+    next steps would only make T_m ill conditioned. For a free particle
+    (barrier 0) over a few hops, |T| span ~ 5, F_m is exact from m = 5, and
+    at m = 40 the near breakdowns of the steps since (cosines 4e-8) make
+    T_m so ill conditioned (weights 350 times F(0)) that its poles give F_m
+    wrong by 7e-5, and by 9e-3 at m = 50. Over a long span the bound is
+    astronomical and never stops the recurrence.
+    """
+    m = recurrence.steps
+    valid = jnp.arange(recurrence.alpha.shape[0]) < m
+    logs = jnp.log(jnp.abs(coupling))
+    width = jnp.maximum(
+        jnp.where(valid, jnp.abs(recurrence.alpha), 0).max(),
+        jax.lax.cummax(jnp.abs(alpha)),
+    ) + 2 * jnp.sqrt(
+        jnp.maximum(
+            jnp.where(valid, jnp.abs(recurrence.coupling), 0).max(),
+            jax.lax.cummax(jnp.abs(coupling)),
+        )
+    )
+    # The bound of the change from the step after each: rows k = m + i + 1
+    k = m + 1 + jnp.arange(alpha.shape[0])
+    total = jnp.where(
+        valid, jnp.log(jnp.abs(recurrence.coupling)), 0
+    ).sum() + jnp.cumsum(logs)
+    bound = (
+        total
+        + 2 * k * jnp.log(span)
+        - jax.scipy.special.gammaln(2 * k + 1.0)
+        + 2 * width * span
+    )
+    below = bound <= np.log(_EPS)
+    return below & jnp.concatenate([_FALSE[None], below[:-1]])
+
+
 def _take(  # ruff:ignore[too-many-arguments]
     eigen: EigenLiouvillian,
     recurrence: _Recurrence,
@@ -307,11 +359,13 @@ def _take(  # ruff:ignore[too-many-arguments]
     *,
     steps: int,
     preconditioned: bool,
+    span: jax.Array | None = None,
 ) -> _Recurrence:
     """Take steps more, or fewer if the space becomes invariant or the recurrence breaks down, keeping the steps before (and the diagonal of that step).
 
     norm is the scale of A: the largest rate of its no-jump part, or 1
-    preconditioned.
+    preconditioned. With a span, the space is also invariant once T_m is
+    exact over it (`_get_exact`).
     """
     vectors, out = _steps(
         eigen, recurrence.vectors, shift, steps=steps, preconditioned=preconditioned
@@ -322,6 +376,8 @@ def _take(  # ruff:ignore[too-many-arguments]
     invariant = ~(jnp.isfinite(alpha) & jnp.isfinite(beta) & jnp.isfinite(delta)) | (
         jnp.minimum(jnp.abs(delta), jnp.abs(w_hat) / jnp.abs(w)) <= _INVARIANT * norm
     )
+    if span is not None:
+        invariant |= _get_exact(recurrence, alpha, beta * delta, span)
     broken = ~invariant & (jnp.abs(beta) / jnp.abs(w_hat) < _BREAKDOWN)
     stop = invariant | broken
     first = jnp.where(stop.any(), jnp.argmax(stop), steps)
@@ -546,7 +602,13 @@ def _advance(  # ruff:ignore[too-many-arguments]
     def block(state: tuple) -> tuple:
         recurrence, screen, progress, _ = state
         recurrence = _take(
-            eigen, recurrence, jnp.asarray(0j), norm, steps=_BLOCK, preconditioned=False
+            eigen,
+            recurrence,
+            jnp.asarray(0j),
+            norm,
+            steps=_BLOCK,
+            preconditioned=False,
+            span=1 / decades[0],
         )
         progress = dataclasses.replace(
             progress, precision=recurrence.roundoff * jnp.abs(scale)
@@ -586,18 +648,20 @@ def _judge(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, to
     stopped: jax.Array,
     screen: _Screen,
     progress: _Progress,
-    constants: tuple[jax.Array, jax.Array, jax.Array],
+    constants: tuple[jax.Array, ...],
     *,
     chunk: int,
 ) -> tuple[jax.Array, _Progress, jax.Array, jax.Array, jax.Array]:
     """Evaluate F_m at the times from its poles, keeping those that decay or grow by less than the tolerance over the span, and judge it.
 
     Get F_m, the progress with the error of this evaluation, the agreements
-    so far and whether they are enough.
+    so far and whether they are enough. The error counts how far the poles
+    are from T_m itself: their transform against the continued fraction of
+    T_m at the points of the screen (`_transforms`).
     """
     rates, residues = poles
     previous, compared, agreed = last
-    span, s, reference = constants
+    span, s, reference, decades, frequencies = constants
     tolerance = progress.tolerance
     growth = jnp.abs(residues) * jnp.expm1(jnp.maximum(rates.real, 0) * span)
     stable = growth <= tolerance
@@ -620,9 +684,28 @@ def _judge(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, to
             jnp.inf,
         ),
     )
+
+    # The poles are as ill conditioned as the weights are large against
+    # F(0): for a free particle over a few hops, weights 260 times F(0) left
+    # F_m wrong by 2e-5 where T_m itself was right to 1e-10
+    def mismatch(line: tuple[jax.Array, jax.Array, jax.Array]) -> jax.Array:
+        index, a, screened = line
+        points = a * (1 + 1j * frequencies)
+        return jax.lax.cond(
+            index < screen.lines,
+            lambda: jnp.abs(
+                a * (residues[None, :] / (points[:, None] - rates[None, :])).sum(axis=1)
+                - screened
+            ).max(),
+            lambda: jnp.zeros(()),
+        )
+
+    consistency = jax.lax.map(
+        mismatch, (jnp.arange(decades.shape[0]), decades, screen.transforms)
+    ).max()
     error = jnp.maximum(
         jnp.maximum(
-            changed,
+            jnp.maximum(changed, consistency),
             jnp.abs(jnp.where(stable, residues / (s - rates), 0).sum() - reference) * s,
         ),
         jnp.where(stable, 0, jnp.abs(residues)).sum(),
@@ -640,8 +723,9 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
     times: FloatArray,
     tolerance: float,
     stop: float,
+    steady: jax.Array,
 ) -> Evolution:
-    """Get <measurement, exp(L t) start> at the times to an absolute tolerance, which is stop relative (`get_reduced_evolution`).
+    """Get <measurement, exp(L t) (start + steady)> at the times to an absolute tolerance, which is stop relative (`get_reduced_evolution`), for steady a zero mode of L.
 
     The blocks of the recurrence and the screen between evaluations run on
     the device (`_advance`); the host reads the steps and flags once per
@@ -657,9 +741,24 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
     """
     span = float(times.max())
     s = 1 / span
+    plateau = complex(jnp.vdot(measurement, steady))
+    accuracy = _TRANSFER_TOL * tolerance / s
     reference, transfer_applications = get_transfer(
-        eigen, start, measurement, s, _TRANSFER_TOL * tolerance / s
+        eigen, start, measurement, s, accuracy
     )
+    if plateau != 0:
+        # The transform of the plateau's error, (s - L)^-1 rho - rho / s =
+        # (s - L)^-1 L rho / s, from the residual of the steady state: so it
+        # counts in the comparison with the transform of F_m. Not from start
+        # + steady at once: the steady state (weight 0.2 / s) swamped the
+        # rest, and for H on Cu(111) in 2D at 1 |G| over 1.8 ns the transform
+        # came out 3e-4 / s wrong, so that F_m never agreed with it.
+        residual = apply_eigen(eigen, steady, jnp.asarray(0j))
+        drift, applications = get_transfer(
+            eigen, residual, measurement, s, accuracy * s
+        )
+        reference += drift / s
+        transfer_applications += applications
     scale = complex(jnp.vdot(measurement, start))
     if scale == 0:
         raise _BreakdownError
@@ -705,7 +804,12 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
             recurrence.stopped,
             screen,
             progress,
-            (jnp.asarray(span), jnp.asarray(s), jnp.asarray(reference)),
+            (
+                jnp.asarray(span),
+                jnp.asarray(s),
+                jnp.asarray(reference),
+                *constants[2:4],
+            ),
             chunk=chunk,
         )
         last = (values[: len(times)], _TRUE, agreed)
@@ -726,7 +830,7 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
                 )
             _warn("The evolution", progress)
             return Evolution(
-                values=np.asarray(values[: len(times)]),
+                values=plateau + np.asarray(values[: len(times)]),
                 applications={
                     "lanczos": 2 * steps,
                     "transfer": transfer_applications,
@@ -739,13 +843,14 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
             raise RuntimeError(msg)
 
 
-def get_reduced_evolution(
+def get_reduced_evolution(  # ruff:ignore[too-many-arguments]
     eigen: EigenLiouvillian,
     initial: jax.Array,
     measure: Callable[[jax.Array], jax.Array],
     times: FloatArray,
     *,
     config: EvolutionConfig,
+    steady_state: jax.Array | None = None,
 ) -> Evolution:
     """Get measure(exp(L t) initial) at the times (from zero), by two-sided Lanczos (Pade via Lanczos, PVL).
 
@@ -773,10 +878,19 @@ def get_reduced_evolution(
       after 350 steps, and the change of F_m alone stops after 175-250
       steps with an error of 1.1e-3 when asked for 1e-4.
 
+    Over a span short against 1 / |T| (a free particle over a few hops),
+    T_m is exact to round off after a few steps, and the recurrence stops
+    there as on an invariant space (`_get_exact`): its next steps, past the
+    moments it can still resolve, would only make T_m ill conditioned.
+
+    Each evaluation also counts how far its poles are from T_m itself
+    (`_judge`): where they are ill conditioned (weights much larger than
+    F(0), as for a free particle), the poles found in O(m^2) can be wrong
+    while T_m is right, and F_m is then not accepted on them.
+
     Poles with Re lambda > 0 are spurious (L has no growing mode): they are
     dropped, and their weight must be below the tolerance. A pole that grows
-    by less than a factor 1 + stop over the span, such as the steady state at
-    dK = 0 (whose rate comes out at +-1e-16), is kept.
+    by less than a factor 1 + stop over the span is kept.
 
     The recurrence has an accuracy floor in finite precision, from 1e-16 to
     2e-9 of |F(0)| on the benchmark: asked for less, it stops once its error
@@ -789,6 +903,15 @@ def get_reduced_evolution(
     2.2e-5 from the reference: the tolerance is raised to it, with a
     warning.
 
+    If L preserves the trace, it has the steady state rho as an exact zero
+    mode, whose rate the recurrence fixes only to about eps |L|: over a span
+    of 168 to 1.4e6 (3 m_H at 10 / ps, Li at 12 k_B T) that misses the
+    plateau by 1.5e-6 relative, above the stop, forever. So the evolution
+    is of X_0 - c rho with c = Tr X_0 / Tr rho, which has no zero mode, and
+    the plateau c measure(rho) is added: exact, as Tr exp(L t) X = Tr X. The
+    transfer function of c rho is found too, so that an error of the steady
+    state counts in the comparison with the transform of F_m.
+
     A serious breakdown of the recurrence (<w, v> = 0, as when F(0) = 0)
     belongs to the pair (X_0, g), and is cured by splitting the
     measurement, g = (g + h) - h for a fixed random h.
@@ -799,13 +922,16 @@ def get_reduced_evolution(
         If the split recurrences also break down, or a recurrence does not
         converge in the most steps (`_get_max_steps`).
     """
-    start = to_eigen(eigen, initial)
-    measurement = get_measurement(eigen, measure, start)
     times = np.asarray(times, dtype=np.float64)
+    steady = jnp.zeros_like(initial)
+    if steady_state is not None:
+        steady = steady_state * (_trace(initial) / _trace(steady_state))
+    start, steady = to_eigen(eigen, initial - steady), to_eigen(eigen, steady)
+    measurement = get_measurement(eigen, measure, start)
     first, size = jax.device_get(
         (
-            jnp.vdot(measurement, start),
-            jnp.linalg.norm(measurement) * jnp.linalg.norm(start),
+            jnp.vdot(measurement, start + steady),
+            jnp.linalg.norm(measurement) * jnp.linalg.norm(start + steady),
         )
     )
     first, size = complex(first), float(size)
@@ -818,7 +944,7 @@ def get_reduced_evolution(
     # the largest it could be
     tolerance = config.stop * (abs(first) if abs(first) > 1e-12 * size else size)
     try:
-        return _evolve(eigen, start, measurement, times, tolerance, config.stop)
+        return _evolve(eigen, start, measurement, times, tolerance, config.stop, steady)
     except _BreakdownError:
         pass
     rng = np.random.default_rng(_SPLIT_SEED)
@@ -828,9 +954,9 @@ def get_reduced_evolution(
     split *= jnp.linalg.norm(measurement) / jnp.linalg.norm(split)
     try:
         both = _evolve(
-            eigen, start, measurement + split, times, tolerance / 2, config.stop
+            eigen, start, measurement + split, times, tolerance / 2, config.stop, steady
         )
-        alone = _evolve(eigen, start, split, times, tolerance / 2, config.stop)
+        alone = _evolve(eigen, start, split, times, tolerance / 2, config.stop, steady)
     except _BreakdownError as error:
         msg = (
             "The two-sided Lanczos recurrence broke down, also with a split measurement"
