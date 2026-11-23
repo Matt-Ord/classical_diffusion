@@ -647,18 +647,20 @@ def _judge(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, to
     stopped: jax.Array,
     screen: _Screen,
     progress: _Progress,
-    constants: tuple[jax.Array, jax.Array, jax.Array],
+    constants: tuple[jax.Array, ...],
     *,
     chunk: int,
 ) -> tuple[jax.Array, _Progress, jax.Array, jax.Array, jax.Array]:
     """Evaluate F_m at the times from its poles, keeping those that decay or grow by less than the tolerance over the span, and judge it.
 
     Get F_m, the progress with the error of this evaluation, the agreements
-    so far and whether they are enough.
+    so far and whether they are enough. The error counts how far the poles
+    are from T_m itself: their transform against the continued fraction of
+    T_m at the points of the screen (`_transforms`).
     """
     rates, residues = poles
     previous, compared, agreed = last
-    span, s, reference = constants
+    span, s, reference, decades, frequencies = constants
     tolerance = progress.tolerance
     growth = jnp.abs(residues) * jnp.expm1(jnp.maximum(rates.real, 0) * span)
     stable = growth <= tolerance
@@ -681,9 +683,28 @@ def _judge(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, to
             jnp.inf,
         ),
     )
+
+    # The poles are as ill conditioned as the weights are large against
+    # F(0): for a free particle over a few hops, weights 260 times F(0) left
+    # F_m wrong by 2e-5 where T_m itself was right to 1e-10
+    def mismatch(line: tuple[jax.Array, jax.Array, jax.Array]) -> jax.Array:
+        index, a, screened = line
+        points = a * (1 + 1j * frequencies)
+        return jax.lax.cond(
+            index < screen.lines,
+            lambda: jnp.abs(
+                a * (residues[None, :] / (points[:, None] - rates[None, :])).sum(axis=1)
+                - screened
+            ).max(),
+            lambda: jnp.zeros(()),
+        )
+
+    consistency = jax.lax.map(
+        mismatch, (jnp.arange(decades.shape[0]), decades, screen.transforms)
+    ).max()
     error = jnp.maximum(
         jnp.maximum(
-            changed,
+            jnp.maximum(changed, consistency),
             jnp.abs(jnp.where(stable, residues / (s - rates), 0).sum() - reference) * s,
         ),
         jnp.where(stable, 0, jnp.abs(residues)).sum(),
@@ -771,7 +792,12 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
             recurrence.stopped,
             screen,
             progress,
-            (jnp.asarray(span), jnp.asarray(s), jnp.asarray(reference)),
+            (
+                jnp.asarray(span),
+                jnp.asarray(s),
+                jnp.asarray(reference),
+                *constants[2:4],
+            ),
             chunk=chunk,
         )
         last = (values[: len(times)], _TRUE, agreed)
@@ -844,6 +870,11 @@ def get_reduced_evolution(  # ruff:ignore[too-many-arguments]
     T_m is exact to round off after a few steps, and the recurrence stops
     there as on an invariant space (`_get_exact`): its next steps, past the
     moments it can still resolve, would only make T_m ill conditioned.
+
+    Each evaluation also counts how far its poles are from T_m itself
+    (`_judge`): where they are ill conditioned (weights much larger than
+    F(0), as for a free particle), the poles found in O(m^2) can be wrong
+    while T_m is right, and F_m is then not accepted on them.
 
     Poles with Re lambda > 0 are spurious (L has no growing mode): they are
     dropped, and their weight must be below the tolerance. A pole that grows
