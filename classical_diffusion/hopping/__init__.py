@@ -14,6 +14,7 @@ from classical_diffusion.hopping._system import (
     Lattice1D,
     get_kramers_parameters_cosine,
     get_kramers_rate,
+    get_lifson_jackson_diffusion,
     get_lifson_jackson_rate,
     lattice_1d_from_kramers_parameters,
 )
@@ -29,6 +30,7 @@ __all__ = [
     "get_isf",
     "get_kramers_parameters_cosine",
     "get_kramers_rate",
+    "get_lifson_jackson_diffusion",
     "get_lifson_jackson_rate",
     "lattice_1d_from_kramers_parameters",
     "solve_ensemble",

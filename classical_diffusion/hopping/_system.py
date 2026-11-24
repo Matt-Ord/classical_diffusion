@@ -159,7 +159,11 @@ def get_kramers_rate(params: KramersParameters) -> float:
 def get_lifson_jackson_rate(
     system: System, *, delta_x: float, start: float = 0
 ) -> float:
-    """Get the overdamped first passage time."""
+    """Get the rate of overdamped hops to each neighboring site, from the theory of Lifson and Jackson.
+
+    The rate is k_B T / (m gamma <e^{V / k_B T}> <e^{-V / k_B T}> delta_x^2),
+    where <> is the average over a period delta_x.
+    """
     assert system.n_dim == 1, "Only 1D systems are supported."
 
     potential_func = sp.lambdify(
@@ -177,7 +181,18 @@ def get_lifson_jackson_rate(
     i_plus, _ = scipy.integrate.quad(integrand_plus, start, start + delta_x)
     i_minus, _ = scipy.integrate.quad(integrand_minus, start, start + delta_x)
 
-    return system.kbt / (system.gamma * (i_plus * i_minus))
+    return system.kbt / (system.m * system.gamma * (i_plus * i_minus))
+
+
+def get_lifson_jackson_diffusion(
+    system: System, *, delta_x: float, start: float = 0
+) -> float:
+    """Get the overdamped diffusion constant of Lifson and Jackson, D = rate delta_x^2.
+
+    This is the classical diffusion constant in the limit of high friction,
+    for hops at the rate of `get_lifson_jackson_rate` to each neighboring site.
+    """
+    return get_lifson_jackson_rate(system, delta_x=delta_x, start=start) * delta_x**2
 
 
 def get_kramers_parameters_cosine(system: CosineSystem1D) -> KramersParameters:

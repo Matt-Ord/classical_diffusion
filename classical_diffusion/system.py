@@ -12,6 +12,9 @@ from scipy.constants import (
 from scipy.constants import (
     atomic_mass as atomic_mass_si,
 )
+from scipy.constants import (
+    hbar as hbar_si,
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -51,6 +54,12 @@ class UnitSystem:
     def energy_factor(self) -> float:
         """The energy factor of the system."""
         return self.boltzmann / Boltzmann_si
+
+    @property
+    def hbar(self) -> float:
+        """The reduced Planck constant, in the unit system."""
+        si = UnitSystem.si()
+        return si.time_into(si.energy_into(hbar_si, self), self)
 
     @overload
     def time_into(self, value: float, units: UnitSystem | None = None) -> float: ...
