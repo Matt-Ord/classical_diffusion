@@ -9,6 +9,14 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 import numpy as np
 
+from classical_diffusion._results import (
+    RmsResult,
+    SlowModes,
+    check_mode_count,
+    fold_times,
+    get_selection,
+    get_unit_direction,
+)
 from classical_diffusion.caldeira_leggett._bands import (
     Bands,
     get_bands,
@@ -37,13 +45,8 @@ from classical_diffusion.caldeira_leggett._liouvillian import (
     get_twist_derivative,
 )
 from classical_diffusion.caldeira_leggett._model import Model, build_model
-from classical_diffusion.caldeira_leggett._slow_modes import (
-    ModeCount,
-    RateCut,
-    find_slow_modes,
-)
+from classical_diffusion.caldeira_leggett._slow_modes import find_slow_modes
 from classical_diffusion.caldeira_leggett._solver import (
-    RmsResult,
     get_diffusion_coefficient,
     get_isf,
     get_rms,
@@ -59,7 +62,6 @@ if TYPE_CHECKING:
     from classical_diffusion.caldeira_leggett._model import (
         ComplexArray,
         FloatArray,
-        IntArray,
     )
     from classical_diffusion.langevin._system import PeriodicSystem
 
@@ -438,17 +440,6 @@ def _warn_friction(system: PeriodicSystem) -> None:
         warnings.warn(msg, stacklevel=4)
 
 
-def _get_magnitudes(times: FloatArray) -> tuple[FloatArray, IntArray]:
-    """Get the times |t| to evolve to, unique and increasing from zero, and the index among them of each |t|.
-
-    For times which increase from zero these are the times themselves.
-    """
-    magnitudes, index = np.unique(
-        np.abs(np.concatenate([[0.0], times])), return_inverse=True
-    )
-    return magnitudes, index[1:]
-
-
 @timed
 def solve_isf(
     system: PeriodicSystem,
@@ -510,19 +501,15 @@ def solve_isf(
     UserWarning
         If hbar gamma / k_B T > 0.4, where the universal Lindblad equation
         overestimates D of a free particle by over 1% (`_MAX_FRICTION`).
-    """
-    times = np.asarray(times, dtype=np.float64)
-    if times.ndim != 1 or not np.all(np.isfinite(times)):
-        msg = "The times must be a one dimensional array of finite numbers"
-        raise ValueError(msg)
-    magnitudes, index = _get_magnitudes(times)
+    """  # ruff:ignore[docstring-extraneous-exception]
+    folded = fold_times(times)
     _warn_friction(system)
     sector = _get_sector(system, delta_k, config)
     result = get_isf(
         sector.liouvillian,
         sector.initial,
         sector.observable,
-        system.units.time_into(magnitudes, sector.model.units),
+        system.units.time_into(folded.magnitudes, sector.model.units),
         delta_k=tuple(sector.delta_k),
         units=sector.model.units,
         isf_config=isf_config,
@@ -530,36 +517,12 @@ def solve_isf(
     )
     # The ISF at exactly the given times, rather than at their round trip
     # through the natural units
-    isf = result.isf[index]
     return IsfResult(
-        times=times,
-        isf=np.where(times < 0, isf.conj(), isf),
+        times=folded.times,
+        isf=folded.hermitian(result.isf),
         delta_k=delta_k,
         units=system.units,
     )
-
-
-@dataclass(frozen=True, kw_only=True)
-class SlowModes:
-    """The slowest modes of the ISF of a system at dK, I(t) = sum_j a_j exp(lambda_j t) once the faster modes have decayed."""
-
-    system: PeriodicSystem
-    delta_k: tuple[float, ...]
-    """The scattering wavevector, in the units of the system."""
-    rates: ComplexArray
-    """lambda_j, in the units of the system (1 / time), slowest first."""
-    amplitudes: ComplexArray
-    """a_j."""
-
-
-SLOW_RATE = 0.25
-"""The decay rate below which a mode is slow, in units of the friction.
-
-A quarter of the friction is clear of the in-well vibrations, which decay at
-about half of it, and of the momentum relaxation, at about the friction:
-the modes below it are the hops between sites, and the exchange between
-sites of different kinds.
-"""
 
 
 @timed
@@ -612,10 +575,8 @@ def get_slow_modes(
     UserWarning
         If hbar gamma / k_B T > 0.4, where the universal Lindblad equation
         overestimates D of a free particle by over 1% (`_MAX_FRICTION`).
-    """
-    if n_modes is not None and n_modes < 0:
-        msg = f"n_modes must not be negative, got {n_modes}"
-        raise ValueError(msg)
+    """  # ruff:ignore[docstring-extraneous-exception]
+    check_mode_count(n_modes)
     _warn_friction(system)
     sector = _get_sector(system, delta_k, config)
     # A rate in the natural units, over the natural unit of time in the system's
@@ -635,9 +596,7 @@ def get_slow_modes(
         eigen,
         start,
         measurement,
-        RateCut(rate=SLOW_RATE * friction)
-        if n_modes is None
-        else ModeCount(n_modes=n_modes),
+        get_selection(n_modes, friction),
         config=isf_config,
     )
     return SlowModes(
@@ -645,22 +604,6 @@ def get_slow_modes(
         delta_k=tuple(delta_k),
         rates=np.array([m.rate for m in modes], dtype=complex) / natural,
         amplitudes=np.array([m.amplitude for m in modes], dtype=complex),
-    )
-
-
-def get_long_time_isf(slow_modes: SlowModes, times: FloatArray) -> IsfResult:
-    """Get the ISF of the slow modes alone, sum_j a_j exp(lambda_j t), at the times in the units of the system.
-
-    It is the ISF once the faster modes have decayed: for the ISF at every
-    time, use `solve_isf`.
-    """
-    times = np.asarray(times, dtype=np.float64)
-    isf = np.exp(np.outer(np.abs(times), slow_modes.rates)) @ slow_modes.amplitudes
-    return IsfResult(
-        times=times,
-        isf=np.where(times < 0, isf.conj(), isf),
-        delta_k=slow_modes.delta_k,
-        units=slow_modes.system.units,
     )
 
 
@@ -735,8 +678,7 @@ def _get_derivative(
     direction: tuple[float, ...] | None,
 ) -> tuple[Operators, Operators, FloatArray]:
     """Get the operators, their twist derivative along the direction (by default the first axis), and its unit vector."""
-    unit = np.eye(model.n_dim)[0] if direction is None else np.asarray(direction, float)
-    unit /= np.linalg.norm(unit)
+    unit = get_unit_direction(model.n_dim, direction)
     operators, derivative = get_twist_derivative(
         bands.energies, get_couplings(model, bands), get_velocity(model, bands, unit)
     )
@@ -786,12 +728,8 @@ def solve_rms(
     UserWarning
         If hbar gamma / k_B T > 0.4, where the universal Lindblad equation
         overestimates D of a free particle by over 1% (`_MAX_FRICTION`).
-    """
-    times = np.asarray(times, dtype=np.float64)
-    if times.ndim != 1 or not np.all(np.isfinite(times)):
-        msg = "The times must be a one dimensional array of finite numbers"
-        raise ValueError(msg)
-    magnitudes, index = _get_magnitudes(times)
+    """  # ruff:ignore[docstring-extraneous-exception]
+    folded = fold_times(times)
     _warn_friction(system)
     state = _get_state(system, config, direction)
     model, bands, rho = state.model, state.bands, state.density
@@ -800,7 +738,7 @@ def solve_rms(
         operators,
         derivative,
         rho,
-        system.units.time_into(magnitudes, model.units),
+        system.units.time_into(folded.magnitudes, model.units),
         direction=tuple(unit),
         units=model.units,
         config=config,
@@ -809,9 +747,9 @@ def solve_rms(
     )
     length = model.units.length_into(1.0, system.units)
     return RmsResult(
-        times=times,
+        times=folded.times,
         # Even in t, as <(x(-t) - x(0))^2> = <(x(0) - x(t))^2> in the steady state
-        mean_square=result.mean_square[index] * length**2,
+        mean_square=folded.even(result.mean_square) * length**2,
         direction=tuple(unit),
         units=system.units,
     )

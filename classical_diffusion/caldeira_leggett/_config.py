@@ -1,6 +1,7 @@
-import zlib
 from dataclasses import dataclass
 from typing import override
+
+from classical_diffusion.util import stable_hash
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -44,8 +45,7 @@ class CaldeiraLeggettConfig:
 
     @override
     def __hash__(self) -> int:
-        # Stable between runs, so it can be used in cache paths
-        return zlib.crc32(repr(self).encode("utf-8"))
+        return stable_hash(self)
 
 
 DEFAULT_CONFIG = CaldeiraLeggettConfig()

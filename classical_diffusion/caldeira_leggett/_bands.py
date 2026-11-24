@@ -10,11 +10,11 @@ from classical_diffusion.caldeira_leggett._model import get_potential
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from classical_diffusion._periodic import IntVector
     from classical_diffusion.caldeira_leggett._model import (
         ComplexArray,
         FloatArray,
         IntArray,
-        IntVector,
         Model,
     )
 

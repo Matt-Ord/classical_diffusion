@@ -3,12 +3,15 @@
 The solver needs 64 bit floats in jax, `jax.config.update("jax_enable_x64", True)`.
 """
 
-from classical_diffusion.caldeira_leggett._caldeira_leggett import (
+from classical_diffusion._results import (
     SLOW_RATE,
+    RmsResult,
     SlowModes,
+    get_long_time_isf,
+)
+from classical_diffusion.caldeira_leggett._caldeira_leggett import (
     SteadyState,
     get_diffusion_constant,
-    get_long_time_isf,
     get_slow_modes,
     get_steady_state,
     solve_isf,
@@ -20,7 +23,6 @@ from classical_diffusion.caldeira_leggett._config import (
     CaldeiraLeggettConfig,
     EvolutionConfig,
 )
-from classical_diffusion.caldeira_leggett._solver import RmsResult
 
 __all__ = [
     "DEFAULT_CONFIG",

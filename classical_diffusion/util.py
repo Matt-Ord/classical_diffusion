@@ -17,6 +17,11 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator
 
 
+def stable_hash(value: object) -> int:
+    """Get a hash of the repr of a value, stable between runs (unlike hash of a str), so that it can be used in cache paths."""
+    return zlib.crc32(repr(value).encode("utf-8"))
+
+
 _timing_disabled = ContextVar("timing_disabled", default=False)
 
 

@@ -1,25 +1,24 @@
-# cspell: ignore eigvalsh ndimage triu
-import itertools
+# cspell: ignore eigvalsh triu
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
-import scipy.ndimage
 import scipy.optimize
 
+from classical_diffusion._periodic import (
+    get_potential_terms,
+    get_reciprocal,
+    get_saddle_energy,
+    get_vectors_within,
+)
 from classical_diffusion.system import unit_with_trajectory_scale
 
 if TYPE_CHECKING:
+    from classical_diffusion._periodic import Terms
+    from classical_diffusion._results import ComplexArray, FloatArray, IntArray
     from classical_diffusion.caldeira_leggett._config import CaldeiraLeggettConfig
     from classical_diffusion.langevin._system import PeriodicSystem
     from classical_diffusion.system import UnitSystem
-
-type IntVector = tuple[int, ...]
-type FloatArray = np.ndarray[Any, np.dtype[np.float64]]
-type IntArray = np.ndarray[Any, np.dtype[np.int64]]
-type ComplexArray = np.ndarray[Any, np.dtype[np.complex128]]
-type Terms = tuple[tuple[IntVector, float], ...]
-"""Integer vectors, each with a weight: the Fourier components of a potential, or the directions of the couplings."""
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -106,12 +105,7 @@ def get_reciprocal_vectors(reciprocal: FloatArray, radius: float) -> IntArray:
     ValueError
         If there are more than MAX_PLANE_WAVES of them.
     """
-    n_dim = reciprocal.shape[0]
-    # |k| >= s_min |G|, where s_min is the smallest singular value
-    s_min = np.linalg.svd(reciprocal, compute_uv=False).min()
-    n_max = int(np.ceil(radius / s_min))
-    grid = np.array(list(itertools.product(range(-n_max, n_max + 1), repeat=n_dim)))
-    vectors = grid[np.linalg.norm(grid @ reciprocal, axis=-1) <= radius]
+    vectors = get_vectors_within(reciprocal, radius)
     if len(vectors) > MAX_PLANE_WAVES:
         msg = (
             f"The bands need {len(vectors)} plane waves, more than {MAX_PLANE_WAVES}: "
@@ -137,12 +131,7 @@ def get_potential(reciprocal_vectors: IntArray, potential: Terms) -> ComplexArra
 
 def _get_candidate_directions(reciprocal: FloatArray, radius: float) -> IntArray:
     """Get the integer vectors c, up to sign, with |c @ reciprocal| <= radius."""
-    n_dim = reciprocal.shape[0]
-    # |c @ reciprocal| >= s_min |c|, where s_min is the smallest singular value
-    s_min = np.linalg.svd(reciprocal, compute_uv=False).min()
-    n_max = int(np.ceil(radius / s_min))
-    grid = np.array(list(itertools.product(range(-n_max, n_max + 1), repeat=n_dim)))
-    grid = grid[np.linalg.norm(grid @ reciprocal, axis=1) <= radius]
+    grid = get_vectors_within(reciprocal, radius)
     # Keep one of each pair c, -c: the first non-zero component is positive
     first = np.array([row[np.flatnonzero(row)[0]] if row.any() else 0 for row in grid])
     return grid[first > 0]
@@ -234,59 +223,6 @@ def get_period_count(
     return n_periods
 
 
-def _get_potential_on_grid(potential: Terms, n_dim: int) -> FloatArray:
-    """Get V(u) = sum_G V_G e^{2 pi i G . u} on a grid of the fractional coordinates u of one unit cell."""
-    largest = max((max(abs(c) for c in g) for g, _ in potential), default=1)
-    n_grid = max(64 if n_dim < 3 else 24, 8 * largest)  # ruff:ignore[magic-value-comparison]
-    u = np.stack(
-        np.meshgrid(*[np.arange(n_grid) / n_grid] * n_dim, indexing="ij"), axis=-1
-    )
-    out = np.zeros(u.shape[:-1], dtype=np.complex128)
-    for g, v_g in potential:
-        out += v_g * np.exp(2j * np.pi * (u @ np.array(g, dtype=float)))
-    return out.real
-
-
-def _is_percolating(allowed: np.ndarray) -> bool:
-    """Get whether the region connects a point of the unit cell to its periodic image along some lattice vector.
-
-    The region is tiled over 3 cells along each axis and labelled, and a
-    point in the central cell is connected to its image when both have the
-    same label.
-    """
-    n_dim, n_grid = allowed.ndim, allowed.shape[0]
-    labels, _ = scipy.ndimage.label(np.tile(allowed, (3,) * n_dim))
-    centre = tuple(slice(n_grid, 2 * n_grid) for _ in range(n_dim))
-    for axis in range(n_dim):
-        image = tuple(
-            slice(2 * n_grid, 3 * n_grid) if i == axis else slice(n_grid, 2 * n_grid)
-            for i in range(n_dim)
-        )
-        if ((labels[centre] == labels[image]) & allowed).any():
-            return True
-    return False
-
-
-def get_saddle_energy(potential: Terms, n_dim: int) -> tuple[float, float]:
-    """Get the lowest energy E at which the region V < E connects a site to its periodic image along some lattice vector, and the minimum of the potential.
-
-    This is the energy of the saddle a particle must cross to diffuse along
-    its easiest direction, found by bisection between the minimum and maximum
-    of the potential on a grid of one unit cell, in any number of dimensions.
-    Diffusion in a harder direction, such as across the troughs of an fcc(110)
-    surface, is exponentially slower.
-    """
-    values = _get_potential_on_grid(potential, n_dim)
-    low, high = float(values.min()), float(values.max())
-    for _ in range(40):
-        middle = 0.5 * (low + high)
-        if _is_percolating(values <= middle):
-            high = middle
-        else:
-            low = middle
-    return high, float(values.min())
-
-
 def build_model(
     system: PeriodicSystem,
     config: CaldeiraLeggettConfig,
@@ -311,20 +247,11 @@ def build_model(
         system.units, length=length, time=time, momentum=system.m * length / time
     )
 
-    # The rows g_i satisfy a_i . g_j = 2 pi delta_ij
-    reciprocal = 2 * np.pi * np.linalg.inv(system.lattice_vectors).T * length
-    potential = list[tuple[IntVector, float]]()
-    for term in system.terms:
-        # a cos(g . x) = (a / 2) (e^{i g . x} + e^{-i g . x})
-        amplitude = term.amplitude / (2 * kbt)
-        potential.extend(
-            [(term.miller, amplitude), (tuple(-n for n in term.miller), amplitude)]
-        )
+    reciprocal = get_reciprocal(system, length)
+    potential = get_potential_terms(system)
     couplings = get_couplings(reciprocal)
     n_periods = get_period_count(reciprocal, couplings, config.friction_tol)
-    saddle_energy, minimum = get_saddle_energy(
-        tuple(potential), len(system.lattice_vectors)
-    )
+    saddle_energy, minimum = get_saddle_energy(potential, len(system.lattice_vectors))
     plane_wave_energy = plane_wave_factor * (saddle_energy + cutoff - minimum)
     # Every crystal momentum shares the vectors G, so they reach the kinetic
     # energy cutoff around the crystal momentum furthest from zero. A shift
@@ -341,7 +268,7 @@ def build_model(
         units=units,
         cell_reciprocal=reciprocal / n_periods,
         n_periods=n_periods,
-        potential=tuple(potential),
+        potential=potential,
         friction=system.units.frequency_into(system.gamma, units),
         couplings=couplings,
         reciprocal_vectors=get_reciprocal_vectors(reciprocal, radius),
