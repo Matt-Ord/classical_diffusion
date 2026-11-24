@@ -408,10 +408,31 @@ def _forms(blocks: tuple[jax.Array, ...], c: jax.Array, parity: jax.Array) -> ja
     return jnp.sum(states * parity * states, axis=1)
 
 
+_TILE = 2**16
+"""The columns of the basis read at a time for its J-Gram matrix (`_gram`)."""
+
+
 @jax.jit
 def _gram(blocks: tuple[jax.Array, ...], parity: jax.Array) -> jax.Array:
-    basis = jnp.concatenate(blocks)
-    return (basis * parity) @ basis.T
+    """Get V J V^T, a tile of columns at a time: the blocks joined whole, and times J, took 0.4 GB at 759k unknowns."""
+    size = parity.size
+    tile = min(_TILE, size)
+
+    def add(i: jax.Array, gram: jax.Array) -> jax.Array:
+        # The last tile starts early, over columns already added, with no weight
+        start = jnp.minimum(i * tile, size - tile)
+        rows = jnp.concatenate(
+            [jax.lax.dynamic_slice_in_dim(b, start, tile, axis=1) for b in blocks]
+        )
+        weight = jnp.where(
+            start + jnp.arange(tile) >= i * tile,
+            jax.lax.dynamic_slice_in_dim(parity, start, tile),
+            0.0,
+        )
+        return gram + (rows * weight) @ rows.T
+
+    count = len(blocks) * _BLOCK
+    return jax.lax.fori_loop(0, -(-size // tile), add, jnp.zeros((count, count)))
 
 
 def _get_forms(step: _Step, coefficients: FloatArray, parity: jax.Array) -> FloatArray:
