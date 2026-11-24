@@ -116,24 +116,17 @@ def get_reciprocal_vectors(reciprocal: FloatArray, radius: float) -> IntArray:
     return vectors
 
 
-def get_hamiltonian(
-    wavevectors: FloatArray,
-    reciprocal_vectors: IntArray,
-    reciprocal: FloatArray,
-    potential: Terms,
-) -> ComplexArray:
-    """Get the Hamiltonian in the plane waves k + G of each crystal momentum k, (n_kappa, n_plane_waves, n_plane_waves).
+def get_potential(reciprocal_vectors: IntArray, potential: Terms) -> ComplexArray:
+    """Get the potential in the plane waves, (n_plane_waves, n_plane_waves).
 
-    The potential couples plane waves which differ by a reciprocal lattice
-    vector, so it is the same at every crystal momentum.
+    It couples plane waves which differ by a reciprocal lattice vector, so
+    it is the same at every crystal momentum.
     """
     difference = reciprocal_vectors[:, None, :] - reciprocal_vectors[None, :, :]
     coupling = np.zeros(difference.shape[:2], dtype=np.complex128)
     for g, v_g in potential:
         coupling[np.all(difference == np.array(g), axis=-1)] += v_g
-    k = wavevectors[:, None, :] + reciprocal_vectors @ reciprocal
-    kinetic = 0.5 * np.sum(k**2, axis=-1)
-    return coupling + kinetic[..., None] * np.eye(len(reciprocal_vectors))
+    return coupling
 
 
 def _get_candidate_directions(reciprocal: FloatArray, radius: float) -> IntArray:

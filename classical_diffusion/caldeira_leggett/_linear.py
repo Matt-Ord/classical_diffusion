@@ -33,25 +33,26 @@ class EigenLiouvillian:
     application of the preconditioner: for hydrogen on Cu(111) in 2D, each
     iteration of a solve is 1.36 times faster.
 
-    The jumps K_j, B_j of every j are stacked, so that an application is
-    two products at each kappa whatever the number of jumps (`apply_split`).
-    The products are of real matrices (`split`): from _GAUSS_BANDS bands on
-    the CPU, each complex product is three real products (Gauss, `_gauss`),
-    of the real part, imaginary part and their sum of each matrix, stored
-    (3, ...); otherwise one real product with a block matrix
-    [[Re, Im], [-Im, Re]] or [Re; Im] (`apply_split`).
+    The jumps K_j, B_j of every j are stacked side by side, so that an
+    application is two products at each kappa whatever the number of jumps
+    (`_jumps`), and L^dagger is the same products of the conjugate
+    transposes.
+    The products are of real matrices (`split`), each one product with a
+    block matrix [[Re, Im], [-Im, Re]] or [Re; Im], on the CPU as on a GPU:
+    three real products (Gauss) were 11-13% faster on the CPU from 100
+    bands (2D Li, 176 bands), at the cost of a second path.
     """
 
     rates: jax.Array
     """Z, (n_kappa, n_bands, n_bands)."""
     forward_ket: jax.Array
-    """K_j[s] stacked over j at each source s, (n_kappa, n_ops n_bands, n_bands): as the blocks [Re; Im], or as Gauss parts (3, ...)."""
+    """K_j[s_j(kappa)] side by side over j at each kappa, where s_j(kappa) is the source from which the jump j reaches kappa, (n_kappa, n_bands, n_ops n_bands): as the blocks [Re; Im], (n_kappa, 2 n_bands, n_ops n_bands)."""
     forward_bra: jax.Array
-    """B_j[s_j(kappa)] stacked over j at each kappa, where s_j(kappa) is the source from which the jump j reaches kappa, (n_kappa, n_ops n_bands, n_bands): as the blocks [[Re, Im], [-Im, Re]], or as Gauss parts."""
+    """B_j[s] side by side over j at each source s, (n_kappa, n_bands, n_ops n_bands): as the blocks [[Re, Im], [-Im, Re]]."""
     adjoint_ket: jax.Array
-    """The conjugate transposes of the stacks of forward_ket at each kappa, the jumps of L^dagger, as the blocks [Re; Im], or as Gauss parts."""
+    """K_j[s]^dagger side by side at each s, the jumps of L^dagger, as forward_ket."""
     adjoint_bra: jax.Array
-    """The conjugate transposes of the stacks of forward_bra, as the blocks [[Re, Im], [-Im, Re]], or as Gauss parts."""
+    """B_j[s_j(t)]^dagger side by side at each t, as forward_bra."""
     sources: jax.Array
     """(n_kappa, n_ops), the source s_j(kappa) of each kappa and jump."""
     targets: jax.Array
@@ -64,42 +65,30 @@ class EigenLiouvillian:
     bra_inverse_dagger: jax.Array
 
 
-_GAUSS_BANDS = 100
-"""The number of bands from which, on the CPU, each complex product of an application is three real products (Gauss) rather than one real product of block matrices (`EigenLiouvillian`).
-
-The block products have 4/3 of the flops, but no sums of parts before and
-after each product. Per application of L in a Lanczos step: 2D H (52
-bands) 20.8 ms Gauss and 18.4 ms blocks, 2D Li (176 bands) 84 and 94 ms,
-1D Na (22 bands) 0.067 and 0.058 ms. On a GPU the blocks are plain
-products of real matrices.
-"""
-
-
 def _dagger(x: np.ndarray) -> np.ndarray:
     return x.conj().swapaxes(-1, -2)
 
 
-def _stack(x: np.ndarray) -> np.ndarray:
-    """Stack the matrices (n_ops, n_kappa, n, n) over the jumps at each kappa, (n_kappa, n_ops n, n)."""
+def _row(x: np.ndarray) -> np.ndarray:
+    """Put the matrices (n_ops, n_kappa, n, n) side by side over the jumps at each kappa, (n_kappa, n, n_ops n)."""
     n_ops, n_kappa, n, _ = x.shape
-    return x.swapaxes(0, 1).reshape(n_kappa, n_ops * n, n)
+    return x.transpose(1, 2, 0, 3).reshape(n_kappa, n, n_ops * n)
 
 
-def _left(x: np.ndarray, *, gauss: bool) -> jax.Array:
-    """Get matrices as left factors: their Gauss parts, or the blocks [Re; Im]."""
-    if gauss:
-        return jnp.asarray(np.stack([x.real, x.imag, x.real + x.imag]))
+def _left(x: np.ndarray) -> jax.Array:
+    """Get matrices as left factors, the blocks [Re; Im]."""
     return jnp.asarray(np.concatenate([x.real, x.imag], axis=-2))
 
 
-def _right(x: np.ndarray, *, gauss: bool) -> jax.Array:
-    """Get matrices as right factors: their Gauss parts, or the blocks [[Re, Im], [-Im, Re]]."""
-    if gauss:
-        return jnp.asarray(np.stack([x.real, x.imag, x.real + x.imag]))
+def _right(x: np.ndarray) -> jax.Array:
+    """Get matrices as right factors, the blocks [[Re, Im], [-Im, Re]]."""
     return jnp.asarray(np.block([[x.real, x.imag], [-x.imag, x.real]]))
 
 
 def get_eigen_liouvillian(liouvillian: Liouvillian) -> EigenLiouvillian:
+    if not jax.config.jax_enable_x64:
+        msg = 'The solver needs jax.config.update("jax_enable_x64", True)'
+        raise RuntimeError(msg)
     mu, a = np.linalg.eig(np.asarray(liouvillian.hamiltonian_ket))
     nu, b = np.linalg.eig(
         np.asarray(liouvillian.hamiltonian_bra_dagger).conj().swapaxes(-1, -2)
@@ -115,16 +104,14 @@ def get_eigen_liouvillian(liouvillian: Liouvillian) -> EigenLiouvillian:
     bra = (
         b_dagger @ np.asarray(liouvillian.jumps_bra_dagger) @ b_inverse_dagger[targets]
     )
-    # Stacked over the jumps, K_j[s] at each source and B_j[s_j(kappa)] at each kappa
-    forward_ket = _stack(ket)
-    forward_bra = _stack(bra[np.arange(len(bra))[:, None], sources])
-    gauss = ket.shape[-1] >= _GAUSS_BANDS and jax.default_backend() == "cpu"
+    # K_j[s_j(kappa)] and B_j[s_j(kappa)] of the jumps which reach each kappa
+    ket_in, bra_in = (x[np.arange(len(x))[:, None], sources] for x in (ket, bra))
     return EigenLiouvillian(
         rates=jnp.asarray(-1j * (mu[:, :, None] - nu.conj()[:, None, :])),
-        forward_ket=_left(forward_ket, gauss=gauss),
-        forward_bra=_right(forward_bra, gauss=gauss),
-        adjoint_ket=_left(_dagger(forward_ket), gauss=gauss),
-        adjoint_bra=_right(_dagger(forward_bra), gauss=gauss),
+        forward_ket=_left(_row(ket_in)),
+        forward_bra=_right(_row(bra)),
+        adjoint_ket=_left(_row(_dagger(ket))),
+        adjoint_bra=_right(_row(_dagger(bra_in))),
         sources=jnp.asarray(sources.T),
         targets=jnp.asarray(targets.T),
         ket_vectors=jnp.asarray(a),
@@ -175,56 +162,33 @@ def magnitudes(x: jax.Array) -> jax.Array:
     return real**2 + imaginary**2
 
 
-def _gauss(a: jax.Array, b: jax.Array) -> tuple[jax.Array, jax.Array]:
-    """Get the real and imaginary parts of products of complex matrices, from three real products (Gauss).
+def _jumps(
+    ket: jax.Array, bra: jax.Array, gather: jax.Array, y: jax.Array
+) -> jax.Array:
+    """Get sum_j P_j[kappa] Y[g_j(kappa)] Q_j[g_j(kappa)] for a split state Y, the jumps of `apply_split` (P = K, Q = B, g = s) or of `apply_adjoint_split`.
 
-    a and b are each (real, imaginary, real + imaginary), (3, ...). XLA
-    multiplies complex matrices on the CPU at about half the flop rate of
-    real ones (OpenBLAS does not): (9, 139, 139) by (9, 139, 139) takes 10.2
-    ms complex and 1.45 ms real (OpenBLAS 5.9 and 1.45 ms), so three real
-    products take 4.4 ms. The parts are behind a barrier, which keeps XLA
-    from fusing them into the products, which would then no longer be calls
-    to its matrix product.
+    Y[t] Q_j[t] of every j is one product at each t, with Q side by side,
+    and the sum over j at each kappa one product of the row of P_j[kappa]
+    with the column of those at g_j(kappa):
+    [Re Y, Im Y] [[Re Q, Im Q], [-Im Q, Re Q]] = [Re YQ, Im YQ], and
+    [Re P; Im P] [Re R, Im R] holds the four real products of P R.
     """
-    p = jnp.matmul(*jax.lax.optimization_barrier((a, b)))
-    return p[0] - p[1], p[2] - p[0] - p[1]
-
-
-def _parts(real: jax.Array, imaginary: jax.Array) -> jax.Array:
-    """Get (real, imaginary, real + imaginary), (3, ...)."""
-    return jnp.stack([real, imaginary, real + imaginary])
+    n_kappa, n_ops = gather.shape
+    n = y.shape[-2]
+    pick = (gather, jnp.arange(n_ops))
+    right = (y @ bra).reshape(n_kappa, n, 2, n_ops, n)
+    right = right.transpose(0, 3, 1, 2, 4)[pick].reshape(n_kappa, n_ops * n, 2 * n)
+    out = (ket @ right).reshape(n_kappa, 2, n, 2, n)
+    return jnp.concatenate(
+        [out[:, 0, :, 0] - out[:, 1, :, 1], out[:, 0, :, 1] + out[:, 1, :, 0]],
+        axis=-1,
+    )
 
 
 def apply_split(eigen: EigenLiouvillian, y: jax.Array, shift: jax.Array) -> jax.Array:
-    """Apply L - shift to a split state in the eigenvectors (`EigenLiouvillian`).
-
-    L Y[kappa] = Z Y[kappa] + sum_j K_j[s] Y[s] B_j[s] with s = s_j(kappa):
-    the products K_j[s] Y[s] of every j are one product at each s, and the
-    sum over j at each kappa is one product of the row of those at the
-    sources of kappa with the column of B_j[s_j(kappa)]. With blocks,
-    [Re K; Im K] [Re Y, Im Y] holds the four real products of K Y, and
-    [Re P, Im P] [[Re B, Im B], [-Im B, Re B]] = [Re PB, Im PB].
-    """
-    n_kappa, n_ops = eigen.sources.shape
-    n = y.shape[-2]
-    pick = (eigen.sources, jnp.arange(n_ops))
-    if eigen.forward_ket.ndim == y.ndim + 1:
-        real, imaginary = _gauss(eigen.forward_ket, _parts(*_halves(y)))
-        left = jnp.stack([real, imaginary]).reshape(2, n_kappa, n_ops, n, n)
-        left = left[:, *pick].swapaxes(2, 3).reshape(2, n_kappa, n, n_ops * n)
-        product = jnp.concatenate(_gauss(_parts(*left), eigen.forward_bra), axis=-1)
-    else:
-        out = (eigen.forward_ket @ y).reshape(n_kappa, 2, n_ops, n, 2, n)
-        left = jnp.stack(
-            [
-                out[:, 0, :, :, 0] - out[:, 1, :, :, 1],
-                out[:, 0, :, :, 1] + out[:, 1, :, :, 0],
-            ],
-            axis=2,
-        )[pick]
-        left = left.transpose(0, 3, 2, 1, 4).reshape(n_kappa, n, 2 * n_ops * n)
-        product = left @ eigen.forward_bra
-    return multiply(eigen.rates - shift, y) + product
+    """Apply L - shift to a split state in the eigenvectors (`EigenLiouvillian`): L Y[kappa] = Z Y[kappa] + sum_j K_j[s] Y[s] B_j[s] with s = s_j(kappa)."""
+    jumps = _jumps(eigen.forward_ket, eigen.forward_bra, eigen.sources, y)
+    return multiply(eigen.rates - shift, y) + jumps
 
 
 def apply_adjoint_split(
@@ -232,32 +196,11 @@ def apply_adjoint_split(
 ) -> jax.Array:
     """Apply (L - shift)^dagger to a split state, the adjoint of `apply_split` in <w, y> = sum(conj(w) * y).
 
-    As L Y[kappa] = Z Y[kappa] + sum_j K_j[s] Y[s] B_j[s] with s = s_j(kappa),
-    L^dagger W[s] = conj(Z) W[s] + sum_j K_j[s]^dagger W[t_j(s)] B_j[s]^dagger
-    with t_j(s) the target of s: W[t] B_j[s_j(t)]^dagger of every j is one
-    product at each t, and the sum over j at each s one product, as many as
-    for L.
+    L^dagger W[s] = conj(Z) W[s] + sum_j K_j[s]^dagger W[t] B_j[s_j(t)]^dagger
+    with t = t_j(s) the target of s.
     """
-    n_kappa, n_ops = eigen.targets.shape
-    n = w.shape[-2]
-    pick = (eigen.targets, jnp.arange(n_ops))
-    if eigen.adjoint_ket.ndim == w.ndim + 1:
-        real, imaginary = _gauss(_parts(*_halves(w)), eigen.adjoint_bra)
-        right = jnp.stack([real, imaginary]).reshape(2, n_kappa, n, n_ops, n)
-        right = right.swapaxes(2, 3)[:, *pick].reshape(2, n_kappa, n_ops * n, n)
-        product = jnp.concatenate(_gauss(eigen.adjoint_ket, _parts(*right)), axis=-1)
-    else:
-        right = (w @ eigen.adjoint_bra).reshape(n_kappa, n, 2, n_ops, n)
-        right = right.transpose(0, 3, 1, 2, 4)[pick].reshape(n_kappa, n_ops * n, 2 * n)
-        out = (eigen.adjoint_ket @ right).reshape(n_kappa, 2, n, 2, n)
-        product = jnp.concatenate(
-            [
-                out[:, 0, :, 0] - out[:, 1, :, 1],
-                out[:, 0, :, 1] + out[:, 1, :, 0],
-            ],
-            axis=-1,
-        )
-    return multiply((eigen.rates - shift).conj(), w) + product
+    jumps = _jumps(eigen.adjoint_ket, eigen.adjoint_bra, eigen.targets, w)
+    return multiply((eigen.rates - shift).conj(), w) + jumps
 
 
 def to_eigen(eigen: EigenLiouvillian, x: jax.Array) -> jax.Array:
@@ -274,12 +217,6 @@ def from_eigen(eigen: EigenLiouvillian, y: jax.Array) -> jax.Array:
 def apply_eigen(eigen: EigenLiouvillian, y: jax.Array, shift: jax.Array) -> jax.Array:
     """Apply L - shift to a complex state in the eigenvectors (`apply_split`)."""
     return join(apply_split(eigen, split(y), shift))
-
-
-@jax.jit
-def apply_adjoint(eigen: EigenLiouvillian, w: jax.Array, shift: jax.Array) -> jax.Array:
-    """Apply (L - shift)^dagger to a complex state in the eigenvectors (`apply_adjoint_split`)."""
-    return join(apply_adjoint_split(eigen, split(w), shift))
 
 
 _STAGNATION = 100

@@ -16,7 +16,6 @@ from classical_diffusion.caldeira_leggett._linear import (
     apply_adjoint_split,
     apply_eigen,
     apply_split,
-    from_eigen,
     inner,
     magnitudes,
     multiply,
@@ -135,13 +134,15 @@ class _Progress:
     count: jax.Array
 
     @staticmethod
-    def start(tolerance: float, floor: float, max_steps: int) -> _Progress:
+    def start(
+        tolerance: float | jax.Array, floor: float | jax.Array, max_steps: int
+    ) -> _Progress:
         return _Progress(
-            tolerance=jnp.asarray(tolerance),
-            floor=jnp.asarray(floor),
-            precision=jnp.asarray(0.0),
+            tolerance=jnp.asarray(tolerance, float),
+            floor=jnp.asarray(floor, float),
+            precision=jnp.zeros(()),
             errors=jnp.zeros(max_steps // _TRANSFER_BLOCK + 2),
-            count=jnp.asarray(0),
+            count=jnp.zeros((), int),
         )
 
     @property
@@ -171,8 +172,12 @@ class _Progress:
         )
 
 
-def _warn(what: str, progress: _Progress) -> None:
-    reached, tolerance = (float(x) for x in (progress.reached, progress.tolerance))
+@jax.jit
+def _get_reached(progress: _Progress) -> jax.Array:
+    return progress.reached
+
+
+def _warn(what: str, reached: float, tolerance: float) -> None:
     if reached > tolerance:
         warnings.warn(
             f"{what} is accurate to about {reached:.1e} (absolute) from round"
@@ -236,15 +241,15 @@ class _Recurrence:
         size = jnp.linalg.norm(start)
         v = start / size
         w = measurement * (size / jnp.conj(scale))
-        zero = jnp.zeros_like(split(v))
+        zero, scalar = jnp.zeros_like(split(v)), jnp.zeros((), complex)
         return _Recurrence(
-            vectors=(split(v), split(w), zero, zero, jnp.asarray(0j), jnp.asarray(0j)),
+            vectors=(split(v), split(w), zero, zero, scalar, scalar),
             alpha=jnp.zeros(capacity, complex),
             coupling=jnp.zeros(capacity, complex),
-            steps=jnp.asarray(0),
+            steps=jnp.zeros((), int),
             invariant=_FALSE,
             broken=_FALSE,
-            roundoff=jnp.asarray(0.0),
+            roundoff=jnp.zeros(()),
         )
 
     @property
@@ -404,14 +409,16 @@ def _take(  # ruff:ignore[too-many-arguments]
 @partial(jax.jit, static_argnames=("max_steps",))
 def _transfer_loop(  # ruff:ignore[too-many-arguments]
     eigen: EigenLiouvillian,
-    recurrence: _Recurrence,
+    start: jax.Array,
+    measurement: jax.Array,
     shift: jax.Array,
-    scale: jax.Array,
-    progress: _Progress,
+    tolerance: jax.Array,
     *,
     max_steps: int,
-) -> tuple[_Recurrence, _Progress, jax.Array, jax.Array]:
-    """Run the recurrence of `get_transfer` on the device until its value agrees over _AGREEMENTS blocks, the space is invariant, it breaks down, or max_steps; get the recurrence, the progress, the value and whether it agreed."""
+) -> tuple[jax.Array, ...]:
+    """Run the recurrence of `get_transfer` on the device until its value agrees over _AGREEMENTS blocks, the space is invariant, it breaks down, or max_steps; get the scale, steps, whether it is invariant, broken or agreed, the value and the tolerance reached."""
+    measurement /= (eigen.rates - shift).conj()
+    scale = jnp.vdot(measurement, start)
 
     def proceed(state: tuple) -> jax.Array:
         recurrence, _progress, _last, agreed, _value = state
@@ -455,14 +462,22 @@ def _transfer_loop(  # ruff:ignore[too-many-arguments]
         proceed,
         block,
         (
-            recurrence,
-            progress,
+            _Recurrence.start(start, measurement, scale, max_steps),
+            _Progress.start(tolerance, 0.0, max_steps),
             jnp.asarray(np.inf + 0j),
             jnp.asarray(0),
             jnp.asarray(0j),
         ),
     )
-    return recurrence, progress, value, agreed >= _AGREEMENTS
+    return (
+        scale,
+        recurrence.steps,
+        recurrence.invariant,
+        recurrence.broken,
+        agreed >= _AGREEMENTS,
+        value,
+        progress.reached,
+    )
 
 
 def get_transfer(
@@ -493,42 +508,29 @@ def get_transfer(
     RuntimeError
         If it does not converge in the most steps (`_get_max_steps`).
     """
-    measurement /= (eigen.rates - s).conj()
-    scale = complex(jnp.vdot(measurement, start))
-    if scale == 0:
-        raise _BreakdownError
     max_steps = _get_max_steps(start)
-    recurrence, progress, value, agreed = _transfer_loop(
-        eigen,
-        _Recurrence.start(start, measurement, jnp.asarray(scale), max_steps),
-        jnp.asarray(complex(s)),
-        jnp.asarray(scale),
-        _Progress.start(tolerance, 0.0, max_steps),
-        max_steps=max_steps,
+    scale, steps, invariant, broken, agreed, value, reached = jax.device_get(
+        _transfer_loop(
+            eigen, start, measurement, complex(s), float(tolerance), max_steps=max_steps
+        )
     )
-    steps, invariant, broken, agreed = jax.device_get(
-        (recurrence.steps, recurrence.invariant, recurrence.broken, agreed)
-    )
-    if broken:
+    if scale == 0 or broken:
         raise _BreakdownError
     if not (invariant or agreed):
         msg = f"The transfer function did not converge in {max_steps} Lanczos steps"
         raise RuntimeError(msg)
     if agreed:
-        _warn("The transfer function", progress)
+        _warn("The transfer function", float(reached), tolerance)
     return complex(value), 2 * int(steps)
 
 
-def get_measurement(
-    eigen: EigenLiouvillian,
-    measure: Callable[[jax.Array], jax.Array],
-    like: jax.Array,
-) -> jax.Array:
-    """Get g with measure(X) = <g, Y> for a state Y = A^-1 X B^-dagger in the eigenvectors of K."""
-    (transposed,) = jax.linear_transpose(lambda y: measure(from_eigen(eigen, y)), like)(
-        jnp.asarray(1.0 + 0j)
+def get_measurement(eigen: EigenLiouvillian, observable: jax.Array) -> jax.Array:
+    """Get g with <O, X> = <g, Y> for a state X = A Y B^dagger in the eigenvectors of K: g = A^dagger O B."""
+    return (
+        eigen.ket_vectors.conj().swapaxes(-1, -2)
+        @ observable
+        @ eigen.bra_vectors_dagger.conj().swapaxes(-1, -2)
     )
-    return transposed.conj()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -716,6 +718,38 @@ def _judge(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, to
     return values, progress, agreed, done, error
 
 
+@partial(jax.jit, static_argnames=("max_steps", "count"))
+def _begin(  # ruff:ignore[too-many-arguments, too-many-positional-arguments]
+    eigen: EigenLiouvillian,
+    start: jax.Array,
+    measurement: jax.Array,
+    steady: jax.Array,
+    tolerance: jax.Array,
+    floor: jax.Array,
+    *,
+    max_steps: int,
+    count: int,
+) -> tuple:
+    """Get the plateau <measurement, steady>, the scale <measurement, start>, the largest rate of N, and the recurrence, screen, progress and last evaluation (of count times) that `_evolve` starts from."""
+    scale = jnp.vdot(measurement, start)
+    screen = _Screen(
+        transforms=jnp.zeros((_LINES, 2 * _FREQUENCIES + 1), complex),
+        lines=jnp.asarray(-1, int),
+        screen=jnp.asarray(np.inf, float),
+        reset=_FALSE,
+        due=jnp.zeros((), int),
+    )
+    return (
+        jnp.vdot(measurement, steady),
+        scale,
+        jnp.abs(eigen.rates).max(),
+        _Recurrence.start(start, measurement, scale, max_steps),
+        screen,
+        _Progress.start(tolerance, floor, max_steps),
+        (jnp.zeros(count, complex), _FALSE, jnp.zeros((), int)),
+    )
+
+
 def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, too-many-locals]
     eigen: EigenLiouvillian,
     start: jax.Array,
@@ -741,7 +775,18 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
     """
     span = float(times.max())
     s = 1 / span
-    plateau = complex(jnp.vdot(measurement, steady))
+    max_steps = _get_max_steps(start)
+    initial, scale, norm, recurrence, screen, progress, last = _begin(
+        eigen,
+        start,
+        measurement,
+        steady,
+        tolerance,
+        _ROUNDOFF * tolerance / stop,
+        max_steps=max_steps,
+        count=len(times),
+    )
+    plateau, first = (complex(x) for x in jax.device_get((initial, scale)))
     accuracy = _TRANSFER_TOL * tolerance / s
     reference, transfer_applications = get_transfer(
         eigen, start, measurement, s, accuracy
@@ -759,28 +804,16 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
         )
         reference += drift / s
         transfer_applications += applications
-    scale = complex(jnp.vdot(measurement, start))
-    if scale == 0:
+    if first == 0:
         raise _BreakdownError
-    max_steps = _get_max_steps(start)
-    recurrence = _Recurrence.start(start, measurement, jnp.asarray(scale), max_steps)
     frequencies = np.concatenate([[0.0], np.geomspace(1, 10**3, _FREQUENCIES)])
     constants = (
-        jnp.asarray(scale),
-        jnp.abs(eigen.rates).max(),
+        scale,
+        norm,
         jnp.asarray(s * 10.0 ** np.arange(_LINES)),
         jnp.asarray(np.concatenate([frequencies, -frequencies[1:]])),
         jnp.asarray(reference),
     )
-    screen = _Screen(
-        transforms=jnp.zeros((_LINES, 2 * _FREQUENCIES + 1), complex),
-        lines=jnp.asarray(-1),
-        screen=jnp.asarray(np.inf),
-        reset=_FALSE,
-        due=jnp.asarray(0),
-    )
-    progress = _Progress.start(tolerance, _ROUNDOFF * tolerance / stop, max_steps)
-    last = (jnp.zeros(len(times), complex), _FALSE, jnp.asarray(0))
     while True:
         recurrence, screen, progress, due = _advance(
             eigen, recurrence, screen, progress, constants, max_steps=max_steps
@@ -818,7 +851,9 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
         screen = dataclasses.replace(
             screen,
             reset=_FALSE,
-            due=jnp.asarray(steps + max(_BLOCK, steps // _SPREAD // _BLOCK * _BLOCK)),
+            due=jnp.asarray(
+                steps + max(_BLOCK, steps // _SPREAD // _BLOCK * _BLOCK), int
+            ),
         )
         done, broken = jax.device_get((done, recurrence.broken))
         if done:
@@ -828,7 +863,7 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
                     f" steps, where F_m agreed with its transform to {float(error):.1e}",
                     stacklevel=3,
                 )
-            _warn("The evolution", progress)
+            _warn("The evolution", float(_get_reached(progress)), tolerance)
             return Evolution(
                 values=plateau + np.asarray(values[: len(times)]),
                 applications={
@@ -843,19 +878,41 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
             raise RuntimeError(msg)
 
 
+@jax.jit
+def _prepare(
+    eigen: EigenLiouvillian,
+    initial: jax.Array,
+    observable: jax.Array,
+    steady_state: jax.Array | None,
+) -> tuple[jax.Array, ...]:
+    """Get the start X_0 - c rho, the measurement and c rho in the eigenvectors of K (`get_reduced_evolution`), F(0) and the largest it could be."""
+    steady = jnp.zeros_like(initial)
+    if steady_state is not None:
+        steady = steady_state * (_trace(initial) / _trace(steady_state))
+    start, steady = to_eigen(eigen, initial - steady), to_eigen(eigen, steady)
+    measurement = get_measurement(eigen, observable)
+    return (
+        start,
+        measurement,
+        steady,
+        jnp.vdot(measurement, start + steady),
+        jnp.linalg.norm(measurement) * jnp.linalg.norm(start + steady),
+    )
+
+
 def get_reduced_evolution(  # ruff:ignore[too-many-arguments]
     eigen: EigenLiouvillian,
     initial: jax.Array,
-    measure: Callable[[jax.Array], jax.Array],
+    observable: jax.Array,
     times: FloatArray,
     *,
     config: EvolutionConfig,
     steady_state: jax.Array | None = None,
 ) -> Evolution:
-    """Get measure(exp(L t) initial) at the times (from zero), by two-sided Lanczos (Pade via Lanczos, PVL).
+    """Get <O, exp(L t) initial> = sum(conj(O) * X(t)) at the times (from zero), by two-sided Lanczos (Pade via Lanczos, PVL).
 
     L is given in the eigenvectors of K (`get_eigen_liouvillian`), and
-    initial in the bands. measure must be linear over the complex numbers.
+    initial and the observable O in the bands.
     The two-sided Lanczos recurrence from X_0 and the measurement g, with
     one application of L and one of L^dagger per step and no basis kept,
     gives a tridiagonal T_m whose poles lambda_j and residues r_j match the
@@ -908,7 +965,7 @@ def get_reduced_evolution(  # ruff:ignore[too-many-arguments]
     of 168 to 1.4e6 (3 m_H at 10 / ps, Li at 12 k_B T) that misses the
     plateau by 1.5e-6 relative, above the stop, forever. So the evolution
     is of X_0 - c rho with c = Tr X_0 / Tr rho, which has no zero mode, and
-    the plateau c measure(rho) is added: exact, as Tr exp(L t) X = Tr X. The
+    the plateau c <O, rho> is added: exact, as Tr exp(L t) X = Tr X. The
     transfer function of c rho is found too, so that an error of the steady
     state counts in the comparison with the transform of F_m.
 
@@ -923,16 +980,8 @@ def get_reduced_evolution(  # ruff:ignore[too-many-arguments]
         converge in the most steps (`_get_max_steps`).
     """
     times = np.asarray(times, dtype=np.float64)
-    steady = jnp.zeros_like(initial)
-    if steady_state is not None:
-        steady = steady_state * (_trace(initial) / _trace(steady_state))
-    start, steady = to_eigen(eigen, initial - steady), to_eigen(eigen, steady)
-    measurement = get_measurement(eigen, measure, start)
-    first, size = jax.device_get(
-        (
-            jnp.vdot(measurement, start + steady),
-            jnp.linalg.norm(measurement) * jnp.linalg.norm(start + steady),
-        )
+    start, measurement, steady, first, size = _prepare(
+        eigen, initial, observable, steady_state
     )
     first, size = complex(first), float(size)
     if times.max(initial=0.0) <= 0:

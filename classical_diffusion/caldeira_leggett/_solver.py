@@ -68,11 +68,10 @@ def get_isf(  # ruff:ignore[too-many-arguments]
     The evolution is by two-sided Lanczos (`get_reduced_evolution`), less
     the steady state, if the Liouvillian preserves the trace.
     """
-    o = jnp.asarray(observable)
     evolution = get_reduced_evolution(
         get_eigen_liouvillian(liouvillian),
         jnp.asarray(initial),
-        lambda x: jnp.sum(o.conj() * x),
+        jnp.asarray(observable),
         times,
         config=isf_config,
         steady_state=None if steady_state is None else jnp.asarray(steady_state),
@@ -186,6 +185,15 @@ def _get_diffusion_from_response(twist: _Twist, response: jax.Array) -> float:
     return -rate.real
 
 
+@jax.jit
+def _get_trace_observable(liouvillian: Liouvillian, like: jax.Array) -> jax.Array:
+    """Get O with Tr[L X] = sum(conj(O) * X)."""
+    (transposed,) = jax.linear_transpose(
+        lambda x: _trace(apply_liouvillian(liouvillian, x)), like
+    )(jnp.asarray(1.0 + 0j))
+    return transposed.conj()
+
+
 def get_rms(  # ruff:ignore[too-many-arguments]
     operators: Operators,
     derivative: Operators,
@@ -235,7 +243,7 @@ def get_rms(  # ruff:ignore[too-many-arguments]
     decay = get_reduced_evolution(
         eigen,
         second,
-        lambda x: _trace(apply_liouvillian(twist.first_derivative, x)),
+        _get_trace_observable(twist.first_derivative, rho),
         times,
         config=isf_config,
     ).values.real

@@ -1,15 +1,15 @@
-# cspell: ignore eigh eigvalsh
+# cspell: ignore eigh eigvalsh Hamiltonians
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
 import scipy.linalg
 
-from classical_diffusion.caldeira_leggett._model import (
-    get_hamiltonian,
-)
+from classical_diffusion.caldeira_leggett._model import get_potential
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from classical_diffusion._periodic import IntVector
     from classical_diffusion.caldeira_leggett._model import (
         ComplexArray,
@@ -52,24 +52,16 @@ def _get_wavevectors(model: Model) -> FloatArray:
     ] + model.reciprocal_vectors @ model.reciprocal
 
 
-def _get_hamiltonian(model: Model, i: int) -> ComplexArray:
-    """Get the plane wave Hamiltonian at the crystal momentum of index i."""
-    return get_hamiltonian(
-        (model.kappa @ model.cell_reciprocal)[i : i + 1],
-        model.reciprocal_vectors,
-        model.reciprocal,
-        model.potential,
-    )[0]
+def _get_hamiltonians(model: Model) -> Iterator[ComplexArray]:
+    """Get the plane wave Hamiltonian at each crystal momentum in turn, with the potential found once."""
+    potential = get_potential(model.reciprocal_vectors, model.potential)
+    for k in _get_wavevectors(model):
+        yield potential + 0.5 * np.sum(k**2, axis=-1)[:, None] * np.eye(len(k))
 
 
 def get_energies(model: Model) -> FloatArray:
     """Get every energy of the plane wave Hamiltonian at each crystal momentum, (n_kappa, n_plane_waves)."""
-    return np.array(
-        [
-            scipy.linalg.eigvalsh(_get_hamiltonian(model, i))
-            for i in range(model.n_kappa)
-        ]
-    )
+    return np.array([scipy.linalg.eigvalsh(h) for h in _get_hamiltonians(model)])
 
 
 def get_band_count(model: Model, energies: FloatArray, cutoff: float) -> int:
@@ -99,8 +91,8 @@ def get_bands(model: Model, energies: FloatArray | None = None) -> Bands:
         energies = get_energies(model)
     n_bands = get_band_count(model, energies, model.cutoff)
     kept = [
-        scipy.linalg.eigh(_get_hamiltonian(model, i), subset_by_index=(0, n_bands - 1))
-        for i in range(model.n_kappa)
+        scipy.linalg.eigh(h, subset_by_index=(0, n_bands - 1))
+        for h in _get_hamiltonians(model)
     ]
     return Bands(
         energies=np.array([e for e, _ in kept]), vectors=np.array([v for _, v in kept])

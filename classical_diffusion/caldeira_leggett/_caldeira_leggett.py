@@ -590,10 +590,7 @@ def get_slow_modes(
         )
     eigen = get_eigen_liouvillian(sector.liouvillian)
     start = to_eigen(eigen, jnp.asarray(sector.initial))
-    observable = jnp.asarray(sector.observable)
-    measurement = get_measurement(
-        eigen, lambda x: jnp.sum(observable.conj() * x), start
-    )
+    measurement = get_measurement(eigen, jnp.asarray(sector.observable))
     friction = _get_friction(system, sector.model)
     modes, _ = find_slow_modes(
         eigen,
