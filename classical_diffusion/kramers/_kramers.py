@@ -13,6 +13,8 @@ import scipy.sparse.linalg
 from classical_diffusion._modal import ModalSum
 from classical_diffusion._periodic import get_saddle_energy
 from classical_diffusion._results import (
+    ModeCount,
+    RateCut,
     RmsResult,
     SlowModes,
     fold_times,
@@ -24,7 +26,7 @@ from classical_diffusion.kramers._config import DEFAULT_CONFIG, KramersConfig
 from classical_diffusion.kramers._krylov import (
     KrylovProblem,
     get_modal_sum,
-    get_ritz_pairs,
+    get_slow_pairs,
 )
 from classical_diffusion.kramers._model import (
     Model,
@@ -54,6 +56,7 @@ from classical_diffusion.util import timed
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from classical_diffusion._results import Selection
     from classical_diffusion.kramers._model import ComplexArray, FloatArray, IntArray
     from classical_diffusion.langevin._system import PeriodicSystem
 
@@ -324,7 +327,7 @@ def _get_isf(
         problem = _build_stepped_problem(model, basis, delta_k)
         tails = _Tails(problem, basis, model)
         result = propagate_form(
-            problem.operator.apply,
+            problem.operator,
             problem.start(),
             problem.parity,
             times,
@@ -553,7 +556,9 @@ def get_slow_modes(
     window = 20 / model.friction
     if _is_stepped(model):
         modes = ModalSum.of(
-            *_get_stepped_slow_modes(model, scaled, config), window, config.tol
+            *_get_stepped_slow_modes(model, scaled, selection, config),
+            window,
+            config.tol,
         )
     else:
         modes = get_slow_window_modes(
@@ -576,15 +581,15 @@ def get_slow_modes(
     )
 
 
-_RITZ_VECTORS = 80
-_RITZ_RTOL = 1e-4
-"""The residual of a Ritz pair, in units of the friction, above which it is not a mode: those kept have rates good to about its square."""
-
-
-def _get_stepped_slow_modes(  # ruff:ignore[too-many-locals]
-    model: Model, delta_k: FloatArray, config: KramersConfig
+def _get_stepped_slow_modes(
+    model: Model, delta_k: FloatArray, selection: Selection, config: KramersConfig
 ) -> tuple[ComplexArray, ComplexArray]:
-    """Get the slow modes of the ISF by stepping the start past the fast modes, then the Ritz pairs of what is left.
+    """Get the slow modes of the ISF by stepping the start past the fast modes, then the Ritz pairs of e^{L / gamma} in the Krylov space of what is left (`get_slow_pairs`).
+
+    Each pair converges to a residual |L r - lambda r| of tol gamma |r|. The
+    pairs are converged up to twice the rate of the selection, so that a
+    mode just slower than it is not missed while its Ritz value is still
+    below it.
 
     Raises
     ------
@@ -597,7 +602,7 @@ def _get_stepped_slow_modes(  # ruff:ignore[too-many-locals]
         tails = _Tails(problem, basis, model)
         start = problem.start()
         state, _, _ = propagate_state(
-            problem.operator.apply,
+            problem.operator,
             start,
             4 / model.friction,
             tol=1e-2 * config.tol,
@@ -613,11 +618,18 @@ def _get_stepped_slow_modes(  # ruff:ignore[too-many-locals]
     else:
         msg = "The basis did not converge"
         raise RuntimeError(msg)
-    values, vectors, residuals = get_ritz_pairs(
-        problem.operator.apply, state, _RITZ_VECTORS
+    duration = 1 / model.friction
+    values, vectors = get_slow_pairs(
+        problem.operator.apply,
+        lambda x: propagate_state(problem.operator, x, duration, tol=1e-2 * config.tol)[
+            0
+        ],
+        state,
+        duration=duration,
+        rate=2 * selection.rate if isinstance(selection, RateCut) else 0.0,
+        count=selection.n_modes if isinstance(selection, ModeCount) else 1,
+        residual=config.tol * model.friction,
     )
-    keep = residuals <= _RITZ_RTOL * model.friction
-    values, vectors = values[keep], vectors[keep]
     parity = problem.parity
     overlap = vectors @ (parity * start)
     form = np.sum(vectors * parity * vectors, axis=1)
@@ -651,7 +663,7 @@ def _get_doubled_mean_square(
     points = (middle[:, None] + half[:, None] * nodes[None, :]).ravel()
     correlation = (
         -propagate_form(
-            problem.operator.apply,
+            problem.operator,
             v,
             problem.parity,
             np.concatenate([[0.0], points]),
@@ -680,7 +692,7 @@ def _get_stepped_diffusion(
     problem = _build_stepped_problem(model, basis, np.zeros(model.n_dim))
     v = problem.start(direction)
     solution, _ = solve_by_propagation(
-        problem.operator.apply, v, 1 / model.friction, tol=1e-2 * tol
+        problem.operator, v, 1 / model.friction, tol=1e-2 * tol
     )
     return float(v @ solution) / problem.norm
 
