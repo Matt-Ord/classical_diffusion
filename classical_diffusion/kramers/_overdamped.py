@@ -78,8 +78,10 @@ class _Generator:
 
         modal = get_modal_sum(
             KrylovProblem(
-                apply=lambda v: self.gradient @ project(v),
-                adjoint=lambda u: project(self.adjoint @ u),
+                operator=(
+                    lambda v: self.gradient @ project(v),
+                    lambda u: project(self.adjoint @ u),
+                ),
                 parity=None,
                 rates_of=lambda mu: -self.diffusion * mu,
                 span=float(times[-1]),

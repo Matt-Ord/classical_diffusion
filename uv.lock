@@ -126,6 +126,7 @@ dependencies = [
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "scipy" },
+    { name = "sparsax" },
     { name = "sympy" },
 ]
 
@@ -146,6 +147,7 @@ requires-dist = [
     { name = "matplotlib", specifier = ">=3.11.0" },
     { name = "numpy", specifier = ">=2.5.1" },
     { name = "scipy", specifier = ">=1.17.0" },
+    { name = "sparsax", specifier = ">=0.12" },
     { name = "sympy", specifier = ">=1.14.0" },
 ]
 
@@ -782,6 +784,22 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/69/99/a6ca3beb3ccacb41fb3321d8a60e5566f9e6467601ef8eba6a17e1b89778/soupsieve-2.9.2.tar.gz", hash = "sha256:4a55d8cf158a9c2e587fa4922f1bbb91d68ac829e2d6f25403a85747c71daf74", size = 122445, upload-time = "2026-08-07T00:57:24.801Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/eb/dc/ad025c1ee131eba60c69f4dd5779b18fcf1e6b21a343e2162a84d5d133c7/soupsieve-2.9.2-py3-none-any.whl", hash = "sha256:8089a26fd974ca7a1f30276d3d8492ab266ab15af581642dfe8aa162e0c1c823", size = 37370, upload-time = "2026-08-07T00:57:23.524Z" },
+]
+
+[[package]]
+name = "sparsax"
+version = "0.12.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "jax" },
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/98/c7/717a427ae460dc6970484afac260935cf8fd0f8d64c84d667b8f4d4efc55/sparsax-0.12.0.tar.gz", hash = "sha256:65bada4d41ebde71a616844c9808b5f8ecd3c17afd762cce15a7ab9988d9a80b", size = 170038, upload-time = "2026-11-07T03:27:33.621Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6e/fa/946359fb832be0648415eec9561b7968651059c5a4f1c2719a35fda45142/sparsax-0.12.0-cp314-cp314-macosx_15_0_arm64.whl", hash = "sha256:fb284fa41bdfc5bf494acfc818d8b32c6ef6ce2eeb6f475c0fe80c93edc00f6f", size = 1497710, upload-time = "2026-11-07T03:27:15.487Z" },
+    { url = "https://files.pythonhosted.org/packages/67/86/697ec5dd8407ade9a5ba26e53226e6520a8a9c28a7bdda510c5ac59adaf5/sparsax-0.12.0-cp314-cp314-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:4999034d5f35986ff138d087f21d2851e8c60fabf9f93bd647b5fbca08a0b6e6", size = 10590147, upload-time = "2026-11-07T03:27:17.232Z" },
+    { url = "https://files.pythonhosted.org/packages/30/d2/dc9b48a882802d48e38ed02be4f2f1938040939627bd74411ec7e7a285ef/sparsax-0.12.0-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:1168baddf797ad0e5aee6ec242f0f9aad229de08fb3a026ca2f3942b53183be6", size = 13639255, upload-time = "2026-11-07T03:27:19.718Z" },
+    { url = "https://files.pythonhosted.org/packages/3d/e4/89d10d021e76b26848b8e5db078bd252b954d3d5f0fa8e6a1742507d1af5/sparsax-0.12.0-cp314-cp314-win_amd64.whl", hash = "sha256:288ce8d0def449ac696eccb5bc15b224dc39c2555177f1632859848c377c796d", size = 7862956, upload-time = "2026-11-07T03:27:22.357Z" },
 ]
 
 [[package]]

@@ -10,6 +10,7 @@ dependencies = [
     "matplotlib>=3.11.0",
     "numpy>=2.5.1",
     "scipy>=1.17.0",
+    "sparsax>=0.12",
     "sympy>=1.14.0",
 ]
 

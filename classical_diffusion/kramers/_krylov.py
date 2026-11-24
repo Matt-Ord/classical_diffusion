@@ -1,19 +1,27 @@
-# cspell: ignore Gragg orthogonalizing REORTHOGONALIZE orthogonalize vdot Golub Kahan bidiagonalization bidiagonal
+# cspell: ignore Gragg orthogonalizing REORTHOGONALIZE orthogonalize vdot Golub Kahan bidiagonalization bidiagonal jitted argnums fori
 """The Krylov methods of the classical solvers: a correlation [u, f(A) u] as a modal sum, the spaces of the time steps, and Ritz pairs.
 
 The Kramers operator in its real form is J-symmetric, L^T = J L J for J the
-parity of the momentum, and so is (s - L)^-1: Arnoldi. The generator of the
-overdamped limit is -L = D_0 A^dag A (J = 1): Golub-Kahan bidiagonalization
-of A, which keeps the slow rates to round off relative to themselves.
+parity of the momentum, and so is (s - L)^-1: Arnoldi, with the sparse LU
+of s - L (`_lu`) and the basis on the device, a block of steps per jitted
+call. The generator of the overdamped limit is -L = D_0 A^dag A (J = 1):
+Golub-Kahan bidiagonalization of A, which keeps the slow rates to round off
+relative to themselves, on the host (milliseconds per result).
 """
 
+import functools
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 import scipy.linalg
 
 from classical_diffusion._modal import ModalSum
+
+# A runtime import: jax.jit reads the annotations of _extend
+from classical_diffusion.kramers._lu import SparseFactor
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -22,9 +30,9 @@ if TYPE_CHECKING:
 
 _AGREEMENTS = 2
 """The successive blocks over which a modal sum must agree: a slow mode of small weight can leave one block unchanged before the method finds it."""
-_INVARIANT = 1e-13
+INVARIANT = 1e-13
 """The norm of the next Krylov vector, relative to the projected operator, below which the Krylov space is invariant and the modes exact."""
-_REORTHOGONALIZE = 0.7
+REORTHOGONALIZE = 0.7
 """The fraction of |w| left after Gram-Schmidt below which it is done a second time (Daniel, Gragg, Kaufman and Stewart 1976)."""
 
 
@@ -60,7 +68,7 @@ class _Arnoldi:
             before = float(np.linalg.norm(w))
             overlap = basis.conj() @ w
             w -= overlap @ basis
-            if np.linalg.norm(w) < _REORTHOGONALIZE * before:
+            if np.linalg.norm(w) < REORTHOGONALIZE * before:
                 again = basis.conj() @ w
                 w -= again @ basis
                 overlap += again
@@ -68,18 +76,162 @@ class _Arnoldi:
             norm = float(np.linalg.norm(w))
             self.hessenberg[k + 1, k] = norm
             self.steps += 1
-            if norm <= _INVARIANT * max(float(np.abs(overlap).max()), 1e-300):
+            if norm <= INVARIANT * max(float(np.abs(overlap).max()), 1e-300):
                 self.invariant = True
                 return
             self.vectors[k + 1] = w / norm
 
-    def poles(self, measurement: np.ndarray) -> tuple[ComplexArray, ComplexArray]:
+
+def orthogonalize(
+    project: Callable[[jax.Array], tuple[jax.Array, jax.Array]],
+    w: jax.Array,
+    size: int,
+) -> tuple[jax.Array, jax.Array]:
+    """Remove from w its components along a basis, `project` returning w less them and the overlaps (size of them), twice where the first pass cancelled most of w.
+
+    The passes are a loop rather than a branch, so `project` is compiled once.
+    """
+
+    def again(c: tuple) -> jax.Array:
+        w, _, before, passes = c
+        return (passes == 0) | (
+            (passes == 1) & (jnp.linalg.norm(w) < REORTHOGONALIZE * before)
+        )
+
+    def body(c: tuple) -> tuple:
+        w, overlap, _, passes = c
+        projected, more = project(w)
+        return projected, overlap + more, jnp.linalg.norm(w), passes + 1
+
+    w, overlap, _, _ = jax.lax.while_loop(again, body, (w, jnp.zeros(size), 0.0, 0))
+    return w, overlap
+
+
+BLOCK = 4
+"""The rows of the basis read at a time by Gram-Schmidt (block modified Gram-Schmidt): only the blocks filled so far are read."""
+
+
+def remove_block(w: jax.Array, rows: jax.Array) -> tuple[jax.Array, jax.Array]:
+    """Remove from w its components along the rows of a block, with their overlaps."""
+    h = rows @ w
+    return w - h @ rows, h
+
+
+@functools.partial(jax.jit, donate_argnums=(1, 2))
+def _extend(  # ruff:ignore[too-many-arguments]
+    factor: SparseFactor,
+    vectors: jax.Array,
+    records: jax.Array,
+    measurement: jax.Array,
+    *,
+    k: int,
+    end: int,
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    """Take Arnoldi steps of A = factor^{-1} from step k to end, or until the space is invariant, in one call.
+
+    Gram-Schmidt goes a block of rows at a time over the rows filled so far
+    (the rows beyond are zero), twice where the first pass cancelled most
+    of w. XLA copies each block, a dynamic slice, but a few rows of a 1D
+    basis stay in the cache: a step at 7,076 unknowns takes 0.9 ms (0.37 ms
+    the solve), where SuperLU and classical Gram-Schmidt in numpy take 1.3
+    ms. Step k records the overlap of the new vector with the measurement
+    and then column k of H, so the basis never leaves the device.
+    """
+    capacity = len(vectors)
+
+    def project(vectors: jax.Array, k: jax.Array, w: jax.Array) -> tuple:
+        def remove(j: jax.Array, c: tuple) -> tuple:
+            w, h = c
+            rows = jax.lax.dynamic_slice_in_dim(vectors, j * BLOCK, BLOCK)
+            w, more = remove_block(w, rows)
+            return w, jax.lax.dynamic_update_slice_in_dim(h, more, j * BLOCK, 0)
+
+        return jax.lax.fori_loop(0, k // BLOCK + 1, remove, (w, jnp.zeros(capacity)))
+
+    def going(c: tuple) -> jax.Array:
+        _, _, k, invariant = c
+        return (k < end) & ~invariant
+
+    def step(c: tuple) -> tuple:
+        vectors, records, k, _ = c
+        w, overlap = orthogonalize(
+            functools.partial(project, vectors, k), factor.solve(vectors[k]), capacity
+        )
+        norm = jnp.linalg.norm(w)
+        invariant = norm <= INVARIANT * jnp.maximum(jnp.abs(overlap).max(), 1e-300)
+        # At an invariant space v is not used (nor its overlap, the last recorded)
+        v = w / norm
+        record = jnp.concatenate([(v @ measurement)[None], overlap.at[k + 1].set(norm)])
+        return vectors.at[k + 1].set(v), records.at[k].set(record), k + 1, invariant
+
+    start = (vectors, records, jnp.asarray(k), jnp.zeros((), bool))
+    return jax.lax.while_loop(going, step, start)
+
+
+@functools.partial(jax.jit, static_argnames="capacity")
+def _grow(
+    vectors: jax.Array, records: jax.Array, capacity: int
+) -> tuple[jax.Array, jax.Array]:
+    more = capacity - len(vectors)
+    return jnp.pad(vectors, ((0, more), (0, 0))), jnp.pad(
+        records, ((0, more), (0, more))
+    )
+
+
+_CAPACITY = 512
+"""The rows of the basis first held on the device; it doubles as needed (a new compile)."""
+
+
+class _DeviceArnoldi:
+    """The Arnoldi method of A = factor^{-1} on the device (`_extend`), with H and the overlaps of the basis with the measurement brought to the host."""
+
+    def __init__(
+        self, factor: SparseFactor, start: np.ndarray, measurement: np.ndarray
+    ) -> None:
+        self.factor = factor
+        u = np.zeros(factor.size)
+        u[: start.size] = start / np.linalg.norm(start)
+        padded = np.zeros(factor.size)
+        padded[: start.size] = measurement
+        self._first = float(u @ padded)
+        vectors = np.zeros((_CAPACITY, factor.size))
+        vectors[0] = u
+        with jax.enable_x64(new_val=True):
+            self.measurement = jax.device_put(padded)
+            self.vectors = jax.device_put(vectors)
+            self.records = jax.device_put(np.zeros((_CAPACITY, _CAPACITY + 1)))
+        self._host = np.zeros((1, 1))
+        self.steps = 0
+        self.invariant = False
+
+    def extend(self, steps: int) -> None:
+        end = self.steps + steps
+        with jax.enable_x64(new_val=True):
+            capacity = len(self.vectors)
+            while end >= capacity:
+                capacity *= 2
+            if capacity > len(self.vectors):
+                self.vectors, self.records = _grow(self.vectors, self.records, capacity)
+            self.vectors, self.records, k, invariant = _extend(
+                self.factor,
+                self.vectors,
+                self.records,
+                self.measurement,
+                k=self.steps,
+                end=end,
+            )
+            self.steps = int(k)
+            self.invariant = bool(invariant)
+            m = self.steps
+            self._host = np.array(np.asarray(self.records)[:m, : m + 2])
+
+    def poles(self, _: np.ndarray) -> tuple[ComplexArray, ComplexArray]:
         """Get the eigenvalues mu_j of H and the residues r_j, with <measurement, f(A) v_0> = sum_j r_j f(mu_j) for f a polynomial of degree below m."""
         m = self.steps
-        mu, vectors = scipy.linalg.eig(self.hessenberg[:m, :m])
+        mu, vectors = scipy.linalg.eig(self._host[:m, 1 : m + 1].T)
+        seen = np.concatenate([[self._first], self._host[: m - 1, 0]])
         first = np.zeros(m, complex)
         first[0] = 1
-        seen = self.vectors[:m] @ measurement.conj()
         return mu, (seen @ vectors) * np.linalg.solve(vectors, first)
 
 
@@ -113,7 +265,7 @@ class _GolubKahan:
         stacked = np.array(basis)
         before = float(np.linalg.norm(w))
         w -= (stacked.conj() @ w) @ stacked
-        if np.linalg.norm(w) < _REORTHOGONALIZE * before:
+        if np.linalg.norm(w) < REORTHOGONALIZE * before:
             w -= (stacked.conj() @ w) @ stacked
         return w
 
@@ -124,7 +276,7 @@ class _GolubKahan:
             if k > 0:
                 r = self._orthogonalize(self.adjoint(self.images[-1]), self.vectors)
                 beta = float(np.linalg.norm(r))
-                if beta <= _INVARIANT * max(self.diagonal[-1], 1e-300):
+                if beta <= INVARIANT * max(self.diagonal[-1], 1e-300):
                     self.invariant = True
                     return
                 self.upper.append(beta)
@@ -135,7 +287,7 @@ class _GolubKahan:
             self.steps += 1
             scale = max(self.upper[-1] if self.upper else 0.0, alpha, 1e-300)
             self.diagonal.append(alpha)
-            if alpha <= _INVARIANT * scale:
+            if alpha <= INVARIANT * scale:
                 self.invariant = True
                 return
             self.images.append(p / alpha)
@@ -154,7 +306,8 @@ class _GolubKahan:
 class KrylovProblem:
     """A correlation C = [u, f(A) u] = <J u, f(A) u>, as a modal sum of the rates rates_of(mu) of the eigenvalues mu of A in its Krylov space."""
 
-    apply: Callable[[np.ndarray], np.ndarray]
+    operator: SparseFactor | tuple[Callable[[np.ndarray], np.ndarray], ...]
+    """The factor of A^{-1}, whose Krylov space is built on the device (`_DeviceArnoldi`), or G and G^dag, where A = G^dag G: then the modes are found by Golub-Kahan bidiagonalization of G on the host (`_GolubKahan`)."""
     parity: np.ndarray | None
     """J, or None for J = 1."""
     rates_of: Callable[[ComplexArray], ComplexArray]
@@ -167,8 +320,6 @@ class KrylovProblem:
     """The relative change, and the weight of the poles dropped relative to |C(0)|, below which the modal sum has converged."""
     block: int = 5
     max_steps: int = 5000
-    adjoint: Callable[[np.ndarray], np.ndarray] | None = None
-    """A^dag, where the operator whose modes are sought is A^dag A: then the modes are found by Golub-Kahan bidiagonalization of A (`_GolubKahan`), and rates_of maps the eigenvalues of A^dag A."""
 
 
 def get_modal_sum(problem: KrylovProblem, start: np.ndarray) -> ModalSum:
@@ -195,19 +346,14 @@ def get_modal_sum(problem: KrylovProblem, start: np.ndarray) -> ModalSum:
         empty = np.zeros(0, complex)
         return ModalSum(rates=empty, residues=empty, stable=np.zeros(0, bool))
     scale = abs(float(np.vdot(measurement, start).real))
-    arnoldi: _Arnoldi | _GolubKahan
-    if problem.adjoint is None:
-        vectors = np.zeros((min(16, start.size + 1), start.size), start.dtype)
-        vectors[0] = start / size
-        arnoldi = _Arnoldi(
-            apply=problem.apply,
-            vectors=vectors,
-            hessenberg=np.zeros((17, 16), start.dtype),
-        )
+    arnoldi: _DeviceArnoldi | _GolubKahan
+    if isinstance(problem.operator, SparseFactor):
+        arnoldi = _DeviceArnoldi(problem.operator, start, measurement)
     else:
+        apply, adjoint = problem.operator
         arnoldi = _GolubKahan(
-            apply=problem.apply,
-            adjoint=problem.adjoint,
+            apply=apply,
+            adjoint=adjoint,
             vectors=[start / size],
             images=[],
             diagonal=[],
@@ -241,26 +387,6 @@ def get_modal_sum(problem: KrylovProblem, start: np.ndarray) -> ModalSum:
         previous = current
     msg = f"The Arnoldi method did not converge within {problem.max_steps} steps"
     raise RuntimeError(msg)
-
-
-def get_arnoldi_space(
-    apply: Callable[[np.ndarray], np.ndarray], u: np.ndarray, m: int
-) -> tuple[np.ndarray, np.ndarray, float]:
-    """Get an orthonormal basis V of the Krylov space of m vectors of u, as rows, L in it, the Hessenberg H with one more row, and |u|, with u = |u| V e_0.
-
-    The space ends early, with a square H, where it is invariant.
-    """
-    size = float(np.linalg.norm(u))
-    vectors = np.zeros((m + 1, u.size), u.dtype)
-    vectors[0] = u / size
-    arnoldi = _Arnoldi(
-        apply=apply, vectors=vectors, hessenberg=np.zeros((m + 1, m), u.dtype)
-    )
-    arnoldi.extend(m)
-    k = arnoldi.steps
-    if arnoldi.invariant:
-        return arnoldi.vectors[:k], arnoldi.hessenberg[:k, :k], size
-    return arnoldi.vectors[: k + 1], arnoldi.hessenberg[: k + 1, :k], size
 
 
 def get_slow_pairs(  # ruff:ignore[too-many-arguments]

@@ -1,14 +1,11 @@
-# cspell: ignore splu spsolve tocsc
 """The Kramers equation of a periodic system: its ISF, mean square displacement, diffusion constant and slow modes, as sums of modes."""
 
 import dataclasses
 from dataclasses import dataclass
-from functools import cached_property
 from typing import TYPE_CHECKING
 
 import numpy as np
 import scipy.sparse
-import scipy.sparse.linalg
 
 from classical_diffusion._modal import ModalSum
 from classical_diffusion._periodic import get_saddle_energy
@@ -28,6 +25,7 @@ from classical_diffusion.kramers._krylov import (
     get_modal_sum,
     get_slow_pairs,
 )
+from classical_diffusion.kramers._lu import SparseFactor, factorize, solve
 from classical_diffusion.kramers._model import (
     Model,
     build_model,
@@ -156,11 +154,10 @@ class _Problem:
         """<w|w>."""
         return float(self.amplitude @ self.amplitude)
 
-    @cached_property
-    def solve(self) -> Callable[[FloatArray], FloatArray]:
-        """(shift - L)^{-1}, by sparse LU."""
-        shifted = scipy.sparse.identity(self.operator.shape[0], format="csc") * _SHIFT
-        return scipy.sparse.linalg.splu((shifted - self.operator).tocsc()).solve
+    def factorize(self) -> SparseFactor:
+        """Get the sparse LU of shift - L, whose inverse is the operator of the Arnoldi method."""
+        shift = scipy.sparse.identity(self.operator.shape[0], format="csr") * _SHIFT
+        return factorize(shift - self.operator)
 
     def start(self, direction: FloatArray | None = None) -> FloatArray:
         """Get w psi_0(p), or e . p w psi_0(p) for a direction, in the real form (`get_start`)."""
@@ -244,7 +241,7 @@ def _get_modes(
     """
     modal = get_modal_sum(
         KrylovProblem(
-            apply=problem.solve,
+            operator=problem.factorize(),
             parity=problem.parity,
             rates_of=lambda mu: _SHIFT - 1 / mu,
             span=float(times[-1]),
@@ -704,9 +701,9 @@ def _get_diffusion(model: Model, basis: Basis, direction: FloatArray) -> float:
     v = problem.start(direction)
     column = scipy.sparse.csr_array(u[:, None])
     bordered = scipy.sparse.block_array(
-        [[-problem.operator, column], [column.T, None]], format="csc"
+        [[-problem.operator, column], [column.T, None]], format="coo"
     )
-    solution = scipy.sparse.linalg.spsolve(bordered, np.append(v, 0.0))
+    solution = solve(bordered, np.append(v, 0.0))
     return float(v @ solution[:-1]) / problem.norm
 
 

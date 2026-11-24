@@ -1,4 +1,4 @@
-# cspell: ignore fori orthogonalize REORTHOGONALIZE Gragg matvec triu unconverged
+# cspell: ignore fori orthogonalize matvec triu unconverged
 """The Kramers operator applied without being stored, and exponential time steps in its Krylov spaces, for systems too large to factorise."""
 
 import functools
@@ -12,6 +12,12 @@ import numpy as np
 import scipy.linalg
 import scipy.sparse.linalg
 
+from classical_diffusion.kramers._krylov import (
+    BLOCK,
+    INVARIANT,
+    orthogonalize,
+    remove_block,
+)
 from classical_diffusion.kramers._real import (
     _get_ladder_matrices,
     get_force_shifts,
@@ -282,10 +288,6 @@ def build_matrix_free_operator(  # ruff:ignore[too-many-locals]
     )
 
 
-_BLOCK = 4
-"""The rows of each block of the Krylov basis. Gram-Schmidt reads only the blocks filled so far: XLA copies a slice of one array of rows before a product, and reading every row doubles the traffic."""
-
-
 @dataclass(frozen=True, kw_only=True)
 class _Step:
     """The Krylov space of one step: an orthonormal basis V, as blocks of rows on the device, and L in it, H, with one more row (`_arnoldi`)."""
@@ -303,27 +305,28 @@ def _arnoldi_device(
     """Get the blocks of V, the Hessenberg H with one more row and |u|.
 
     Gram-Schmidt goes a block at a time (block modified Gram-Schmidt), over
-    the blocks filled so far, twice where the first pass cancelled most of w.
+    the blocks filled so far, twice where the first pass cancelled most of w
+    (`orthogonalize`). The blocks are separate arrays, each read in a branch
+    of its own: XLA copies a slice of one array of rows before a product
+    (at 253k unknowns the copy doubled the time), and reading every row
+    doubles the traffic. The 1D Arnoldi method slices its basis instead
+    (`_krylov._extend`): its blocks are a few hundred kB and stay in the cache.
     """
     norm = jnp.linalg.norm(u)
-    count = -(-(m + 1) // _BLOCK)
+    count = -(-(m + 1) // BLOCK)
     blocks = tuple(
-        jnp.split(jnp.zeros((count * _BLOCK, u.size)).at[0].set(u / norm), count)
+        jnp.split(jnp.zeros((count * BLOCK, u.size)).at[0].set(u / norm), count)
     )
 
     def project(
         blocks: tuple[jax.Array, ...], k: jax.Array, w: jax.Array
     ) -> tuple[jax.Array, jax.Array]:
-        def remove(w: jax.Array, b: jax.Array) -> tuple[jax.Array, jax.Array]:
-            h = b @ w
-            return w - h @ b, h
-
         overlaps = []
         for i, b in enumerate(blocks):
             w, h = jax.lax.cond(
-                i * _BLOCK <= k,
-                functools.partial(remove, b=b),
-                lambda w: (w, jnp.zeros(_BLOCK)),
+                i * BLOCK <= k,
+                functools.partial(remove_block, rows=b),
+                lambda w: (w, jnp.zeros(BLOCK)),
                 w,
             )
             overlaps.append(h)
@@ -333,30 +336,14 @@ def _arnoldi_device(
         blocks, hessenberg, v = carry
         # Without the barrier XLA recomputes L v inside each of its consumers
         w = jax.lax.optimization_barrier(_apply(kernel, v))
-
-        # One pass, and a second where the first cancelled most of w: a loop
-        # rather than a branch, so Gram-Schmidt is compiled once
-        def again(c: tuple) -> jax.Array:
-            w, _, before, passes = c
-            return (passes == 0) | (
-                (passes == 1) & (jnp.linalg.norm(w) < _REORTHOGONALIZE * before)
-            )
-
-        def orthogonalize(c: tuple) -> tuple:
-            w, overlap, _, passes = c
-            projected, more = project(blocks, k, w)
-            return projected, overlap + more, jnp.linalg.norm(w), passes + 1
-
-        w, overlap, _, _ = jax.lax.while_loop(
-            again, orthogonalize, (w, jnp.zeros(m + 1), 0.0, 0)
-        )
+        w, overlap = orthogonalize(functools.partial(project, blocks, k), w, m + 1)
         beta = jnp.linalg.norm(w)
         v = jnp.where(beta > 0, w / beta, 0.0)
         # A branch per block: a select over the blocks would rewrite each whole
         blocks = tuple(
             jax.lax.cond(
-                (k + 1) // _BLOCK == i,
-                lambda b: b.at[(k + 1) % _BLOCK].set(v),
+                (k + 1) // BLOCK == i,
+                lambda b: b.at[(k + 1) % BLOCK].set(v),
                 lambda b: b,
                 b,
             )
@@ -377,7 +364,7 @@ def _arnoldi(operator: MatrixFreeOperator, u: jax.Array, m: int) -> _Step:
     blocks, hessenberg, norm = _arnoldi_device(operator.kernel, u, m)
     h = np.asarray(hessenberg)
     scale = np.maximum(np.abs(np.triu(h[:-1])).max(axis=0), 1e-300)
-    invariant = np.flatnonzero(np.diagonal(h, -1) <= _INVARIANT * scale)
+    invariant = np.flatnonzero(np.diagonal(h, -1) <= INVARIANT * scale)
     if len(invariant):
         h = h[: invariant[0] + 1, : invariant[0] + 1]
     return _Step(start=u, blocks=blocks, hessenberg=h, norm=float(norm))
@@ -385,7 +372,7 @@ def _arnoldi(operator: MatrixFreeOperator, u: jax.Array, m: int) -> _Step:
 
 def _padded(coefficients: FloatArray, step: _Step, k: int) -> FloatArray:
     """Pad coefficients to k states and to every row of the blocks, so that one shape compiles whatever the size of H."""
-    out = np.zeros((k, len(step.blocks) * _BLOCK))
+    out = np.zeros((k, len(step.blocks) * BLOCK))
     out[: len(coefficients), : coefficients.shape[1]] = coefficients
     return out
 
@@ -394,7 +381,7 @@ def _padded(coefficients: FloatArray, step: _Step, k: int) -> FloatArray:
 def _combine(blocks: tuple[jax.Array, ...], c: jax.Array) -> jax.Array:
     return functools.reduce(
         jnp.add,
-        (c[:, i * _BLOCK : (i + 1) * _BLOCK] @ b for i, b in enumerate(blocks)),
+        (c[:, i * BLOCK : (i + 1) * BLOCK] @ b for i, b in enumerate(blocks)),
     )
 
 
@@ -431,7 +418,7 @@ def _gram(blocks: tuple[jax.Array, ...], parity: jax.Array) -> jax.Array:
         )
         return gram + (rows * weight) @ rows.T
 
-    count = len(blocks) * _BLOCK
+    count = len(blocks) * BLOCK
     return jax.lax.fori_loop(0, -(-size // tile), add, jnp.zeros((count, count)))
 
 
@@ -443,12 +430,6 @@ def _get_forms(step: _Step, coefficients: FloatArray, parity: jax.Array) -> Floa
         return np.asarray(_forms(step.blocks, padded, parity))[:k]
     gram = np.asarray(_gram(step.blocks, parity))[:rows, :rows]
     return np.einsum("ki,ij,kj->k", coefficients, gram, coefficients)
-
-
-_REORTHOGONALIZE = 0.7
-"""The fraction of |w| left after Gram-Schmidt below which it is done a second time (Daniel, Gragg, Kaufman and Stewart 1976)."""
-_INVARIANT = 1e-13
-"""The norm of the next Krylov vector, relative to the projected operator, below which the Krylov space is invariant."""
 
 
 def _augmented(step: _Step, extra: int) -> FloatArray:
