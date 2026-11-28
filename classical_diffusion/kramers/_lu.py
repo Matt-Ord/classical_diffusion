@@ -2,9 +2,11 @@
 """Sparse LU factors as jax values: `factorize` a matrix once, then `SparseFactor.solve` inside jitted loops.
 
 The factor is KLU's (SuiteSparse), held by sparsax through the XLA FFI,
-which runs on the CPU only. A GPU needs another backend behind the same two
-calls, a factor whose solve traces into jax (spineax, over cuDSS); nothing
-that calls them changes. UMFPACK, the other LU of sparsax, made the shift-
+which runs on the CPU only, so everything that holds a factor runs on the
+CPU (`on_cpu`), whatever the default device: with a GPU as the default
+the 1D solvers stay on the CPU, where their problems (10^3-10^5 unknowns,
+under a second) belong. A GPU would need another backend behind the same
+two calls, a factor whose solve traces into jax (spineax, over cuDSS). UMFPACK, the other LU of sparsax, made the shift-
 invert Arnoldi method of hydrogen on Cu(111) at 0.1 times its friction
 6-15 % faster, but D 1.8 times slower, at up to 1.6 times the memory, and it
 ran out of its 32 bit workspace on the bordered matrix of D of lithium on
@@ -13,11 +15,26 @@ Cu(111) at 3e9 / s, where KLU took 1.8 GB and 17 s (SuperLU 2.0 GB, 18 s).
 
 import functools
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import jax
 import numpy as np
 import scipy.sparse
 import sparsax
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+
+def on_cpu[**P, R](function: Callable[P, R]) -> Callable[P, R]:
+    """Run a function, and every jax array it makes, on the CPU, where the factors of sparsax live."""
+
+    @functools.wraps(function)
+    def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
+        with jax.default_device(jax.devices("cpu")[0]):
+            return function(*args, **kwargs)
+
+    return wrapped
 
 
 def get_padded_size(size: int) -> int:
@@ -56,6 +73,7 @@ def _factorize(
     return sparsax.lu_factor(rows, cols, values, size)
 
 
+@on_cpu
 def factorize(matrix: scipy.sparse.sparray) -> SparseFactor:
     """Factor a square sparse matrix, padded by the identity to its padded size.
 
@@ -87,6 +105,7 @@ def _solve(factor: SparseFactor, b: jax.Array) -> jax.Array:
     return factor.solve(b)
 
 
+@on_cpu
 def solve(matrix: scipy.sparse.sparray, b: np.ndarray) -> np.ndarray:
     """Get A^{-1} b, by one factor (`factorize`)."""
     factor = factorize(matrix)

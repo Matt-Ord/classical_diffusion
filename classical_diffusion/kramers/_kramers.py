@@ -25,7 +25,7 @@ from classical_diffusion.kramers._krylov import (
     get_modal_sum,
     get_slow_pairs,
 )
-from classical_diffusion.kramers._lu import SparseFactor, factorize, solve
+from classical_diffusion.kramers._lu import SparseFactor, factorize, on_cpu, solve
 from classical_diffusion.kramers._model import (
     Model,
     build_model,
@@ -230,6 +230,7 @@ def _converge_basis[R](  # ruff:ignore[too-many-arguments]
     raise RuntimeError(msg)
 
 
+@on_cpu
 def _get_modes(
     problem: _Problem,
     start: FloatArray,
