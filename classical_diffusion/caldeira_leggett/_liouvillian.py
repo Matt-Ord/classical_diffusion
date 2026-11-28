@@ -54,11 +54,43 @@ def _symmetric_spectrum_hilbert(omega: FloatArray) -> FloatArray:
     with the cutoff of the bath, but only through a term linear in omega,
     whose contribution summed over the pair e^{+-i q x} is a constant.
     """
-    return (
-        omega
-        / (2 * np.pi)
-        * np.real(scipy.special.digamma(1 + 1j * omega / (2 * np.pi)))
-    )
+    return omega / (2 * np.pi) * _real_digamma(omega / (2 * np.pi))
+
+
+_SHIFT = 8
+"""The steps of the recurrence psi(z + 1) = psi(z) + 1 / z which take 1 + i y to a z where the asymptotic series of psi is exact to round off (`_real_digamma`)."""
+_ASYMPTOTIC = (
+    -1 / 12,
+    1 / 120,
+    -1 / 252,
+    1 / 240,
+    -1 / 132,
+    691 / 32760,
+    -1 / 12,
+)
+"""The coefficients -B_2k / 2k of z^{-2k} in the asymptotic series of psi(z) - ln z + 1 / 2z."""
+
+
+def _real_digamma(y: FloatArray) -> FloatArray:
+    """Get Re psi(1 + i y), which is even in y.
+
+    By the recurrence, Re psi(1 + i y) = Re psi(z) - sum_{k=1}^N k / (k^2 + y^2)
+    with z = N + 1 + i y, and with |z| > 9 the asymptotic series of psi(z) to
+    z^{-14} is exact to round off (within 1e-15 of scipy.special.digamma).
+    Complex digamma took 77% of the time of the operators and their twist
+    derivative for Li on Cu(111) in 2D, at 2.5 us an element; this is ~50
+    times faster.
+    """
+    y = np.asarray(y, dtype=float)
+    y2 = y * y
+    recurrence = sum(k / (k * k + y2) for k in range(1, _SHIFT + 1))
+    z = (_SHIFT + 1) + 1j * y
+    w = 1 / (z * z)
+    series = np.zeros_like(w)
+    for c in reversed(_ASYMPTOTIC):
+        series = (series + c) * w
+    psi = 0.5 * np.log((_SHIFT + 1) ** 2 + y2) - np.real(0.5 / z) + np.real(series)
+    return psi - recurrence
 
 
 def _lamb_amplitude(omega: FloatArray) -> ComplexArray:
