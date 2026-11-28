@@ -134,6 +134,14 @@ the population at the edge but leaves D, and its error, nearly unchanged:
 for lithium at 100 K over a barrier of 130 meV, D changed by 6e-8 from 21
 to 22 bands where its error was 9e-7 (and 1e-8 at 23 bands).
 """
+_QUIET = 4.0
+"""The factor below config.basis_tol of each of the last two changes of D at which the last basis is accepted even where the convergence is too uneven to bound its error (`_get_basis`).
+
+On the DFT potential of hydrogen on Cu(111) the population at the edge
+falls unevenly (raises add one of a pair of nearly degenerate bands), and D
+changes by about 1e-5 in no clear order, so no three tries show a rate;
+D changed by under 2.5e-5 per raise from 45 k_B T above the saddle.
+"""
 _MAX_TRIES = 20
 
 
@@ -190,6 +198,36 @@ def _project_last(
     return lambda x: overlap @ x @ overlap.conj().swapaxes(-1, -2)
 
 
+def _accept(
+    tries: list[tuple[SteadyState, float]],
+    changes: list[float],
+    config: CaldeiraLeggettConfig,
+) -> SteadyState | None:
+    """Get the smallest try within config.basis_tol by the last three tries (`_get_basis`), or None if they do not show it."""
+    if len(changes) != 2:  # ruff:ignore[magic-value-comparison]
+        return None
+    first, second = changes
+    edges = [edge for _, edge in tries[-3:]]
+    if (
+        second <= _RATE * first
+        and edges[0] >= _CONTRACTION * edges[1] >= _CONTRACTION**2 * edges[2]
+        and second * edges[0] >= first * edges[1] / _DRIFT
+    ):
+        # The error of the middle D, and of each try before it by its
+        # distance to the middle D
+        last, middle = tries[-1][0].diffusion, tries[-2][0].diffusion
+        bound = second / (1 - _RATE)
+        for state, _ in tries[:-1]:
+            error = bound + abs(state.diffusion - middle) / abs(last)
+            if error <= config.basis_tol:
+                return dataclasses.replace(state, error=error)
+    if max(changes) <= config.basis_tol / _QUIET:
+        # Too uneven to bound: the error is taken to be the sum of the last
+        # two changes
+        return dataclasses.replace(tries[-1][0], error=first + second)
+    return None
+
+
 def _get_basis(  # ruff:ignore[too-many-locals]
     system: PeriodicSystem,
     config: CaldeiraLeggettConfig,
@@ -211,6 +249,9 @@ def _get_basis(  # ruff:ignore[too-many-locals]
     100 K), so the error of the middle D is at most c_2 / (1 - _RATE), and
     that of each try before it at most that plus its distance to the middle
     D. The smallest basis within the tolerance is returned with its error.
+    Where the convergence is too uneven for that, the last basis is
+    returned once each of the last two changes is below config.basis_tol /
+    _QUIET, with the sum of the two as its error (an estimate, not a bound).
     Each raise lowers the population at the edge by _STEP, or by as much as
     the change of D per unit of population at the edge says the next basis
     needs to be within a quarter of the tolerance. The plane waves are
@@ -268,22 +309,9 @@ def _get_basis(  # ruff:ignore[too-many-locals]
             for (a, _), (b, _) in itertools.pairwise(tries[-3:])
         ]
         target = _STEP
-        if len(changes) == 2:  # ruff:ignore[magic-value-comparison]
-            first, second = changes
-            edges = [edge for _, edge in tries[-3:]]
-            if (
-                second <= _RATE * first
-                and edges[0] >= _CONTRACTION * edges[1] >= _CONTRACTION**2 * edges[2]
-                and second * edges[0] >= first * edges[1] / _DRIFT
-            ):
-                # The error of the middle D, and of each try before it by its
-                # distance to the middle D
-                middle = tries[-2][0].diffusion
-                bound = second / (1 - _RATE)
-                for state, _ in tries[:-1]:
-                    error = bound + abs(state.diffusion - middle) / abs(diffusion)
-                    if error <= config.basis_tol:
-                        return dataclasses.replace(state, error=error)
+        accepted = _accept(tries, changes, config)
+        if accepted is not None:
+            return accepted
         if changes:
             # The error of this D, if it is the change per unit of edge
             error = changes[-1] * tries[-1][1] / max(tries[-2][1], 1e-300)
