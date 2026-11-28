@@ -46,8 +46,6 @@ from classical_diffusion.kramers._stepping import (
     propagate_state,
     solve_by_propagation,
 )
-from classical_diffusion.kramers._zero_friction import build as build_orbits
-from classical_diffusion.kramers._zero_friction import series_from_model
 from classical_diffusion.simulation import IsfResult
 from classical_diffusion.util import timed
 
@@ -326,99 +324,39 @@ def _get_isf(
     if not _is_stepped(model):
         return _get_isf_modes(model, delta_k, times, config).values(times).real
 
-    basis = get_initial_stepped_basis(model, delta_k, config)
-    for _ in range(_MAX_STEPPED_ROUNDS):
+    _, values = _converge_stepped(model, delta_k, times, config)
+    return values
+
+
+def _converge_stepped(
+    model: Model, delta_k: FloatArray, times: FloatArray, config: KramersConfig
+) -> tuple[Basis, FloatArray]:
+    """Get the ISF at the times by time steps (`propagate_form`) in a basis grown until it changes by less than config.tol (`_converge_basis`), with that basis.
+
+    The basis is checked on the ISF itself, as in 1D, with no model of the
+    error of the cut: each round computes the ISF in the basis grown along
+    each direction too.
+    """
+
+    def compute(basis: Basis) -> FloatArray:
         problem = _build_stepped_problem(model, basis, delta_k)
-        tails = _Tails(problem, basis, model)
         result = propagate_form(
             problem.operator,
             problem.start(),
             problem.parity,
             times,
             tol=1e-2 * config.tol,
-            monitor=tails.update,
         )
-        grow_order, grow_radius = tails.excess(config.tol)
-        if grow_order == grow_radius == 1:
-            return result.values / problem.norm
-        basis = Basis(
-            max_order=int(np.ceil(basis.max_order * grow_order)),
-            radius=basis.radius * grow_radius,
-        )
-    msg = "The basis did not converge"
-    raise RuntimeError(msg)
+        return result.values / problem.norm
 
-
-_MAX_STEPPED_ROUNDS = 12
-_TAIL_RATIOS = {1: (3.0, 2.0), 2: (100.0, 20.0)}
-"""The Hermite tail and the square of the plane wave tail, over the tolerance, below which the basis is kept, by dimension (`_Tails`)."""
-_FAR = 100.0
-_GROW_FAR = 1.6
-
-
-class _Tails:
-    """The largest share of the state, over the steps, in the outermost Hermite shells and plane waves.
-
-    The amplitude in the top eighth of the Hermite orders (at least two) and
-    in the plane waves beyond 0.85 of the radius estimate the error of
-    cutting the basis there, from a single run. For hydrogen, lithium and
-    xenon on Cu(111) and Pt(111) in 1D, at 0.1 to 10 times their friction,
-    the error of the ISF was below 0.2 times the Hermite tail and 0.3 times
-    the square of the plane wave tail, so the basis is kept when these are
-    below 3 and 2 times the tolerance, beyond what the start state holds in
-    the top shells. In 2D (lithium on Cu(111) at 10 times its friction, to
-    order 24 and radius 11) the error was below 3e-3 times the Hermite tail
-    and 0.03 times the square of the plane wave tail, so there the limits
-    are 100 and 20 times the tolerance (`_TAIL_RATIOS`).
-    """
-
-    def __init__(self, problem: _SteppedProblem, basis: Basis, model: Model) -> None:
-        order = problem.operator.indices.sum(axis=1)
-        top = int(order.max())
-        self._top = order >= top - max(2, top // 8)
-        vectors = get_plane_waves_within(model, basis.radius)
-        lengths = np.linalg.norm(vectors @ model.reciprocal, axis=-1)
-        self._outer = lengths >= 0.85 * basis.radius
-        self._shape = problem.operator.shape
-        self._hermite_ratio, self._plane_wave_ratio = _TAIL_RATIOS[min(model.n_dim, 2)]
-        self.hermite = 0.0
-        self.plane_wave = 0.0
-        # The equilibrium itself reaches the top shells: the narrowed Hermite
-        # functions hold the Maxwellian only to its value at their reach,
-        # e^{-reach^2 / 4}, whatever their order. Only what the dynamics
-        # adds to that is an error of the cut
-        self.update(problem.start())
-        self._hermite_floor = self.hermite
-        self.hermite = 0.0
-
-    def excess(self, tol: float) -> tuple[float, float]:
-        """Get the factors by which to grow the Hermite order and plane wave radius: 1 where the tail is within tolerance, 1.3 near it, and 1.6 more than 100 times beyond it.
-
-        The tails fall at least exponentially with the order and radius once
-        they resolve the state, so far beyond the tolerance a larger step
-        saves runs of the time steps.
-        """
-
-        def factor(tail: float, allowed: float) -> float:
-            if tail < allowed:
-                return 1.0
-            return _GROW if tail < _FAR * allowed else _GROW_FAR
-
-        return (
-            factor(self.hermite, self._hermite_ratio * tol + 2 * self._hermite_floor),
-            factor(self.plane_wave**2, self._plane_wave_ratio * tol),
-        )
-
-    def update(self, state: FloatArray) -> None:
-        # A doubled state (`MatrixFreeOperator.doubled`) is two of the shape
-        squares = np.sum(state.reshape(-1, *self._shape) ** 2, axis=0)
-        total = float(np.sum(squares))
-        if total == 0:
-            return
-        self.hermite = max(self.hermite, np.sqrt(np.sum(squares[self._top]) / total))
-        self.plane_wave = max(
-            self.plane_wave, np.sqrt(np.sum(squares[:, self._outer]) / total)
-        )
+    basis, values, _ = _converge_basis(
+        model,
+        get_initial_stepped_basis(model, delta_k, config),
+        compute,
+        lambda a, b: float(np.max(np.abs(a - b), initial=0.0)),
+        config.tol,
+    )
+    return basis, values
 
 
 def get_initial_stepped_basis(
@@ -426,8 +364,8 @@ def get_initial_stepped_basis(
 ) -> Basis:
     """Get a first guess of the basis for time steps: the Hermite order of `get_initial_basis`, and the plane waves which hold e^{-V / 2} to config.tol, and |K| more.
 
-    Each run of the time steps checks its own basis (`_Tails`), so the
-    guess starts small and grows only where it must.
+    The basis is checked on the result (`_converge_stepped`), so the guess
+    starts small and grows only where it must.
     """
     vectors = get_plane_waves(model, config.tol)
     radius = float(np.max(np.linalg.norm(vectors @ model.reciprocal, axis=-1)))
@@ -437,19 +375,20 @@ def get_initial_stepped_basis(
     )
 
 
-def _check_zero_friction(model: Model) -> None:
-    """Raise unless the zero friction (Hamiltonian) solver applies: in 1D only.
+def _check_friction(model: Model) -> None:
+    """Raise unless the friction is positive.
+
+    At zero friction the Kramers operator has no dissipation, the basis
+    grows without bound, and in 2D the Hamiltonian flow is chaotic, so no
+    deterministic method in a fixed basis reaches the tolerance.
 
     Raises
     ------
     ValueError
-        If the system is not 1D.
+        If the friction is not positive.
     """
-    if model.n_dim != 1:
-        msg = (
-            "At zero friction only 1D systems are solved: in 2D the Hamiltonian"
-            " flow is chaotic, and no deterministic method reaches the tolerance"
-        )
+    if not model.friction > 0:
+        msg = f"The friction must be positive, not {model.friction}"
         raise ValueError(msg)
 
 
@@ -474,10 +413,6 @@ def solve_isf(
     Beyond 1D, the LU fills in, and the state is stepped in time instead
     (`propagate_form`).
 
-    At zero friction the dynamics is Hamiltonian, and in 1D the ISF is a sum
-    over orbits, found exactly in their action-angle variables at any time
-    (`build_orbits`).
-
     Parameters
     ----------
     system
@@ -495,20 +430,14 @@ def solve_isf(
     ------
     ValueError
         If the times are not a one dimensional array of finite numbers, or
-        at zero friction beyond 1D.
+        the friction is not positive.
     """  # ruff:ignore[docstring-extraneous-exception]
     folded = fold_times(times)
     model = build_model(system)
     natural = system.units.time_into(folded.magnitudes, model.units)
     scaled = scaled_delta_k(system, model, delta_k)
-    if model.friction == 0:
-        _check_zero_friction(model)
-        orbits = build_orbits(
-            series_from_model(model), float(scaled[0]), tol=config.tol
-        )
-        isf = np.real(orbits.isf(natural, tol=config.tol))
-    else:
-        isf = _get_isf(model, scaled, natural, config)
+    _check_friction(model)
+    isf = _get_isf(model, scaled, natural, config)
     return IsfResult(
         times=folded.times,
         isf=folded.hermitian(isf),
@@ -549,14 +478,11 @@ def get_slow_modes(
     Raises
     ------
     ValueError
-        If n_modes is negative, or at zero friction, where the ISF does not
-        decay.
-    """
+        If n_modes is negative, or the friction is not positive.
+    """  # ruff:ignore[docstring-extraneous-exception]
     model = build_model(system)
+    _check_friction(model)
     selection = get_selection(n_modes, model.friction)
-    if model.friction == 0:
-        msg = "At zero friction the ISF does not decay, and has no slow modes"
-        raise ValueError(msg)
     scaled = scaled_delta_k(system, model, delta_k)
     window = 20 / model.friction
     if _is_stepped(model):
@@ -600,29 +526,15 @@ def _get_stepped_slow_modes(
     ------
     RuntimeError
         If the basis does not converge.
-    """
-    basis = get_initial_stepped_basis(model, delta_k, config)
-    for _ in range(_MAX_STEPPED_ROUNDS):
-        problem = _build_stepped_problem(model, basis, delta_k)
-        tails = _Tails(problem, basis, model)
-        start = problem.start()
-        state, _, _ = propagate_state(
-            problem.operator,
-            start,
-            4 / model.friction,
-            tol=1e-2 * config.tol,
-            monitor=tails.update,
-        )
-        grow_order, grow_radius = tails.excess(config.tol)
-        if grow_order == grow_radius == 1:
-            break
-        basis = Basis(
-            max_order=int(np.ceil(basis.max_order * grow_order)),
-            radius=basis.radius * grow_radius,
-        )
-    else:
-        msg = "The basis did not converge"
-        raise RuntimeError(msg)
+    """  # ruff:ignore[docstring-extraneous-exception]
+    # The basis which converges the ISF over the steps past the fast modes
+    window = 4 / model.friction
+    basis, _ = _converge_stepped(model, delta_k, np.linspace(0, window, 9), config)
+    problem = _build_stepped_problem(model, basis, delta_k)
+    start = problem.start()
+    state, _, _ = propagate_state(
+        problem.operator, start, window, tol=1e-2 * config.tol
+    )
     duration = 1 / model.friction
     values, vectors = get_slow_pairs(
         problem.operator.apply,
@@ -741,10 +653,7 @@ def get_diffusion_constant(
         The diffusion constant, in the units of the system.
     """
     model = build_model(system)
-    if model.friction == 0:
-        _check_zero_friction(model)
-        # Running orbits move ballistically forever
-        return float("inf")
+    _check_friction(model)
     unit = get_unit_direction(model.n_dim, direction)
     _, diffusion, _ = _converge_basis(
         model,
@@ -790,7 +699,7 @@ def solve_rms(
     ------
     ValueError
         If the times are not a one dimensional array of finite numbers, or
-        at zero friction beyond 1D.
+        the friction is not positive.
     """  # ruff:ignore[docstring-extraneous-exception]
     folded = fold_times(times)
     model = build_model(system)
@@ -805,15 +714,7 @@ def solve_rms(
             direction=tuple(unit),
             units=system.units,
         )
-    if model.friction == 0:
-        _check_zero_friction(model)
-        orbits = build_orbits(series_from_model(model), 0.0, tol=config.tol)
-        return RmsResult(
-            times=folded.times,
-            mean_square=folded.even(orbits.msd(natural, tol=config.tol)) * length**2,
-            direction=tuple(unit),
-            units=system.units,
-        )
+    _check_friction(model)
 
     def change(a: FloatArray, b: FloatArray) -> float:
         # Relative to the mean square displacement itself, which starts as

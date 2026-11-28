@@ -1,4 +1,4 @@
-"""The classical ISF of lithium on Cu(111) in 1D, from the Kramers equation, from zero friction to the overdamped limit."""
+"""The classical ISF of lithium on Cu(111) in 1D, from the Kramers equation, from low friction to the overdamped limit."""
 
 import numpy as np
 
@@ -32,14 +32,13 @@ def main() -> None:
     times = np.linspace(0, 20e-12, 401)
 
     fig, ax = get_fancy_figure()
-    for factor in (0.0, 0.1, 1.0, 10.0):
+    for factor in (0.1, 1.0, 10.0):
         frictional = _with_friction(system, factor * system.gamma)
         result = solve_isf(frictional, delta_k, times)
         (line,) = ax.plot(times * 1e12, result.isf.real)
         line.set_label(rf"Kramers, $\gamma = {factor:g}\,\gamma_0$")
-        if factor > 0:
-            diffusion = get_diffusion_constant(frictional)
-            print(f"gamma = {factor:g} gamma_0: D = {diffusion:.6e} m^2/s")
+        diffusion = get_diffusion_constant(frictional)
+        print(f"gamma = {factor:g} gamma_0: D = {diffusion:.6e} m^2/s")
     overdamped = _with_friction(system, 10 * system.gamma)
     result = solve_isf_overdamped(overdamped, delta_k, times)
     (line,) = ax.plot(times * 1e12, result.isf.real, linestyle="--")

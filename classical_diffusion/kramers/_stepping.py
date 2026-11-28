@@ -582,11 +582,8 @@ def propagate_form(  # ruff:ignore[too-many-arguments]
     *,
     tol: float,
     m: int = 30,
-    monitor: Callable[[FloatArray], None] | None = None,
 ) -> Propagation:
     """Get u^T J e^{L t} u at the times, stepping only to t / 2.
-
-    `monitor` sees the state at the start of every step.
 
     L is J-symmetric, L^T = J L J, so e^{L t} = e^{L t / 2} J e^{L^T t / 2} J
     and u^T J e^{L t} u = u(t / 2)^T J u(t / 2), with u(s) = e^{L s} u: the
@@ -606,8 +603,6 @@ def propagate_form(  # ruff:ignore[too-many-arguments]
     ):
         count += step.hessenberg.shape[1]
         rows = step.hessenberg.shape[0]
-        if monitor is not None:
-            monitor(np.asarray(step.start))
         end = int(np.searchsorted(half, t + length * (1 + 1e-12), side="right"))
         coefficients = np.array(
             [
@@ -622,27 +617,21 @@ def propagate_form(  # ruff:ignore[too-many-arguments]
 
 
 @_x64
-def propagate_state(  # ruff:ignore[too-many-arguments]
+def propagate_state(
     operator: MatrixFreeOperator,
     start: FloatArray,
     duration: float,
     *,
     tol: float,
     m: int = 30,
-    monitor: Callable[[FloatArray], None] | None = None,
 ) -> tuple[FloatArray, FloatArray, int]:
-    """Get e^{L tau} u and int_0^tau e^{L t} u dt, with the number of applications of L.
-
-    `monitor` sees the state at the start of every step.
-    """
+    """Get e^{L tau} u and int_0^tau e^{L t} u dt, with the number of applications of L."""
     integral = jnp.zeros(start.shape)
     state = jnp.asarray(start)
     count = 0
     for _, _, step, _, states in _steps(
         operator, start, duration, tol=tol, m=m, extra=1
     ):
-        if monitor is not None:
-            monitor(np.asarray(step.start))
         count += step.hessenberg.shape[1]
         state = states[0]
         integral += states[1]
