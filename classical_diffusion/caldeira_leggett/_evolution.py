@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 import jax
 import jax.numpy as jnp
 import numpy as np
+import scipy.sparse
+import scipy.sparse.linalg
 
 from classical_diffusion.caldeira_leggett._linear import (
     EigenLiouvillian,
@@ -60,18 +62,15 @@ fill more: underdamped hydrogen (gamma = 0.01 / ps, 150 K, 360 states) over
 300 K with gamma = 0.05 / ps (1,800 states) 3,500 at 0.3 |G|, and at most
 0.7 per state for hydrogen at 100 and 1000 times its mass and xenon.
 """
-_BREAKDOWN = 100 * np.finfo(float).eps
-"""The cosine |<w, v>| / (|w| |v|) of the next pair of Lanczos vectors below which <w, v> is round off, and the recurrence has broken down.
-
-Small cosines are common for these non-normal Liouvillians and mostly
-harmless: over the benchmark (H, Li and Na on Cu(111) in 1D and 2D) and
-underdamped hydrogen, the smallest before convergence was 3.8e-9 (median
-per case 3e-7 to 4e-5); at 3 |G| for hydrogen in 1D they fall to 1e-13
-and the ISF is still within 8e-7 of the reference, but a threshold of
-1e-12 stopped it. The error tests decide whether the recurrence has
-converged. An exact breakdown (a measurement orthogonal to X_0, F(0) = 0)
-is cured by splitting the measurement (`get_reduced_evolution`).
-"""
+# There is no test for a near breakdown (a small cosine |<w, v>| / (|w| |v|)
+# of the next pair of Lanczos vectors): small cosines are common for these
+# non-normal Liouvillians and harmless (3.8e-9 to 4e-5 over the benchmark,
+# 1e-13 at 3 |G| for H in 1D with the ISF within 8e-7). A threshold of
+# 100 eps stopped a free particle at 0.2 ps^-1 after 19 steps, where the
+# recurrence carried on reaches an invariant space whose ISF (`_get_exact_values`)
+# matches a dense exp(L t) to 5e-16. The error tests decide convergence.
+# The one exact breakdown, a measurement orthogonal to X_0 (F(0) = 0), is
+# cured by splitting the measurement (`get_reduced_evolution`).
 _EPS = float(np.finfo(float).eps)
 _INVARIANT = 1e-13
 """The norm of the next Lanczos vector, relative to the tridiagonal, below which the Krylov space is invariant and T_m exact."""
@@ -99,7 +98,7 @@ coefficients) with an error of up to 1.4 stop (sodium in 1D at 0.3 |G|,
 1e-8); with two, of up to 0.35 stop, for one block more.
 """
 _SPLIT_SEED = 2026
-"""The seed of the vector that splits a measurement on a breakdown."""
+"""The seed of the vector that splits a measurement orthogonal to the start."""
 
 
 def _trace(x: jax.Array) -> jax.Array:
@@ -187,7 +186,7 @@ def _warn(what: str, reached: float, tolerance: float) -> None:
 
 
 class _BreakdownError(Exception):
-    """A serious breakdown of the two-sided Lanczos recurrence: <w, v> = 0 for nonzero v and w."""
+    """An exact breakdown of the two-sided Lanczos recurrence at its start: a measurement orthogonal to the start, F(0) = 0."""
 
 
 def _operators(
@@ -228,8 +227,6 @@ class _Recurrence:
     steps: jax.Array
     invariant: jax.Array
     """Whether the Krylov space is invariant, so that T_m is exact."""
-    broken: jax.Array
-    """Whether the recurrence has broken down: the next <w, v> is round off."""
     roundoff: jax.Array
     """The relative error of the coefficients from round off: the sum over the steps of eps times the cancellation in <w_hat, v_hat> (`_take`)."""
 
@@ -248,13 +245,12 @@ class _Recurrence:
             coupling=jnp.zeros(capacity, complex),
             steps=jnp.zeros((), int),
             invariant=_FALSE,
-            broken=_FALSE,
             roundoff=jnp.zeros(()),
         )
 
     @property
     def stopped(self) -> jax.Array:
-        return self.invariant | self.broken
+        return self.invariant
 
 
 def _steps(
@@ -366,7 +362,7 @@ def _take(  # ruff:ignore[too-many-arguments]
     preconditioned: bool,
     span: jax.Array | None = None,
 ) -> _Recurrence:
-    """Take steps more, or fewer if the space becomes invariant or the recurrence breaks down, keeping the steps before (and the diagonal of that step).
+    """Take steps more, or fewer if the space becomes invariant, keeping the steps before (and the diagonal of that step).
 
     norm is the scale of A: the largest rate of its no-jump part, or 1
     preconditioned. With a span, the space is also invariant once T_m is
@@ -383,8 +379,7 @@ def _take(  # ruff:ignore[too-many-arguments]
     )
     if span is not None:
         invariant |= _get_exact(recurrence, alpha, beta * delta, span)
-    broken = ~invariant & (jnp.abs(beta) / jnp.abs(w_hat) < _BREAKDOWN)
-    stop = invariant | broken
+    stop = invariant
     first = jnp.where(stop.any(), jnp.argmax(stop), steps)
     kept = jnp.arange(steps) < first
     # <w_hat, v_hat> = beta delta is a sum of terms up to magnitude, so has a
@@ -401,7 +396,6 @@ def _take(  # ruff:ignore[too-many-arguments]
         ),
         steps=m + jnp.where(stop.any(), first + 1, steps),
         invariant=stop.any() & invariant[jnp.minimum(first, steps - 1)],
-        broken=stop.any() & broken[jnp.minimum(first, steps - 1)],
         roundoff=recurrence.roundoff + roundoff.sum(),
     )
 
@@ -416,7 +410,7 @@ def _transfer_loop(  # ruff:ignore[too-many-arguments]
     *,
     max_steps: int,
 ) -> tuple[jax.Array, ...]:
-    """Run the recurrence of `get_transfer` on the device until its value agrees over _AGREEMENTS blocks, the space is invariant, it breaks down, or max_steps; get the scale, steps, whether it is invariant, broken or agreed, the value and the tolerance reached."""
+    """Run the recurrence of `get_transfer` on the device until its value agrees over _AGREEMENTS blocks, the space is invariant, or max_steps; get the scale, steps, whether it is invariant or agreed, the value and the tolerance reached."""
     measurement /= (eigen.rates - shift).conj()
     scale = jnp.vdot(measurement, start)
 
@@ -473,7 +467,6 @@ def _transfer_loop(  # ruff:ignore[too-many-arguments]
         scale,
         recurrence.steps,
         recurrence.invariant,
-        recurrence.broken,
         agreed >= _AGREEMENTS,
         value,
         progress.reached,
@@ -504,17 +497,17 @@ def get_transfer(
     Raises
     ------
     _BreakdownError
-        On a serious breakdown of the recurrence.
+        If the measurement is orthogonal to the start.
     RuntimeError
         If it does not converge in the most steps (`_get_max_steps`).
     """
     max_steps = _get_max_steps(start)
-    scale, steps, invariant, broken, agreed, value, reached = jax.device_get(
+    scale, steps, invariant, agreed, value, reached = jax.device_get(
         _transfer_loop(
             eigen, start, measurement, complex(s), float(tolerance), max_steps=max_steps
         )
     )
-    if scale == 0 or broken:
+    if scale == 0:
         raise _BreakdownError
     if not (invariant or agreed):
         msg = f"The transfer function did not converge in {max_steps} Lanczos steps"
@@ -594,7 +587,7 @@ def _advance(  # ruff:ignore[too-many-arguments]
     *,
     max_steps: int,
 ) -> tuple[_Recurrence, _Screen, _Progress, jax.Array]:
-    """Take blocks of the evolution's recurrence on the device until an evaluation is due: the transforms of F_m agree with the last block and at 1 / span with the transfer function, and the steps are at least screen.due; or until the space is invariant, the recurrence breaks down, or max_steps. Also get whether an evaluation is due."""
+    """Take blocks of the evolution's recurrence on the device until an evaluation is due: the transforms of F_m agree with the last block and at 1 / span with the transfer function, and the steps are at least screen.due; or until the space is invariant, or max_steps. Also get whether an evaluation is due."""
     scale, norm, decades, frequencies, reference = constants
 
     def proceed(state: tuple) -> jax.Array:
@@ -769,7 +762,7 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
     Raises
     ------
     _BreakdownError
-        On a serious breakdown of either recurrence before any evaluation.
+        If the measurement is orthogonal to the start (F(0) = 0).
     RuntimeError
         If either does not converge in the most steps (`_get_max_steps`).
     """
@@ -825,10 +818,19 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
             msg = f"The evolution did not converge in {max_steps} Lanczos steps"
             raise RuntimeError(msg)
         steps = int(steps)
+        if stopped:
+            # The space is invariant: T_m is exact, and F_m is F
+            exact = _get_exact_values(
+                recurrence.alpha, recurrence.coupling, steps, times
+            )
+            return Evolution(
+                values=plateau + first * exact,
+                applications={"lanczos": 2 * steps, "transfer": transfer_applications},
+            )
         rates, weights = get_poles(recurrence.alpha, recurrence.coupling, steps)
         residues = scale * weights
         chunk = max(1, min(len(times), 2**22 // len(rates)))
-        values, progress, agreed, done, error = _judge(
+        values, progress, agreed, done, _error = _judge(
             (rates, residues),
             jnp.asarray(np.concatenate([times, np.zeros(-len(times) % chunk)])),
             last,
@@ -853,14 +855,7 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
                 steps + max(_BLOCK, steps // _SPREAD // _BLOCK * _BLOCK), int
             ),
         )
-        done, broken = jax.device_get((done, recurrence.broken))
-        if done:
-            if broken:
-                warnings.warn(
-                    f"The two-sided Lanczos recurrence broke down after {steps}"
-                    f" steps, where F_m agreed with its transform to {float(error):.1e}",
-                    stacklevel=3,
-                )
+        if jax.device_get(done):
             _warn("The evolution", float(_get_reached(progress)), tolerance)
             return Evolution(
                 values=plateau + np.asarray(values[: len(times)]),
@@ -869,8 +864,6 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
                     "transfer": transfer_applications,
                 },
             )
-        if stopped:
-            raise _BreakdownError
         if steps >= max_steps:
             msg = f"The evolution did not converge in {max_steps} Lanczos steps"
             raise RuntimeError(msg)
@@ -895,6 +888,31 @@ def _prepare(
         steady,
         jnp.vdot(measurement, start + steady),
         jnp.linalg.norm(measurement) * jnp.linalg.norm(start + steady),
+    )
+
+
+def _get_exact_values(
+    alpha: jax.Array, coupling: jax.Array, steps: int, times: FloatArray
+) -> ComplexArray:
+    """Get F_m(t) / F(0) = e_1^T exp(T_m t) e_1 at the times, from T_m itself rather than its poles.
+
+    Once the space is invariant T_m is exact, but its poles can still be ill
+    conditioned: for a free particle at 0.2 ps^-1 their weights were so
+    large against F(0) that their sum failed its check against the
+    continued fraction, and the evolution raised. exp(T_m t) e_1 of the
+    symmetric form of the tridiagonal (similar to T_m by a diagonal matrix
+    whose first entry is one), by the scaled Taylor method of Al-Mohy and
+    Higham, needs no eigenvectors. It costs O(m |T_m| t) at each time.
+    """
+    a = np.asarray(alpha)[:steps].astype(complex)
+    off = np.sqrt(np.asarray(coupling)[: steps - 1].astype(complex))
+    tridiagonal = scipy.sparse.diags_array(
+        [off, a, off], offsets=[-1, 0, 1], format="csr"
+    )
+    first = np.zeros(steps, complex)
+    first[0] = 1
+    return np.array(
+        [scipy.sparse.linalg.expm_multiply(t * tridiagonal, first)[0] for t in times]
     )
 
 
@@ -967,15 +985,15 @@ def get_reduced_evolution(  # ruff:ignore[too-many-arguments]
     transfer function of c rho is found too, so that an error of the steady
     state counts in the comparison with the transform of F_m.
 
-    A serious breakdown of the recurrence (<w, v> = 0, as when F(0) = 0)
-    belongs to the pair (X_0, g), and is cured by splitting the
-    measurement, g = (g + h) - h for a fixed random h.
+    A measurement orthogonal to X_0 (F(0) = 0) breaks the recurrence down
+    at its start, and is cured by splitting the measurement,
+    g = (g + h) - h for a fixed random h.
 
     Raises
     ------
     RuntimeError
-        If the split recurrences also break down, or a recurrence does not
-        converge in the most steps (`_get_max_steps`).
+        If a split measurement is orthogonal to the start too, or a
+        recurrence does not converge in the most steps (`_get_max_steps`).
     """
     times = np.asarray(times, dtype=np.float64)
     start, measurement, steady, first, size = _prepare(
@@ -1005,9 +1023,7 @@ def get_reduced_evolution(  # ruff:ignore[too-many-arguments]
         )
         alone = _evolve(eigen, start, split, times, tolerance / 2, config.stop, steady)
     except _BreakdownError as error:
-        msg = (
-            "The two-sided Lanczos recurrence broke down, also with a split measurement"
-        )
+        msg = "The measurement is orthogonal to the start, also when split"
         raise RuntimeError(msg) from error
     return Evolution(
         values=both.values - alone.values,
