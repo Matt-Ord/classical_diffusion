@@ -161,7 +161,7 @@ def _build_operators(
     jumps = coupling * bath
     m = _dagger(coupling) @ (coupling * lamb_amplitude)
     lamb = np.sum(m + _dagger(m), axis=0)
-    gamma = np.einsum("jkab,jkac->kbc", jumps.conj(), jumps)
+    gamma = np.sum(_dagger(jumps) @ jumps, axis=0)
     hamiltonian = _diagonal(energies) + lamb - 0.5j * gamma
     return Operators(jumps=jumps, targets=couplings.targets, hamiltonian=hamiltonian)
 
@@ -274,7 +274,7 @@ def get_twist_derivative(
     m = _dagger(couplings.matrices) @ _get_perturbed_function(
         _lamb_amplitude, lamb_amplitude, couplings, energies, velocity
     )
-    gamma = np.einsum("jkab,jkac->kbc", jumps.conj(), operators.jumps)
+    gamma = np.sum(_dagger(jumps) @ operators.jumps, axis=0)
     hamiltonian = (
         velocity + np.sum(m + _dagger(m), axis=0) - 0.5j * (gamma + _dagger(gamma))
     )

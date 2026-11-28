@@ -24,6 +24,7 @@ from classical_diffusion.kramers._real import (
     get_hermite_indices,
     get_momentum_reach,
     get_width,
+    is_even,
 )
 
 if TYPE_CHECKING:
@@ -87,6 +88,10 @@ class _Kernel:
         metadata={"static": True}
     )
     """Each shift c of F and its coefficient for each j: constants of the program, which makes it 8% faster than reading them."""
+    coupling: tuple[tuple[tuple[int, ...], tuple[float, ...]], ...] = field(
+        metadata={"static": True}
+    )
+    """For a potential which is not even, the imaginary part B of L = A + i B, which is only of the force: each shift c and its coefficient for each j. The state is then in the doubled real form, (Re x, Im x), and L acts on it as [[A, -B], [B, A]] (`build_real_operator`). Empty for an even potential."""
     box: tuple[int, ...] = field(metadata={"static": True})
     margins: tuple[int, ...] = field(metadata={"static": True})
     blocks: tuple[tuple[tuple[int, int], ...], ...] = field(metadata={"static": True})
@@ -94,9 +99,13 @@ class _Kernel:
 
 
 def _stencil(
-    kernel: _Kernel, padded: jax.Array, block: tuple[tuple[int, int], ...]
+    kernel: _Kernel,
+    padded: jax.Array,
+    block: tuple[tuple[int, int], ...],
+    *,
+    coupling: bool = False,
 ) -> jax.Array:
-    """Get L X on one block of the box, from the padded box."""
+    """Get L X on one block of the box, from the padded box, or B X, the imaginary part of the force alone, if coupling (`_Kernel.coupling`)."""
     n_dim = len(kernel.box) // 2
     first = [f for f, _ in block]
     shape = [e - f for f, e in block]
@@ -120,6 +129,13 @@ def _stencil(
     wavevector = kernel.wavevector[slice(None), *starmap(slice, block[n_dim:])]
     p_offsets, d_offsets, r_offsets = kernel.offsets
     out = jnp.zeros(shape)
+    if coupling:
+        for j in range(n_dim):
+            for o, c in zip(d_offsets, kernel.derivative, strict=True):
+                for shift, coefficient in kernel.coupling:
+                    if coefficient[j]:
+                        out += coefficient[j] * along(c, j) * window(j, o, shift)
+        return out
     for j in range(n_dim):
         for o, c in zip(r_offsets, kernel.friction, strict=True):
             out -= along(c, j) * window(j, o)
@@ -132,26 +148,47 @@ def _stencil(
     return out
 
 
-@jax.jit
-def _apply(kernel: _Kernel, x: jax.Array) -> jax.Array:
+def _pad(kernel: _Kernel, x: jax.Array) -> jax.Array:
     padded = (
         jnp.append(x, 0.0)
         .at[kernel.expand]
         .get(mode="promise_in_bounds")
         .reshape(kernel.box)
     )
-    padded = jnp.pad(
+    return jnp.pad(
         jax.lax.optimization_barrier(padded), [(m, m) for m in kernel.margins]
     )
+
+
+def _read(kernel: _Kernel, padded: jax.Array, *, coupling: bool) -> jax.Array:
     # Each block is a vectorized loop; without the barriers XLA would fuse
     # them into the read back and evaluate the stencil at each position by
     # scattered loads (3x slower)
     out = [
-        jax.lax.optimization_barrier(_stencil(kernel, padded, b)).reshape(-1)
+        jax.lax.optimization_barrier(
+            _stencil(kernel, padded, b, coupling=coupling)
+        ).reshape(-1)
         for b in kernel.blocks
     ]
     out = jnp.concatenate([*out, jnp.zeros(1)])
     return out.at[kernel.positions].get(mode="promise_in_bounds")
+
+
+@jax.jit
+def _apply(kernel: _Kernel, x: jax.Array) -> jax.Array:
+    if not kernel.coupling:
+        return _read(kernel, _pad(kernel, x), coupling=False)
+    # The doubled real form: (A x_r - B x_i, A x_i + B x_r)
+    real, imaginary = jnp.split(x, 2)
+    padded_real, padded_imaginary = _pad(kernel, real), _pad(kernel, imaginary)
+    return jnp.concatenate(
+        [
+            _read(kernel, padded_real, coupling=False)
+            - _read(kernel, padded_imaginary, coupling=True),
+            _read(kernel, padded_imaginary, coupling=False)
+            + _read(kernel, padded_real, coupling=True),
+        ]
+    )
 
 
 def _slabs(points: IntArray, count: int) -> list[tuple[int, int]]:
@@ -195,6 +232,16 @@ class MatrixFreeOperator:
     indices: IntArray
     width: float
 
+    @property
+    def doubled(self) -> bool:
+        """Whether states are in the doubled real form, (Re x, Im x), of a potential which is not even (`_Kernel.coupling`)."""
+        return bool(self.kernel.coupling)
+
+    @property
+    def size(self) -> int:
+        """The number of real unknowns of a state."""
+        return (2 if self.doubled else 1) * self.shape[0] * self.shape[1]
+
     def apply(self, x: FloatArray) -> FloatArray:
         """Apply L to a flat state."""
         with jax.enable_x64(new_val=True):
@@ -218,9 +265,14 @@ def build_matrix_free_operator(  # ruff:ignore[too-many-locals]
         _bands(real_form[1].imag),
         _bands(model.friction * real_form[2].real),
     ]
-    shifts = [
-        (tuple(int(i) for i in c), np.imag(f)) for c, f in get_force_shifts(model)
-    ]
+    # The force term is D_j (i F_j): -Im f in A, and Re f in B (`_Kernel.coupling`)
+    force_shifts = get_force_shifts(model)
+    shifts = [(tuple(int(i) for i in c), np.imag(f)) for c, f in force_shifts]
+    coupling = (
+        []
+        if is_even(model)
+        else [(tuple(int(i) for i in c), np.real(f)) for c, f in force_shifts]
+    )
     low = vectors.min(axis=0)
     hermite_box = (max_order + 1,) * n_dim
     plane_wave_box = tuple(int(b) for b in vectors.max(axis=0) - low + 1)
@@ -275,6 +327,7 @@ def build_matrix_free_operator(  # ruff:ignore[too-many-locals]
             positions=jnp.asarray(positions.ravel().astype(np.int32)),
             offsets=tuple(b[0] for b in bands),
             forces=tuple((c, tuple(float(x) for x in f)) for c, f in shifts),
+            coupling=tuple((c, tuple(float(x) for x in f)) for c, f in coupling),
             box=box,
             margins=(_PAD,) * n_dim + tuple(int(r) for r in reach),
             blocks=tuple(blocks),

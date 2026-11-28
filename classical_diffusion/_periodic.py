@@ -16,8 +16,8 @@ if TYPE_CHECKING:
     from classical_diffusion.langevin._system import PeriodicSystem
 
 type IntVector = tuple[int, ...]
-type Terms = tuple[tuple[IntVector, float], ...]
-"""Integer vectors, each with a weight: the Fourier components of a potential, or the directions of the couplings."""
+type Terms = tuple[tuple[IntVector, complex], ...]
+"""Integer vectors, each with a weight: the Fourier components of a potential (complex, with V_{-G} = V_G^*), or the directions of the couplings (real)."""
 
 
 def get_reciprocal(system: PeriodicSystem, length: float) -> FloatArray:
@@ -26,11 +26,24 @@ def get_reciprocal(system: PeriodicSystem, length: float) -> FloatArray:
 
 
 def get_potential_terms(system: PeriodicSystem) -> Terms:
-    """Get the Fourier components V_G of the potential in units of k_B T, a cos(g . x) = (a / 2) (e^{i g . x} + e^{-i g . x}), without its constant."""
-    terms = list[tuple[IntVector, float]]()
+    """Get the Fourier components V_G of the potential in units of k_B T, a cos(g . x + phi) = (a / 2) (e^{i phi} e^{i g . x} + e^{-i phi} e^{-i g . x}), without its constant.
+
+    They are real (V_{-G} = V_G) for a potential of cosines, and complex,
+    with V_{-G} = V_G^*, with phases.
+    """
+    terms = list[tuple[IntVector, complex]]()
     for term in system.terms:
         half = term.amplitude / (2 * system.kbt)
-        terms.extend([(term.miller, half), (tuple(-n for n in term.miller), half)])
+        if term.phase == 0:
+            terms.extend([(term.miller, half), (tuple(-n for n in term.miller), half)])
+            continue
+        rotated = half * complex(np.exp(1j * term.phase))
+        terms.extend(
+            [
+                (term.miller, rotated),
+                (tuple(-n for n in term.miller), rotated.conjugate()),
+            ]
+        )
     return tuple(terms)
 
 

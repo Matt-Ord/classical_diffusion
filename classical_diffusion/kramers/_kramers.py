@@ -37,7 +37,7 @@ from classical_diffusion.kramers._overdamped import (
     get_slow_window_modes,
     scaled_delta_k,
 )
-from classical_diffusion.kramers._real import build_real_operator, get_start
+from classical_diffusion.kramers._real import build_real_operator, get_start, is_even
 from classical_diffusion.kramers._smoluchowski import get_amplitude, get_grid_size
 from classical_diffusion.kramers._stepping import (
     MatrixFreeOperator,
@@ -152,7 +152,7 @@ class _Problem:
     @property
     def norm(self) -> float:
         """<w|w>."""
-        return float(self.amplitude @ self.amplitude)
+        return float(np.vdot(self.amplitude, self.amplitude).real)
 
     def factorize(self) -> SparseFactor:
         """Get the sparse LU of shift - L, whose inverse is the operator of the Arnoldi method."""
@@ -162,6 +162,12 @@ class _Problem:
     def start(self, direction: FloatArray | None = None) -> FloatArray:
         """Get w psi_0(p), or e . p w psi_0(p) for a direction, in the real form (`get_start`)."""
         return get_start(self.indices, self.width, self.amplitude, direction)
+
+
+def _get_equilibrium(model: Model, vectors: IntArray) -> ComplexArray:
+    """Get w = e^{-V / 2} on the plane waves: real for an even potential, and complex, for the doubled real form, otherwise (`is_even`)."""
+    amplitude = get_amplitude(model, vectors, get_grid_size(vectors))
+    return amplitude.real if is_even(model) else amplitude
 
 
 def _build_problem(model: Model, basis: Basis, delta_k: FloatArray) -> _Problem:
@@ -174,7 +180,7 @@ def _build_problem(model: Model, basis: Basis, delta_k: FloatArray) -> _Problem:
         parity=parity,
         indices=indices,
         width=width,
-        amplitude=get_amplitude(model, vectors, get_grid_size(vectors)).real,
+        amplitude=_get_equilibrium(model, vectors),
     )
 
 
@@ -286,11 +292,12 @@ class _SteppedProblem:
 
     @property
     def norm(self) -> float:
-        return float(self.amplitude @ self.amplitude)
+        return float(np.vdot(self.amplitude, self.amplitude).real)
 
     @property
     def parity(self) -> FloatArray:
-        return np.repeat(self.operator.parity, self.operator.shape[1])
+        parity = np.repeat(self.operator.parity, self.operator.shape[1])
+        return np.tile(parity, 2) if self.operator.doubled else parity
 
     def start(self, direction: FloatArray | None = None) -> FloatArray:
         return get_start(
@@ -304,7 +311,7 @@ def _build_stepped_problem(
     vectors = get_plane_waves_within(model, basis.radius)
     return _SteppedProblem(
         operator=build_matrix_free_operator(model, vectors, basis.max_order, delta_k),
-        amplitude=get_amplitude(model, vectors, get_grid_size(vectors)).real,
+        amplitude=_get_equilibrium(model, vectors),
     )
 
 
@@ -403,13 +410,14 @@ class _Tails:
         )
 
     def update(self, state: FloatArray) -> None:
-        x = state.reshape(self._shape)
-        total = float(np.sum(x**2))
+        # A doubled state (`MatrixFreeOperator.doubled`) is two of the shape
+        squares = np.sum(state.reshape(-1, *self._shape) ** 2, axis=0)
+        total = float(np.sum(squares))
         if total == 0:
             return
-        self.hermite = max(self.hermite, np.sqrt(np.sum(x[self._top] ** 2) / total))
+        self.hermite = max(self.hermite, np.sqrt(np.sum(squares[self._top]) / total))
         self.plane_wave = max(
-            self.plane_wave, np.sqrt(np.sum(x[:, self._outer] ** 2) / total)
+            self.plane_wave, np.sqrt(np.sum(squares[:, self._outer]) / total)
         )
 
 
@@ -699,12 +707,18 @@ def _get_diffusion(model: Model, basis: Basis, direction: FloatArray) -> float:
     problem = _build_problem(model, basis, np.zeros(model.n_dim))
     u = problem.start()
     v = problem.start(direction)
-    column = scipy.sparse.csr_array(u[:, None])
+    nulls = [u]
+    if not is_even(model):
+        # In the doubled real form (`build_real_operator`) i w is null too:
+        # (Re w, Im w) -> (-Im w, Re w)
+        half = u.size // 2
+        nulls.append(np.concatenate([-u[half:], u[:half]]))
+    columns = scipy.sparse.csr_array(np.stack(nulls, axis=1))
     bordered = scipy.sparse.block_array(
-        [[-problem.operator, column], [column.T, None]], format="coo"
+        [[-problem.operator, columns], [columns.T, None]], format="coo"
     )
-    solution = solve(bordered, np.append(v, 0.0))
-    return float(v @ solution[:-1]) / problem.norm
+    solution = solve(bordered, np.concatenate([v, np.zeros(len(nulls))]))
+    return float(v @ solution[: v.size]) / problem.norm
 
 
 @timed

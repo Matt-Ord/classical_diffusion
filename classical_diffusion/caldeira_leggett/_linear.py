@@ -223,17 +223,27 @@ _STAGNATION = 100
 """The BiCGSTAB iterations over which a residual that has not halved has reached the floor of round off, which ends the pass (`bicgstab`)."""
 
 
-def bicgstab(
+def _scale(c: jax.Array, x: jax.Array) -> jax.Array:
+    return c * x
+
+
+def bicgstab(  # ruff:ignore[too-many-arguments]
     operator: Callable[[jax.Array], jax.Array],
     rhs: jax.Array,
     rtol: jax.Array,
     maxiter: int,
+    *,
+    vdot: Callable[[jax.Array, jax.Array], jax.Array] = jnp.vdot,
+    scale: Callable[[jax.Array, jax.Array], jax.Array] = _scale,
 ) -> tuple[jax.Array, jax.Array]:
     """Solve A x = rhs from x = 0 by BiCGSTAB, and get the number of iterations, each two applications of A.
 
     It stops once |rhs - A x| <= rtol |rhs|, after maxiter iterations, once
     the residual has not halved over _STAGNATION iterations, or on a
-    breakdown, which the next pass of `refine` recovers from.
+    breakdown, which the next pass of `refine` recovers from. The vectors
+    are complex arrays, or split arrays (`split`) with vdot = `inner` and
+    scale = `multiply`, which saves splitting and joining them at each
+    application of A.
     """
     target = rtol * jnp.linalg.norm(rhs)
     zero = jnp.zeros_like(rhs)
@@ -249,18 +259,18 @@ def bicgstab(
         x, r, p, v, rho, alpha, omega, k, mark = carry
         # The residual at the start of each _STAGNATION iterations
         mark = jnp.where(k % _STAGNATION == 0, jnp.linalg.norm(r), mark)
-        rho_new = jnp.vdot(rhs, r)
-        p = r + (rho_new / rho) * (alpha / omega) * (p - omega * v)
+        rho_new = vdot(rhs, r)
+        p = r + scale((rho_new / rho) * (alpha / omega), p - scale(omega, v))
         v = operator(p)
-        alpha = rho_new / jnp.vdot(rhs, v)
-        s = r - alpha * v
+        alpha = rho_new / vdot(rhs, v)
+        s = r - scale(alpha, v)
         t = operator(s)
-        tt = jnp.vdot(t, t)
+        tt = vdot(t, t)
         # s = 0 once the half step has converged, and then so is t
-        omega = jnp.where(tt != 0, jnp.vdot(t, s) / jnp.where(tt != 0, tt, 1), 0)
+        omega = jnp.where(tt != 0, vdot(t, s) / jnp.where(tt != 0, tt, 1), 0)
         return (
-            x + alpha * p + omega * s,
-            s - omega * t,
+            x + scale(alpha, p) + scale(omega, s),
+            s - scale(omega, t),
             p,
             v,
             rho_new,
@@ -286,6 +296,7 @@ def refine(  # ruff:ignore[too-many-arguments]
     rtol: jax.Array,
     inner_rtol: float,
     passes: int,
+    scale: jax.Array | None = None,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
     """Solve A x = rhs by passes of an inner solver, each from the true residual (iterative refinement), and get the applications of A and the residual reached, relative to |rhs|, or nan if it was still falling after the passes.
 
@@ -295,9 +306,11 @@ def refine(  # ruff:ignore[too-many-arguments]
     that residual, which also recovers from a breakdown. The passes stop once
     the residual is below rtol of |rhs|, or once it no longer halves, when
     round off has set its floor. It is all one loop on the device: the
-    caller raises on a nan (`check`).
+    caller raises on a nan (`check`). The residuals are relative to scale,
+    by default |rhs|: a solve for the correction to an initial guess passes
+    the norm of the full right hand side, so the tolerance is the same.
     """
-    norm = jnp.maximum(jnp.linalg.norm(rhs), 1e-300)
+    norm = jnp.maximum(jnp.linalg.norm(rhs) if scale is None else scale, 1e-300)
 
     def proceed(state: tuple) -> jax.Array:
         *_, done, k = state
@@ -325,9 +338,9 @@ def refine(  # ruff:ignore[too-many-arguments]
         (
             jnp.zeros_like(rhs),
             rhs,
-            jnp.asarray(1.0),
+            jnp.linalg.norm(rhs) / norm,
             jnp.asarray(0),
-            jnp.zeros((), bool),
+            jnp.linalg.norm(rhs) / norm <= rtol,
             jnp.asarray(0),
         ),
     )
@@ -367,35 +380,53 @@ def _solve_pass(
 ) -> tuple[jax.Array, jax.Array]:
     # Preconditioned on the right, L M y = residual with x = M y and M = N^-1,
     # so that the tolerance applies to the true residual rather than to
-    # M (b - L x)
+    # M (b - L x). The states stay split (`split`) throughout: splitting and
+    # joining them at each application cost 27% of it for Li on Cu(111) in 2D
+    inverse = 1 / eigen.rates
+    zero = jnp.asarray(0j)
     y, iterations = bicgstab(
-        lambda y: apply_eigen(eigen, y / eigen.rates, jnp.asarray(0j)),
+        lambda y: apply_split(eigen, multiply(inverse, y), zero),
         residual,
         rtol,
         maxiter,
+        vdot=inner,
+        scale=multiply,
     )
-    return y / eigen.rates, 2 * iterations
+    return multiply(inverse, y), 2 * iterations
 
 
 @jax.jit
 def _solve(
-    eigen: EigenLiouvillian, rhs: jax.Array, rtol: float
+    eigen: EigenLiouvillian, rhs: jax.Array, rtol: float, initial: jax.Array
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
-    """Solve L Y = rhs in the eigenvectors (`solve`), and get the applications of L and the residual reached (`refine`)."""
-    return refine(
-        lambda y: apply_eigen(eigen, y, jnp.asarray(0j)),
+    """Solve L Y = rhs in the eigenvectors (`solve`) from an initial guess, and get the applications of L and the residual reached (`refine`).
+
+    The states are split (`split`). The refinement solves for the correction
+    to the initial guess, L dY = rhs - L Y_0.
+    """
+    zero = jnp.asarray(0j)
+    correction, applications, reached = refine(
+        lambda y: apply_split(eigen, y, zero),
         lambda residual, rtol: _solve_pass(eigen, residual, rtol, maxiter=MAXITER),
-        rhs,
+        rhs - apply_split(eigen, initial, zero),
         rtol=jnp.asarray(rtol),
         inner_rtol=INNER_RTOL,
         passes=PASSES,
+        scale=jnp.linalg.norm(rhs),
     )
+    return initial + correction, applications + 1, reached
 
 
 def solve(
-    eigen: EigenLiouvillian, rhs: jax.Array, config: CaldeiraLeggettConfig
+    eigen: EigenLiouvillian,
+    rhs: jax.Array,
+    config: CaldeiraLeggettConfig,
+    initial: jax.Array | None = None,
 ) -> jax.Array:
-    """Solve L X = rhs for a state X in the basis of the bands, for a rhs in the range of L.
+    """Solve L X = rhs for a state X in the basis of the bands, for a rhs in the range of L, from an initial guess (by default zero).
+
+    A guess from a smaller basis (`_caldeira_leggett._get_basis`) leaves
+    only the correction from the bands it lacks to be found.
 
     BiCGSTAB in the eigenvectors of K, preconditioned on the right by N^-1, N
     the no-jump part of L, with iterative refinement (`refine`). BiCGSTAB
@@ -411,7 +442,16 @@ def solve(
     nor D (within 5e-10) for H, Li and Na on Cu(111), as the refinement stops
     once the residual no longer halves.
     """
-    y, _, reached = _solve(eigen, to_eigen(eigen, rhs), config.linear_rtol)
+    *batch, n = eigen.rates.shape
+    start = (
+        jnp.zeros((*batch, 2 * n))
+        if initial is None
+        else split(to_eigen(eigen, jnp.asarray(initial)))
+    )
+    y, _, reached = _solve(
+        eigen, split(to_eigen(eigen, rhs)), config.linear_rtol, start
+    )
+    y = join(y)
     check(reached, config.linear_rtol)
     return from_eigen(eigen, y)
 

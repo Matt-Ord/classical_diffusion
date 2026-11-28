@@ -215,32 +215,59 @@ def build_real_operator(
         operator -= model.friction * scipy.sparse.kron(real_form(friction, j), identity)
     operator = scipy.sparse.csr_array(operator)
     operator.sum_duplicates()
-    if operator.nnz and np.max(np.abs(operator.data.imag)) > 1e-12 * np.max(
-        np.abs(operator.data)
-    ):
-        msg = "The real form of the Kramers operator is not real"
-        raise AssertionError(msg)
-    real = scipy.sparse.csr_array(
-        (operator.data.real, operator.indices, operator.indptr), shape=operator.shape
-    )
-    real.eliminate_zeros()
     parity = np.repeat(
         np.asarray(1.0 - 2.0 * (indices.sum(axis=1) % 2), dtype=np.float64),
         len(vectors),
     )
-    return real, parity, indices, width
+    if is_even(model):
+        if operator.nnz and np.max(np.abs(operator.data.imag)) > 1e-12 * np.max(
+            np.abs(operator.data)
+        ):
+            msg = "The real form of the Kramers operator is not real"
+            raise AssertionError(msg)
+        real = scipy.sparse.csr_array(
+            (operator.data.real, operator.indices, operator.indptr),
+            shape=operator.shape,
+        )
+        real.eliminate_zeros()
+        return real, parity, indices, width
+    # Without inversion symmetry L = A + i B is complex, but still
+    # L^dagger = J L J, so the real form of the doubled space,
+    # [[A, -B], [B, A]], is real and J-symmetric with the parity (J, J)
+    a, b = operator.real, operator.imag
+    doubled = scipy.sparse.block_array([[a, -b], [b, a]], format="csr")
+    doubled.eliminate_zeros()
+    return doubled, np.concatenate([parity, parity]), indices, width
+
+
+def is_even(model: Model) -> bool:
+    """Whether the potential is even about the origin (every V_G real), so that the Kramers operator has a real form of its own size.
+
+    Otherwise its real form is the doubled one of `build_real_operator`, and
+    every state in it is a complex state x stored as (Re x, Im x)
+    (`to_real`).
+    """
+    return all(abs(complex(v).imag) <= 1e-14 * max(abs(complex(v)), 1e-300) for _, v in model.potential)
+
+
+def to_real(x: np.ndarray, *, even: bool) -> np.ndarray:
+    """Get a complex state in the real form: its real part if the potential is even, or (Re x, Im x) in the doubled space."""
+    return x.real if even else np.concatenate([x.real, x.imag])
 
 
 def get_start(
     indices: IntArray,
     width: float,
-    amplitude: FloatArray,
+    amplitude: ComplexArray,
     direction: FloatArray | None = None,
 ) -> FloatArray:
     """Get w psi_0(p), or e . p w psi_0(p) for a direction, in the real form (times a phase of i for the velocity, which is odd).
 
     In Hermite functions of the thermal width this is w in the slot n = 0
-    (or e_j); in narrower ones psi_0 spreads over the even orders.
+    (or e_j); in narrower ones psi_0 spreads over the even orders. The
+    amplitude w = e^{-V / 2} on the plane waves is real for an even
+    potential, and the state is then real; otherwise it is complex and the
+    state is in the doubled real form (`to_real`).
     """
     max_order = int(indices.sum(axis=1).max())
     even, odd = get_momentum_overlaps(max_order, width)
@@ -257,4 +284,6 @@ def get_start(
     if direction is not None:
         # The odd orders carry a phase of +-i: drop the common factor
         coefficient *= 1j
-    return np.kron(coefficient.real, amplitude)
+    amplitude = np.asarray(amplitude)
+    even = not np.iscomplexobj(amplitude) or not np.any(amplitude.imag)
+    return to_real(np.kron(coefficient.real, amplitude), even=bool(even))

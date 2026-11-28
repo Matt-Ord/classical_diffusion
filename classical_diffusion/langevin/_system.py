@@ -190,43 +190,68 @@ class HarmonicSystem(System):
 
 @dataclass(frozen=True, kw_only=True)
 class FourierTerm:
-    """One term, amplitude cos(2 pi miller . u), of a periodic potential.
+    """One term, amplitude cos(2 pi miller . u + phase), of a periodic potential.
 
     u are the fractional coordinates: the position measured along each lattice
     vector, in units of that vector, so the term is periodic on the lattice.
+    A potential without inversion symmetry, such as a DFT potential of an
+    fcc(111) surface whose fcc and hcp hollows differ, needs the phases.
     """
 
     miller: tuple[int, ...]
     amplitude: float
+    phase: float = 0.0
 
 
-def _get_periodic_param_layout(n_dim: int, n_terms: int) -> tuple[slice, slice, int]:
-    """Return where the wavevectors, amplitudes and offset sit in the parameters."""
+def _get_periodic_param_layout(
+    n_dim: int, n_terms: int, *, phased: bool = False
+) -> tuple[slice, slice, int]:
+    """Return where the wavevectors, amplitudes and offset sit in the parameters.
+
+    If phased, the phases sit between the amplitudes and the offset
+    (`_get_phase_slice`). A potential whose phases all vanish has none, so
+    its parameters, and its hash, are those of a series of cosines.
+    """
     n_wavevector = n_dim * n_terms
     return (
         slice(0, n_wavevector),
         slice(n_wavevector, n_wavevector + n_terms),
-        n_wavevector + n_terms,
+        n_wavevector + (2 if phased else 1) * n_terms,
     )
 
 
+def _get_phase_slice(n_dim: int, n_terms: int) -> slice:
+    """Return where the phases sit in the parameters of a phased potential."""
+    start = n_dim * n_terms + n_terms
+    return slice(start, start + n_terms)
+
+
 @cache
-def _get_periodic_potential_expr(n_dim: int, n_terms: int) -> sp.Expr:
-    """Return offset + sum_k a_k cos(g_k . x).
+def _get_periodic_potential_expr(
+    n_dim: int, n_terms: int, *, phased: bool = False
+) -> sp.Expr:
+    """Return offset + sum_k a_k cos(g_k . x + phi_k).
 
     The parameters are the wavevectors g_k (n_dim components each), then the
-    amplitudes a_k, then the offset. The cosine arguments are linear in the
-    coordinates, so the force is cheap to derive, and every system with the same
-    dimension and number of terms shares one expression.
+    amplitudes a_k, then the phases phi_k if phased, then the offset. The
+    cosine arguments are linear in the coordinates, so the force is cheap to
+    derive, and every system with the same dimension and number of terms
+    shares one expression.
     """
     coordinates = sp.symbols(f"x0:{n_dim}")
-    _, amplitude_slice, offset_index = _get_periodic_param_layout(n_dim, n_terms)
+    _, amplitude_slice, offset_index = _get_periodic_param_layout(
+        n_dim, n_terms, phased=phased
+    )
     symbols = sp.symbols(f"s0:{offset_index + 1}")
     amplitudes = symbols[amplitude_slice]
+    phases = (
+        symbols[_get_phase_slice(n_dim, n_terms)] if phased else (0,) * n_terms
+    )
     terms = (
         amplitudes[k]
         * sp.cos(
             sp.Add(*(symbols[k * n_dim + j] * coordinates[j] for j in range(n_dim)))
+            + phases[k]
         )
         for k in range(n_terms)
     )
@@ -235,16 +260,16 @@ def _get_periodic_potential_expr(n_dim: int, n_terms: int) -> sp.Expr:
 
 @cache
 def _get_periodic_potential_functions(
-    n_dim: int, n_terms: int
+    n_dim: int, n_terms: int, *, phased: bool = False
 ) -> tuple[Callable[..., float], Callable[..., list[float]], Callable[..., np.ndarray]]:
     """Return the value, gradient and Hessian of the periodic potential.
 
     Each is built with sp.lambdify from _get_periodic_potential_expr,
     and takes the coordinates followed by the parameters.
     """
-    expr = _get_periodic_potential_expr(n_dim, n_terms)
+    expr = _get_periodic_potential_expr(n_dim, n_terms, phased=phased)
     coordinates = sp.symbols(f"x0:{n_dim}")
-    _, _, offset_index = _get_periodic_param_layout(n_dim, n_terms)
+    _, _, offset_index = _get_periodic_param_layout(n_dim, n_terms, phased=phased)
     symbols = (*coordinates, *sp.symbols(f"s0:{offset_index + 1}"))
     gradient = [sp.diff(expr, c) for c in coordinates]
     hessian = sp.hessian(expr, coordinates)
@@ -255,8 +280,10 @@ def _get_periodic_potential_functions(
     )
 
 
-def _get_fourier_series_minimum(millers: np.ndarray, amplitudes: np.ndarray) -> float:
-    """Return the minimum over u of sum_k a_k cos(2 pi n_k . u).
+def _get_fourier_series_minimum(
+    millers: np.ndarray, amplitudes: np.ndarray, phases: np.ndarray | None = None
+) -> float:
+    """Return the minimum over u of sum_k a_k cos(2 pi n_k . u + phi_k).
 
     The minimum does not depend on the lattice, so the series is evaluated in
     fractional coordinates, with wavevectors 2 pi n_k. A brute-force grid over one
@@ -264,10 +291,16 @@ def _get_fourier_series_minimum(millers: np.ndarray, amplitudes: np.ndarray) -> 
     trust-region Newton search with the exact gradient and Hessian refines it.
     """
     n_dim = millers.shape[1]
+    phased = phases is not None
     value_fn, gradient_fn, hessian_fn = _get_periodic_potential_functions(
-        n_dim, len(amplitudes)
+        n_dim, len(amplitudes), phased=phased
     )
-    params = (*(2 * np.pi * millers).ravel().tolist(), *amplitudes.tolist(), 0.0)
+    params = (
+        *(2 * np.pi * millers).ravel().tolist(),
+        *amplitudes.tolist(),
+        *([] if phases is None else phases.tolist()),
+        0.0,
+    )
 
     def value(u: np.ndarray) -> float:
         return float(value_fn(*u, *params))
@@ -325,19 +358,32 @@ class PeriodicSystem(System):
             msg = f"every Miller index must have {n_dim} components"
             raise ValueError(msg)
         amplitudes = np.array([t.amplitude for t in terms], dtype=float)
+        phases = np.array([t.phase for t in terms], dtype=float)
+        # A series of cosines keeps the parameters (and hash) it had before phases
+        phased = bool(np.any(phases != 0))
 
         # Rows of the reciprocal basis b_i satisfy a_i . b_j = delta_ij, so the
         # term with Miller index n has wavevector g = 2 pi n . B and phase 2 pi n . u.
         reciprocal = np.linalg.inv(lattice_vectors).T
         wavevectors = 2 * np.pi * millers @ reciprocal
-        offset = -_get_fourier_series_minimum(millers, amplitudes)
+        offset = -_get_fourier_series_minimum(
+            millers, amplitudes, phases if phased else None
+        )
 
         super().__init__(
             gamma=gamma,
             temperature=temperature,
             m=m,
-            potential=(n_dim, _get_periodic_potential_expr(n_dim, len(terms))),
-            params=(*wavevectors.ravel().tolist(), *amplitudes.tolist(), offset),
+            potential=(
+                n_dim,
+                _get_periodic_potential_expr(n_dim, len(terms), phased=phased),
+            ),
+            params=(
+                *wavevectors.ravel().tolist(),
+                *amplitudes.tolist(),
+                *(phases.tolist() if phased else []),
+                offset,
+            ),
             units=units or UnitSystem(),
         )
         object.__setattr__(
@@ -353,12 +399,19 @@ class PeriodicSystem(System):
     @property
     def terms(self) -> tuple[FourierTerm, ...]:
         """The Fourier terms of the potential."""
-        _, amplitude_slice, _ = _get_periodic_param_layout(
-            self.n_dim, len(self._millers)
+        n_terms = len(self._millers)
+        _, amplitude_slice, _ = _get_periodic_param_layout(self.n_dim, n_terms)
+        phased = len(self.params) == (self.n_dim + 2) * n_terms + 1
+        phases = (
+            self.params[_get_phase_slice(self.n_dim, n_terms)]
+            if phased
+            else (0.0,) * n_terms
         )
         return tuple(
-            FourierTerm(miller=n, amplitude=a)
-            for n, a in zip(self._millers, self.params[amplitude_slice], strict=True)
+            FourierTerm(miller=n, amplitude=a, phase=p)
+            for n, a, p in zip(
+                self._millers, self.params[amplitude_slice], phases, strict=True
+            )
         )
 
     @override

@@ -58,6 +58,8 @@ from classical_diffusion.simulation import IsfResult
 from classical_diffusion.util import cached, timed
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from classical_diffusion.caldeira_leggett._liouvillian import Liouvillian
     from classical_diffusion.caldeira_leggett._model import (
         ComplexArray,
@@ -166,6 +168,27 @@ def _get_growth(energies: FloatArray, population: FloatArray, factor: float) -> 
     return max(np.log(factor) / float(np.clip(rate, 0.5, 2.0)), 2.0)
 
 
+def _project_last(
+    tries: list[tuple[SteadyState, float]], model: Model, bands: Bands
+) -> Callable[[ComplexArray], ComplexArray] | None:
+    """Get the projection X -> W X W^dagger of states in the bands of the last try onto these bands (`get_basis_map`), or None if there is no last try or its plane waves are not all in this model's.
+
+    Each try's steady state and response are the initial guesses of the
+    next try's solves (`_get_basis`): the bands a raise adds hold little of
+    either, so the solves only find the correction they make. For H on
+    Cu(111) in 2D this takes (the solves of) every try after the first
+    from about 500 applications of L to ...
+    """
+    if not tries:
+        return None
+    last = tries[-1][0]
+    try:
+        overlap = get_basis_map(last.model, last.bands, model, bands)
+    except KeyError:
+        return None
+    return lambda x: overlap @ x @ overlap.conj().swapaxes(-1, -2)
+
+
 def _get_basis(  # ruff:ignore[too-many-locals]
     system: PeriodicSystem,
     config: CaldeiraLeggettConfig,
@@ -210,10 +233,20 @@ def _get_basis(  # ruff:ignore[too-many-locals]
             energies = get_energies(model)
             bands = get_bands(model, energies)
         operators, derivative, _ = _get_derivative(model, bands, direction)
+        guess = _project_last(tries, model, bands)
         if tries or start is None:
-            density = get_band_steady_state(operators, bands.energies, config)
+            density = get_band_steady_state(
+                operators,
+                bands.energies,
+                config,
+                None if guess is None else guess(tries[-1][0].density),
+            )
         diffusion, response = get_diffusion_coefficient(
-            operators, derivative, density, config
+            operators,
+            derivative,
+            density,
+            config,
+            None if guess is None else guess(tries[-1][0].response),
         )
         top, plane_waves = _get_edge(model, bands, density)
         tries.append(
