@@ -1,6 +1,7 @@
 """Linear solves of a Liouvillian, (L - s) X = rhs, in the eigenvectors of its effective Hamiltonians, preconditioned by the exact inverse of its no-jump part."""
 
 # cspell: ignore maxiter bicgstab Hamiltonians vdot BLAS orthogonalize fori
+import operator
 from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING
@@ -223,10 +224,6 @@ _STAGNATION = 100
 """The BiCGSTAB iterations over which a residual that has not halved has reached the floor of round off, which ends the pass (`bicgstab`)."""
 
 
-def _scale(c: jax.Array, x: jax.Array) -> jax.Array:
-    return c * x
-
-
 def bicgstab(  # ruff:ignore[too-many-arguments]
     operator: Callable[[jax.Array], jax.Array],
     rhs: jax.Array,
@@ -234,7 +231,7 @@ def bicgstab(  # ruff:ignore[too-many-arguments]
     maxiter: int,
     *,
     vdot: Callable[[jax.Array, jax.Array], jax.Array] = jnp.vdot,
-    scale: Callable[[jax.Array, jax.Array], jax.Array] = _scale,
+    scale: Callable[[jax.Array, jax.Array], jax.Array] = operator.mul,
 ) -> tuple[jax.Array, jax.Array]:
     """Solve A x = rhs from x = 0 by BiCGSTAB, and get the number of iterations, each two applications of A.
 
@@ -421,7 +418,7 @@ def solve(
     eigen: EigenLiouvillian,
     rhs: jax.Array,
     config: CaldeiraLeggettConfig,
-    initial: jax.Array | None = None,
+    initial: jax.Array | np.ndarray | None = None,
 ) -> jax.Array:
     """Solve L X = rhs for a state X in the basis of the bands, for a rhs in the range of L, from an initial guess (by default zero).
 

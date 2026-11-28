@@ -231,13 +231,19 @@ def build_real_operator(
         )
         real.eliminate_zeros()
         return real, parity, indices, width
-    # Without inversion symmetry L = A + i B is complex, but still
-    # L^dagger = J L J, so the real form of the doubled space,
-    # [[A, -B], [B, A]], is real and J-symmetric with the parity (J, J)
+    return _doubled(operator), np.concatenate([parity, parity]), indices, width
+
+
+def _doubled(operator: scipy.sparse.csr_array) -> scipy.sparse.csr_array:
+    """Get the real form [[A, -B], [B, A]] of L = A + i B on the doubled space (Re x, Im x).
+
+    Without inversion symmetry L is complex, but still L^dagger = J L J, so
+    this is real and J-symmetric with the parity (J, J).
+    """
     a, b = operator.real, operator.imag
     doubled = scipy.sparse.block_array([[a, -b], [b, a]], format="csr")
     doubled.eliminate_zeros()
-    return doubled, np.concatenate([parity, parity]), indices, width
+    return doubled
 
 
 def is_even(model: Model) -> bool:
@@ -247,7 +253,10 @@ def is_even(model: Model) -> bool:
     every state in it is a complex state x stored as (Re x, Im x)
     (`to_real`).
     """
-    return all(abs(complex(v).imag) <= 1e-14 * max(abs(complex(v)), 1e-300) for _, v in model.potential)
+    return all(
+        abs(complex(v).imag) <= 1e-14 * max(abs(complex(v)), 1e-300)
+        for _, v in model.potential
+    )
 
 
 def to_real(x: np.ndarray, *, even: bool) -> np.ndarray:
@@ -258,7 +267,7 @@ def to_real(x: np.ndarray, *, even: bool) -> np.ndarray:
 def get_start(
     indices: IntArray,
     width: float,
-    amplitude: ComplexArray,
+    amplitude: FloatArray | ComplexArray,
     direction: FloatArray | None = None,
 ) -> FloatArray:
     """Get w psi_0(p), or e . p w psi_0(p) for a direction, in the real form (times a phase of i for the velocity, which is odd).

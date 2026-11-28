@@ -146,7 +146,7 @@ class _Problem:
     indices: IntArray
     width: float
     """The width of the Hermite functions (`get_width`)."""
-    amplitude: FloatArray
+    amplitude: FloatArray | ComplexArray
     """w = e^{-V / 2} on the plane waves."""
 
     @property
@@ -164,7 +164,7 @@ class _Problem:
         return get_start(self.indices, self.width, self.amplitude, direction)
 
 
-def _get_equilibrium(model: Model, vectors: IntArray) -> ComplexArray:
+def _get_equilibrium(model: Model, vectors: IntArray) -> FloatArray | ComplexArray:
     """Get w = e^{-V / 2} on the plane waves: real for an even potential, and complex, for the doubled real form, otherwise (`is_even`)."""
     amplitude = get_amplitude(model, vectors, get_grid_size(vectors))
     return amplitude.real if is_even(model) else amplitude
@@ -288,7 +288,7 @@ class _SteppedProblem:
     """The matrix-free operator of a basis, for systems in more than one dimension, whose LU does not fit."""
 
     operator: MatrixFreeOperator
-    amplitude: FloatArray
+    amplitude: FloatArray | ComplexArray
 
     @property
     def norm(self) -> float:

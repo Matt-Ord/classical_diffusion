@@ -1,4 +1,3 @@
-# cspell: ignore LAPACK
 """A correlation as a sum of modes, sum_j r_j exp(lambda_j t), from the poles and residues of a tridiagonal (the Lanczos methods of every solver)."""
 
 from dataclasses import dataclass
@@ -6,7 +5,6 @@ from math import factorial
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import scipy.linalg
 
 if TYPE_CHECKING:
     from classical_diffusion._results import ComplexArray, FloatArray
@@ -15,41 +13,6 @@ type BoolArray = np.ndarray[Any, np.dtype[np.bool_]]
 
 _CHUNK = 2**22
 """The most entries of exp(lambda_j t) evaluated at once."""
-
-
-def get_poles(
-    alpha: np.ndarray, upper: np.ndarray, lower: np.ndarray, scale: complex
-) -> tuple[ComplexArray, ComplexArray]:
-    """Get the eigenvalues mu_j of the tridiagonal T, and the residues scale (S)_{0 j} (S^{-1})_{j 0}, with T = S diag(mu) S^{-1}.
-
-    T has alpha on the diagonal, upper above and lower below, and
-    scale e_1^T f(T) e_1 = sum_j residues_j f(mu_j) for any f: the
-    measurement of exp(T t), or of exp(L t) where T is L in a Lanczos basis.
-    """
-    m = len(alpha)
-    tridiagonal = (
-        np.diag(alpha) + np.diag(upper[: m - 1], 1) + np.diag(lower[: m - 1], -1)
-    )
-    # LAPACK in real arithmetic where T is real
-    poles, vectors = scipy.linalg.eig(tridiagonal)
-    first = np.zeros(m, complex)
-    first[0] = 1
-    return poles, scale * vectors[0] * np.linalg.solve(vectors, first)
-
-
-def get_continued_fraction(
-    alpha: np.ndarray, couplings: np.ndarray, scale: complex, s: np.ndarray
-) -> ComplexArray:
-    """Get scale e_1^T (s - T)^-1 e_1 at each s, as a continued fraction from the last row back: O(m) for each s.
-
-    T has alpha on the diagonal and couplings_j = T_{j, j+1} T_{j+1, j}.
-    """
-    value = np.zeros_like(np.asarray(s), dtype=complex)
-    m = len(alpha)
-    for j in range(m - 1, -1, -1):
-        coupling = couplings[j] if j < m - 1 else 0
-        value = 1 / (s - alpha[j] - coupling * value)
-    return scale * value
 
 
 def _phi_2(z: ComplexArray) -> ComplexArray:

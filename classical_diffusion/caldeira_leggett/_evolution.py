@@ -40,7 +40,7 @@ _BLOCK = 25
 The transform of F_m at points from 1 / span to the width of T is a
 continued fraction of the tridiagonal, O(m), checked on the device after
 each block (`_advance`); only once it agrees are the poles of the
-tridiagonal found, O(m^2) (`get_poles`).
+tridiagonal found, O(m^3) by LAPACK (`get_poles`).
 """
 _SPREAD = 16
 """The fraction of the steps so far, 1 / _SPREAD, below which two evaluations of F_m are not apart (`_evolve`).
@@ -763,7 +763,7 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
 
     The blocks of the recurrence and the screen between evaluations run on
     the device (`_advance`); the host reads the steps and flags once per
-    evaluation, which finds the poles of T_m in O(m^2) (`get_poles`), and
+    evaluation, which finds the poles of T_m by LAPACK (`get_poles`), and
     once more for its verdict (`_judge`).
 
     Raises
@@ -825,9 +825,7 @@ def _evolve(  # ruff:ignore[too-many-arguments, too-many-positional-arguments, t
             msg = f"The evolution did not converge in {max_steps} Lanczos steps"
             raise RuntimeError(msg)
         steps = int(steps)
-        rates, weights = get_poles(
-            recurrence.alpha, recurrence.coupling, steps, span=span
-        )
+        rates, weights = get_poles(recurrence.alpha, recurrence.coupling, steps)
         residues = scale * weights
         chunk = max(1, min(len(times), 2**22 // len(rates)))
         values, progress, agreed, done, error = _judge(

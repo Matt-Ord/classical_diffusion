@@ -65,7 +65,7 @@ def build_model(system: PeriodicSystem) -> Model:
     potential = list(get_potential_terms(system))
     # The constant of the system puts the minimum of its potential at zero,
     # which keeps e^{-V / 2} of order one in the wells
-    potential.append(((0,) * len(reciprocal), system.params[-1] / kbt))
+    potential.append(((0,) * len(reciprocal), complex(system.params[-1] / kbt)))
     return Model(
         units=units,
         reciprocal=reciprocal,
@@ -74,8 +74,8 @@ def build_model(system: PeriodicSystem) -> Model:
     )
 
 
-def _merge(terms: list[tuple[IntVector, float]]) -> Terms:
-    out = dict[IntVector, float]()
+def _merge(terms: list[tuple[IntVector, complex]]) -> Terms:
+    out = dict[IntVector, complex]()
     for g, v in terms:
         out[g] = out.get(g, 0.0) + v
     return tuple((g, v) for g, v in out.items() if v != 0)

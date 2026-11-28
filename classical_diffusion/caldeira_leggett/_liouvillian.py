@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 import jax
 import jax.numpy as jnp
 import numpy as np
-import scipy.special
 
 from classical_diffusion.caldeira_leggett._bands import (
     get_shift_operator,

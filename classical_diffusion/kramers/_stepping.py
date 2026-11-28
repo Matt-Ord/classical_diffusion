@@ -98,6 +98,20 @@ class _Kernel:
     """The range (first, end) of each block on each axis of the box."""
 
 
+def _force_terms(
+    kernel: _Kernel, *, coupling: bool
+) -> list[tuple[int, int, tuple[int, ...], float]]:
+    """Get each term (j, band of D_j, shift of F_j, coefficient) of the force in A, or in B if coupling (`_Kernel.coupling`), whose sign is the opposite."""
+    forces, sign = (kernel.coupling, 1.0) if coupling else (kernel.forces, -1.0)
+    return [
+        (j, band, shift, sign * coefficient[j])
+        for j in range(len(kernel.box) // 2)
+        for band in range(len(kernel.derivative))
+        for shift, coefficient in forces
+        if coefficient[j]
+    ]
+
+
 def _stencil(
     kernel: _Kernel,
     padded: jax.Array,
@@ -129,22 +143,19 @@ def _stencil(
     wavevector = kernel.wavevector[slice(None), *starmap(slice, block[n_dim:])]
     p_offsets, d_offsets, r_offsets = kernel.offsets
     out = jnp.zeros(shape)
+    for j, band, shift, value in _force_terms(kernel, coupling=coupling):
+        out += (
+            value
+            * along(kernel.derivative[band], j)
+            * window(j, d_offsets[band], shift)
+        )
     if coupling:
-        for j in range(n_dim):
-            for o, c in zip(d_offsets, kernel.derivative, strict=True):
-                for shift, coefficient in kernel.coupling:
-                    if coefficient[j]:
-                        out += coefficient[j] * along(c, j) * window(j, o, shift)
         return out
     for j in range(n_dim):
         for o, c in zip(r_offsets, kernel.friction, strict=True):
             out -= along(c, j) * window(j, o)
         for o, c in zip(p_offsets, kernel.momentum, strict=True):
             out += along(c, j) * wavevector[j] * window(j, o)
-        for o, c in zip(d_offsets, kernel.derivative, strict=True):
-            for shift, coefficient in kernel.forces:
-                if coefficient[j]:
-                    out -= coefficient[j] * along(c, j) * window(j, o, shift)
     return out
 
 

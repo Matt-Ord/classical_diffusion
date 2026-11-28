@@ -244,9 +244,7 @@ def _get_periodic_potential_expr(
     )
     symbols = sp.symbols(f"s0:{offset_index + 1}")
     amplitudes = symbols[amplitude_slice]
-    phases = (
-        symbols[_get_phase_slice(n_dim, n_terms)] if phased else (0,) * n_terms
-    )
+    phases = symbols[_get_phase_slice(n_dim, n_terms)] if phased else (0,) * n_terms
     terms = (
         amplitudes[k]
         * sp.cos(
