@@ -35,10 +35,6 @@ def _trace(x: jax.Array) -> jax.Array:
     return jnp.trace(x, axis1=-2, axis2=-1).sum()
 
 
-_ROUND_OFF = 1e-14
-"""The residual of the Gibbs state, relative to |L| |rho_gibbs|, below which it is the steady state to round off (`get_steady_state`)."""
-
-
 def get_steady_state(
     operators: Operators,
     energies: FloatArray,
@@ -59,14 +55,9 @@ def get_steady_state(
     guess = None
     if initial is not None:
         guess = initial / np.einsum("kaa->", initial) - gibbs
-    eigen = get_eigen_liouvillian(liouvillian)
-    # For a flat potential the Gibbs state is the steady state to round off,
-    # and no solve can reduce a residual which is round off already
-    floor = _ROUND_OFF * float(jnp.abs(eigen.rates).max()) * np.linalg.norm(gibbs)
-    if float(jnp.linalg.norm(rhs)) <= floor and guess is None:
-        rho = gibbs.astype(complex)
-    else:
-        rho = gibbs + np.asarray(solve(eigen, rhs, config, guess))
+    rho = gibbs + np.asarray(
+        solve(get_eigen_liouvillian(liouvillian), rhs, config, guess)
+    )
     rho /= np.einsum("kaa->", rho)
     return 0.5 * (rho + rho.conj().swapaxes(-1, -2))
 

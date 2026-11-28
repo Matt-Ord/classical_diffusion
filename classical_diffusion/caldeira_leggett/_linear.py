@@ -360,14 +360,6 @@ def check(reached: jax.Array, rtol: float) -> None:
         raise RuntimeError(msg)
 
 
-IDR_INNER_RTOL = 1e-16
-"""The least factor by which each pass of IDR(s) in `_solve` reduces the residual: none, so a pass aims at the tolerance itself.
-
-Restarting IDR(s) every 1e-4 (`INNER_RTOL`) discards its shadow space: for H
-on Cu(111) in 2D it then took as many applications as BiCGSTAB. The passes of
-`refine` remain to recover from a breakdown and from the gap between the
-recursive and the true residual.
-"""
 MAXITER = 1000
 """The most BiCGSTAB iterations in each pass of a linear solve (`refine`)."""
 INNER_RTOL = 1e-4
@@ -392,131 +384,15 @@ def _solve_pass(
     # joining them at each application cost 27% of it for Li on Cu(111) in 2D
     inverse = 1 / eigen.rates
     zero = jnp.asarray(0j)
-    operator = lambda y: apply_split(eigen, multiply(inverse, y), zero)  # noqa: E731
-    y, applications, broken = idrs(operator, residual, rtol, 2 * maxiter)
-
-    def fallback(_: jax.Array) -> tuple[jax.Array, jax.Array]:
-        # IDR(s) breaks down where the residual lies in a Krylov space of
-        # fewer than s dimensions (a flat potential, whose steady state is
-        # nearly the Gibbs state): BiCGSTAB does not
-        z, iterations = bicgstab(
-            operator, residual, rtol, maxiter, vdot=inner, scale=multiply
-        )
-        return z, applications + 2 * iterations
-
-    y, applications = jax.lax.cond(
-        broken, fallback, lambda y: (y, applications), y
+    y, iterations = bicgstab(
+        lambda y: apply_split(eigen, multiply(inverse, y), zero),
+        residual,
+        rtol,
+        maxiter,
+        vdot=inner,
+        scale=multiply,
     )
-    return multiply(inverse, y), applications
-
-
-IDR_S = 8
-"""The dimension s of the shadow space of IDR(s) (`idrs`).
-
-Against BiCGSTAB in the same refinement, IDR(8) took 26-40% fewer
-applications of L to reach 1e-12 for H on Cu(111) in 2D (20 periods,
-29 bands) and Li on Cu(111) in 2D (139 bands); IDR(4) 10-29%; BiCGStab(l)
-with l = 2, 4 none. It holds 3 s + 4 states, which is small beside the
-operators.
-"""
-
-
-def idrs(
-    operator: Callable[[jax.Array], jax.Array],
-    rhs: jax.Array,
-    rtol: jax.Array,
-    maxiter: int,
-    *,
-    s: int = IDR_S,
-) -> tuple[jax.Array, jax.Array, jax.Array]:
-    """Solve A x = rhs from x = 0 for split states (`split`) by IDR(s) with biorthogonalization, and get the number of applications of A and whether it broke down.
-
-    This is Algorithm 913 of van Gijzen and Sonneveld (ACM TOMS 38, 5
-    (2011)): each cycle is s + 1 applications, s in the space orthogonal to
-    the s shadow vectors P (fixed, random) and one minimal residual step,
-    whose parameter omega is kept away from small angles (0.7). It stops
-    once |rhs - A x| <= rtol |rhs| at the end of a cycle, after maxiter
-    applications, or on a breakdown (a nan or a zero pivot), which the next
-    pass of `refine` recovers from.
-    """
-    shape = rhs.shape
-    key = jax.random.PRNGKey(0)
-    shadow = jax.random.normal(key, (s, *shape), dtype=rhs.dtype)
-    target = rtol * jnp.linalg.norm(rhs)
-    zeros = jnp.zeros((s, *shape), rhs.dtype)
-    eye = jnp.eye(s, dtype=complex)
-
-    def project(vectors: jax.Array, x: jax.Array) -> jax.Array:
-        """<P_i, x> for each i (complex)."""
-        return jax.vmap(lambda p: inner(p, x))(vectors)
-
-    def combine(coefficients: jax.Array, vectors: jax.Array) -> jax.Array:
-        """sum_i c_i V_i for complex c and split V."""
-        return jnp.sum(jax.vmap(multiply)(coefficients, vectors), axis=0)
-
-    def proceed(carry: tuple) -> jax.Array:
-        *_, count, norm, broken, mark, marked = carry
-        # The residual has not halved over _STAGNATION applications: it has
-        # reached the floor of round off, as in `bicgstab`
-        stagnant = (count - marked >= 2 * _STAGNATION) & (norm > mark / 2)
-        return (count < maxiter) & (norm > target) & ~broken & ~stagnant
-
-    def cycle(carry: tuple) -> tuple:
-        x, r, g, u, m, omega, count, previous, broken, mark, marked = carry
-        renew = count - marked >= 2 * _STAGNATION
-        mark = jnp.where(renew, previous, mark)
-        marked = jnp.where(renew, count, marked)
-        f = project(shadow, r)
-        for k in range(s):
-            # M is lower triangular in its last s - k rows and columns
-            c = jax.scipy.linalg.solve_triangular(m[k:, k:], f[k:], lower=True)
-            v = r - combine(c, g[k:])
-            uk = combine(c, u[k:]) + multiply(omega, v)
-            gk = operator(uk)
-            for i in range(k):
-                alpha = inner(shadow[i], gk) / m[i, i]
-                gk = gk - multiply(alpha, g[i])
-                uk = uk - multiply(alpha, u[i])
-            g, u = g.at[k].set(gk), u.at[k].set(uk)
-            m = m.at[k:, k].set(project(shadow[k:], gk))
-            beta = f[k] / m[k, k]
-            r = r - multiply(beta, gk)
-            x = x + multiply(beta, uk)
-            if k + 1 < s:
-                f = f.at[k + 1 :].add(-beta * m[k + 1 :, k])
-        t = operator(r)
-        tt = inner(t, t).real
-        tr = inner(t, r)
-        rr = inner(r, r).real
-        omega = tr / jnp.where(tt > 0, tt, 1.0)
-        angle = jnp.abs(tr) / jnp.sqrt(jnp.where(tt * rr > 0, tt * rr, 1.0))
-        omega = jnp.where(angle < 0.7, omega * 0.7 / jnp.where(angle > 0, angle, 1.0), omega)
-        x = x + multiply(omega, r)
-        r = r - multiply(omega, t)
-        norm = jnp.linalg.norm(r)
-        broken = ~jnp.isfinite(norm) | jnp.any(jnp.diagonal(m) == 0) | (omega == 0)
-        return x, r, g, u, m, omega, count + s + 1, norm, broken, mark, marked
-
-    x, *_, count, _, broken, _, _ = jax.lax.while_loop(
-        proceed,
-        cycle,
-        (
-            jnp.zeros_like(rhs),
-            rhs,
-            zeros,
-            zeros,
-            eye,
-            jnp.asarray(1.0 + 0j),
-            jnp.asarray(0),
-            jnp.linalg.norm(rhs),
-            jnp.zeros((), bool),
-            jnp.linalg.norm(rhs),
-            jnp.asarray(0),
-        ),
-    )
-    # A breakdown leaves a nan: the pass then contributes nothing, and the
-    # refinement keeps its last solution (`refine`)
-    return jnp.where(jnp.isfinite(x), x, 0.0), count, broken
+    return multiply(inverse, y), 2 * iterations
 
 
 @jax.jit
@@ -534,7 +410,7 @@ def _solve(
         lambda residual, rtol: _solve_pass(eigen, residual, rtol, maxiter=MAXITER),
         rhs - apply_split(eigen, initial, zero),
         rtol=jnp.asarray(rtol),
-        inner_rtol=IDR_INNER_RTOL,
+        inner_rtol=INNER_RTOL,
         passes=PASSES,
         scale=jnp.linalg.norm(rhs),
     )

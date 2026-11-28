@@ -175,9 +175,10 @@ def _project_last(
 
     Each try's steady state and response are the initial guesses of the
     next try's solves (`_get_basis`): the bands a raise adds hold little of
-    either, so the solves only find the correction they make. For H on
-    Cu(111) in 2D this takes (the solves of) every try after the first
-    from about 500 applications of L to ...
+    either, so the solves only find the correction they make. For Li on
+    Cu(111) in 2D it cut the applications of L of D from 2386 to 1427, and
+    the time from 192 s to 114 s; in 1D by 17-21% (more by 19% for a flat
+    potential, whose solves are cheap).
     """
     if not tries:
         return None
