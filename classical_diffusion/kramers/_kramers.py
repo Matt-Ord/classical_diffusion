@@ -44,7 +44,7 @@ from classical_diffusion.kramers._stepping import (
     build_matrix_free_operator,
     propagate_form,
     propagate_state,
-    solve_by_propagation,
+    solve_symmetric,
 )
 from classical_diffusion.simulation import IsfResult
 from classical_diffusion.util import timed
@@ -602,15 +602,11 @@ _PANEL_LENGTH = 1.0
 """The longest panel of the integral of the velocity autocorrelation, in units of the transit time of the length unit at the thermal velocity."""
 
 
-def _get_stepped_diffusion(
-    model: Model, basis: Basis, direction: FloatArray, tol: float
-) -> float:
-    """D = v^T (-L_0)^{-1} v / <w|w>, solved by propagation over 1 / gamma (`solve_by_propagation`)."""
+def _get_stepped_diffusion(model: Model, basis: Basis, direction: FloatArray) -> float:
+    """D = v^T (-L_0)^{-1} v / <w|w>, solved by MINRES on the symmetric J L_0 (`solve_symmetric`)."""
     problem = _build_stepped_problem(model, basis, np.zeros(model.n_dim))
     v = problem.start(direction)
-    solution, _ = solve_by_propagation(
-        problem.operator, v, 1 / model.friction, tol=1e-2 * tol
-    )
+    solution, _ = solve_symmetric(problem.operator, problem.parity, v)
     return float(v @ solution) / problem.norm
 
 
@@ -658,7 +654,7 @@ def get_diffusion_constant(
     _, diffusion, _ = _converge_basis(
         model,
         get_initial_diffusion_basis(model, config),
-        (lambda basis: _get_stepped_diffusion(model, basis, unit, config.tol))
+        (lambda basis: _get_stepped_diffusion(model, basis, unit))
         if _is_stepped(model)
         else (lambda basis: _get_diffusion(model, basis, unit)),
         lambda a, b: abs(a - b) / abs(b),

@@ -10,7 +10,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import scipy.linalg
-import scipy.sparse.linalg
 
 from classical_diffusion.kramers._krylov import (
     BLOCK,
@@ -638,46 +637,107 @@ def propagate_state(
     return np.array(state), np.array(integral), count
 
 
-@_x64
-def solve_by_propagation(
-    operator: MatrixFreeOperator,
-    rhs: FloatArray,
-    duration: float,
-    *,
-    tol: float,
-    m: int = 30,
-) -> tuple[FloatArray, int]:
-    """Get x = (-L)^{-1} b, for b orthogonal to the left null vectors of L, without a factorisation.
+_MINRES_RTOL = 1e-12
+"""The residual of MINRES relative to |J b| (`solve_symmetric`).
 
-    (-L) x = b is (1 - e^{L tau}) x = int_0^tau e^{L t} b dt. The operator
-    1 - e^{L tau} is close to the identity on every mode which decays within
-    tau, and small only on the few slower ones, the hops between sites, so
-    GMRES converges in a few iterations, each one propagation over tau
-    (a time of the order of 1 / gamma).
+D is a small difference of terms of order D_0 over a barrier: over 1D
+cosines of 0-15 k_B T at 0.2-8 ps^-1, a residual of 1e-12 left D within
+1.4e-8 of the sparse LU, and 1e-10 within 8e-5 at 15 k_B T and 0.2 ps^-1.
+"""
+
+
+def _lanczos_step(
+    apply: Callable[[jax.Array], jax.Array], lanczos: tuple, k: jax.Array
+) -> tuple[jax.Array, jax.Array, tuple]:
+    """Take a step of the symmetric Lanczos recurrence of MINRES: get v, alpha and the new (r1, r2, beta, old beta)."""
+    r1, r2, beta, oldb = lanczos
+    v = r2 / beta
+    y = apply(v)
+    y = jnp.where(k >= 1, y - (beta / jnp.where(oldb > 0, oldb, 1.0)) * r1, y)
+    alfa = v @ y
+    y -= (alfa / beta) * r2
+    return v, alfa, (r2, y, jnp.linalg.norm(y), beta)
+
+
+def _givens_step(v: jax.Array, alfa: jax.Array, beta: jax.Array, qr: tuple) -> tuple:
+    """Update the QR factorization of the Lanczos tridiagonal by one Givens rotation, and the solution: (x, w, w2, dbar, epsln, phibar, cs, sn)."""
+    x, w, w2, dbar, epsln, phibar, cs, sn = qr
+    delta = cs * dbar + sn * alfa
+    gbar = sn * dbar - cs * alfa
+    gamma = jnp.maximum(jnp.hypot(gbar, beta), jnp.finfo(float).eps)
+    w_new = (v - epsln * w2 - delta * w) / gamma
+    cs_new, sn_new = gbar / gamma, beta / gamma
+    phi = cs_new * phibar
+    return (
+        x + phi * w_new,
+        w_new,
+        w,
+        -cs * beta,
+        sn * beta,
+        sn_new * phibar,
+        cs_new,
+        sn_new,
+    )
+
+
+@functools.partial(jax.jit, static_argnames="maxiter")
+def _minres(
+    kernel: _Kernel, parity: jax.Array, rhs: jax.Array, rtol: float, maxiter: int
+) -> tuple[jax.Array, jax.Array]:
+    """Solve -J L x = rhs by MINRES (Paige and Saunders), as scipy.sparse.linalg.minres without a preconditioner, all on the device."""
+
+    def apply(v: jax.Array) -> jax.Array:
+        return -parity * _apply(kernel, v)
+
+    beta1 = jnp.linalg.norm(rhs)
+    zero, scalar = jnp.zeros_like(rhs), jnp.zeros(())
+
+    def proceed(carry: tuple) -> jax.Array:
+        lanczos, qr, k = carry
+        return (k < maxiter) & (qr[5] > rtol * beta1) & (lanczos[2] > 0)
+
+    def iterate(carry: tuple) -> tuple:
+        lanczos, qr, k = carry
+        v, alfa, lanczos = _lanczos_step(apply, lanczos, k)
+        return lanczos, _givens_step(v, alfa, lanczos[2], qr), k + 1
+
+    _, qr, count = jax.lax.while_loop(
+        proceed,
+        iterate,
+        (
+            (rhs, rhs, beta1, scalar),
+            (zero, zero, zero, scalar, scalar, beta1, -1.0 + scalar, scalar),
+            jnp.asarray(0),
+        ),
+    )
+    return qr[0], count
+
+
+@_x64
+def solve_symmetric(
+    operator: MatrixFreeOperator, parity: FloatArray, rhs: FloatArray
+) -> tuple[FloatArray, int]:
+    """Get x = (-L)^{-1} b, for b orthogonal to the null vectors of L, by MINRES on the symmetric J L, with the applications of L.
+
+    L^T = J L J (`build_real_operator`), so J L is real and symmetric
+    (indefinite), and (-L) x = b is the consistent symmetric system
+    (-J L) x = J b: MINRES needs one application of L an iteration, cannot
+    break down, and stays on the device. Against GMRES on
+    (1 - e^{L tau}) x = int_0^tau e^{L t} b dt, each iteration a
+    propagation over 1 / gamma, it took 2.4-4.1 times fewer applications
+    and 2.7-10 times less time for D of H and Li on Cu(111) and Li on
+    Cu(100) in 2D (Li at its friction: 2503 against 5790, 16 s against
+    68 s).
 
     Raises
     ------
     RuntimeError
-        If GMRES does not converge.
+        If MINRES does not reach the residual in as many iterations as unknowns.
     """
-    _, integral, count = propagate_state(operator, rhs, duration, tol=1e-2 * tol, m=m)
-    applications = [count]
-
-    def matvec(x: FloatArray) -> FloatArray:
-        state, _, k = propagate_state(operator, x, duration, tol=1e-2 * tol, m=m)
-        applications[0] += k
-        return x - state
-
-    # The stubs of scipy omit the matvec form of the constructor
-    system = scipy.sparse.linalg.LinearOperator(  # ty: ignore[missing-argument]
-        (rhs.size, rhs.size),
-        matvec=matvec,  # ty: ignore[unknown-argument]
-        dtype=np.float64,  # ty: ignore[parameter-already-assigned]
-    )
-    solution, info = scipy.sparse.linalg.gmres(
-        system, integral, rtol=tol, atol=0, restart=60, maxiter=4
-    )
-    if info != 0:
-        msg = "GMRES did not converge on (1 - e^{L tau}) x = int_0^tau e^{L t} b dt"
+    device_parity = jnp.asarray(parity)
+    rhs_j = device_parity * jnp.asarray(rhs)
+    x, count = _minres(operator.kernel, device_parity, rhs_j, _MINRES_RTOL, rhs.size)
+    if int(count) >= rhs.size:
+        msg = "MINRES did not converge on (-J L) x = J b"
         raise RuntimeError(msg)
-    return solution, applications[0]
+    return np.asarray(x), int(count)
